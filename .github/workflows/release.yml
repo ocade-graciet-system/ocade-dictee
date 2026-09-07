@@ -1,0 +1,202 @@
+name: "Release"
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  create-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      release-id: ${{ steps.create-release.outputs.result }}
+      version: ${{ steps.get-version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Get version from tauri.conf.json
+        id: get-version
+        shell: bash
+        run: |
+          VERSION=$(grep -o '"version": "[^"]*"' src-tauri/tauri.conf.json | cut -d'"' -f4)
+          echo "Application version from tauri.conf.json: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create Draft Release
+        id: create-release
+        uses: actions/github-script@v9
+        with:
+          script: |
+            // Déclenché par un tag (refs/tags/vX.Y.Z) : on reprend le nom du tag.
+            // Déclenché manuellement : on retombe sur la version de tauri.conf.json.
+            const tagName = context.ref.startsWith('refs/tags/')
+              ? context.ref.slice('refs/tags/'.length)
+              : `v${{ steps.get-version.outputs.version }}`;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            // Idempotent : réutilise la release existante pour ce tag — y compris
+            // en BROUILLON (getReleaseByTag ignore les drafts, ce qui empilait un
+            // brouillon par re-run). Les drafts en double du même tag sont purgés.
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner, repo, per_page: 100,
+            });
+            // Préférer une release PUBLIÉE du tag à un éventuel draft plus récent
+            // (listReleases est trié du plus récent au plus ancien).
+            let release =
+              releases.find((r) => r.tag_name === tagName && !r.draft) ??
+              releases.find((r) => r.tag_name === tagName);
+            if (!release) {
+              release = (await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: tagName,
+                name: tagName,
+                draft: true,
+                prerelease: false,
+                generate_release_notes: true
+              })).data;
+            }
+            for (const r of releases) {
+              if (r.tag_name === tagName && r.draft && r.id !== release.id) {
+                await github.rest.repos.deleteRelease({ owner, repo, release_id: r.id });
+              }
+            }
+            return release.id
+
+  publish-tauri:
+    permissions:
+      contents: write
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 4 assets seulement, un par machine cible — pas de variantes piégeuses :
+          # - Windows : NSIS uniquement (per-user, sans UAC). Pas de MSI (perMachine,
+          #   anglais) ni de build ARM64 : le x64 tourne aussi sur Windows ARM via
+          #   l'émulation, et l'asset arm64 apparaissait AVANT le x64 dans la liste
+          #   GitHub (piège au téléchargement).
+          # - macOS : DMG pour l'installation humaine + bundle app, dont le
+          #   .app.tar.gz signé alimente l'updater in-app (latest.json darwin).
+          # - Linux : AppImage uniquement (universel, toutes distributions) —
+          #   pas de deb/rpm pour garder une liste courte.
+          - platform: "macos-26" # for Arm based macs (M1 and above). Uses macOS 26 for Apple Intelligence SDK.
+            args: "--target aarch64-apple-darwin --bundles app,dmg"
+            target: "aarch64-apple-darwin"
+          - platform: "macos-latest" # for Intel based macs.
+            args: "--target x86_64-apple-darwin --bundles app,dmg"
+            target: "x86_64-apple-darwin"
+          - platform: "windows-latest"
+            args: "--bundles nsis"
+            target: "x86_64-pc-windows-msvc"
+          - platform: "ubuntu-24.04" # Linux x64 — AppImage universel
+            args: "--bundles appimage"
+            target: "x86_64-unknown-linux-gnu"
+
+    uses: ./.github/workflows/build.yml
+    with:
+      platform: ${{ matrix.platform }}
+      target: ${{ matrix.target }}
+      build-args: ${{ matrix.args }}
+      sign-binaries: false
+      asset-prefix: "handy"
+      upload-artifacts: false
+      release-id: ${{ needs.create-release.outputs.release-id }}
+      # Releases always build from scratch — never restore the Rust cache, so a
+      # stale cached native lib can never be linked into a shipped artifact.
+      no-cache: true
+    secrets: inherit
+
+  publish-release:
+    # Publie la release (draft -> published) une fois TOUS les builds réussis,
+    # pour que les installeurs .exe/.dmg soient déjà attachés à la publication.
+    permissions:
+      contents: write
+    needs: [create-release, publish-tauri]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const release_id = ${{ needs.create-release.outputs.release-id }};
+            // Le guide est construit à la PUBLICATION, à partir des VRAIS noms
+            // d'assets uploadés (pas d'URL devinée qui pourrait 404).
+            const { data: release } = await github.rest.repos.getRelease({ owner, repo, release_id });
+            // NE PAS utiliser browser_download_url ici : tant que la release est
+            // en brouillon, il pointe vers /download/untagged-…, une URL qui
+            // meurt à la publication (404). L'URL canonique par tag, elle, est
+            // stable — les noms restent ceux des VRAIS assets uploadés.
+            const dl = (a) =>
+              `https://github.com/${owner}/${repo}/releases/download/${release.tag_name}/${encodeURIComponent(a.name)}`;
+            const asset = (re) => release.assets.find((a) => re.test(a.name));
+            const winExe = asset(/x64-setup\.exe$/i);
+            const dmgArm = asset(/aarch64\.dmg$/i);
+            const dmgIntel = asset(/x64\.dmg$/i);
+            const appImage = asset(/\.AppImage$/i);
+            const lines = [];
+            // Marqueur d'idempotence : un re-run de ce job ne re-préfixe pas le guide.
+            const MARKER = "<!-- guide-installation-fr -->";
+            lines.push(MARKER);
+            lines.push("## 💻 Windows — installer OCADE Dictée");
+            if (winExe) {
+              lines.push("", `### ➡️ [Télécharger pour Windows (64 bits)](${dl(winExe)})`, "");
+            }
+            lines.push(
+              "Au premier lancement, Windows peut afficher **« Windows a protégé votre ordinateur »** (application non signée). C'est attendu :",
+              "1. Clique sur le petit lien **« Informations complémentaires »**",
+              "2. Puis sur **« Exécuter quand même »**",
+              "",
+              "## 🍎 Mac — installer OCADE Dictée",
+              "",
+              "| Ton Mac | Fichier |",
+              "| --- | --- |",
+            );
+            if (dmgArm) lines.push(`| Apple Silicon (M1, M2, M3, M4…) | [Télécharger le .dmg](${dl(dmgArm)}) |`);
+            if (dmgIntel) lines.push(`| Intel (modèles ≈ avant 2020) | [Télécharger le .dmg](${dl(dmgIntel)}) |`);
+            lines.push(
+              "",
+              "Ouvre le fichier .dmg, glisse **OCADE Dictée** dans **Applications**, puis lance-la depuis Applications. Si macOS bloque avec « Apple n'a pas pu confirmer… » :",
+              "1. **Réglages Système → Confidentialité et sécurité**, descends tout en bas → **« Ouvrir quand même »**, puis relance l'app ;",
+              "2. Si cette option n'apparaît pas, ouvre le **Terminal** (Cmd+Espace, tape « Terminal »), colle la commande ci-dessous, valide avec Entrée, puis relance l'app :",
+              "```",
+              'xattr -dr com.apple.quarantine "/Applications/OCADE Dictée.app"',
+              "```",
+              "À faire **une seule fois** — les mises à jour suivantes se font depuis l'app, sans cet avertissement.",
+            );
+            if (appImage) {
+              lines.push(
+                "",
+                "## 🐧 Linux — installer OCADE Dictée",
+                "",
+                `### ➡️ [Télécharger l'AppImage (toutes distributions, x64)](${dl(appImage)})`,
+                "",
+                "1. Rends le fichier exécutable : clic droit → Propriétés → « Autoriser l'exécution », ou `chmod +x OCADE*.AppImage`",
+                "2. Double-clique dessus — rien à installer.",
+                "",
+                "> ⚠️ Support Wayland limité : en cas de souci (raccourcis, overlay), ouvre ta session en **X11/Xorg**.",
+              );
+            }
+            lines.push(
+              "",
+              "> ℹ️ Si l'installation Windows échoue en toute fin avec une erreur WebView2 (PC hors ligne très ancien), installe d'abord [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) puis relance l'installeur.",
+              "",
+              "---",
+              "",
+            );
+            const guide = lines.join("\n");
+            const existing = release.body || "";
+            const body = existing.startsWith(MARKER) ? existing : guide + existing;
+            await github.rest.repos.updateRelease({
+              owner,
+              repo,
+              release_id,
+              body,
+              draft: false,
+            });

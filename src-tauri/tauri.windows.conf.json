@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "externalBin": ["binaries/yt-dlp"],
+    "resources": {
+      "resources": "resources",
+      "transcribe-libs": "."
+    }
+  }
+}

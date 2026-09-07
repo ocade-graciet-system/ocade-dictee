@@ -1,0 +1,86 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OCADE Dictée",
+  "version": "0.9.17",
+  "identifier": "com.ocade.handy",
+  "build": {
+    "beforeDevCommand": "bun scripts/fetch-yt-dlp.ts && bun run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "bun scripts/fetch-yt-dlp.ts && bun run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "allow": ["**"],
+          "requireLiteralLeadingDot": false
+        }
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": "all",
+    "resources": ["resources/**/*"],
+    "license": "MIT",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "files": {},
+      "hardenedRuntime": true,
+      "minimumSystemVersion": "10.15",
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist"
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libgtk-layer-shell0", "libopenblas0"],
+        "files": {
+          "/usr/lib": "transcribe-libs"
+        }
+      },
+      "rpm": {
+        "depends": [
+          "libgtk-layer-shell.so.0()(64bit)",
+          "libopenblas.so.0()(64bit)"
+        ],
+        "compression": {
+          "type": "none"
+        },
+        "files": {
+          "/usr/lib": "transcribe-libs"
+        }
+      },
+      "appimage": {
+        "bundleMediaFramework": true,
+        "files": {
+          "/usr/lib": "transcribe-libs"
+        }
+      }
+    },
+    "windows": {
+      "nsis": {
+        "template": "nsis/installer.nsi"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYzNTJBN0ZDODM0OEVDQkIKUldTNzdFaUQvS2RTOHgrSytUcnU5eXdqbHVFZnFFMncvVnJqMjdtZjRWdERWNThSWW5nN2k5Qk8K",
+      "endpoints": [
+        "https://github.com/valentincharrier/OCADE-HANDY/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}
