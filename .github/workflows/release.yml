@@ -56,7 +56,7 @@ jobs:
                 tag_name: tagName,
                 name: tagName,
                 draft: true,
-                prerelease: false,
+                prerelease: tagName.includes('-'),
                 generate_release_notes: true
               })).data;
             }
@@ -102,7 +102,7 @@ jobs:
       platform: ${{ matrix.platform }}
       target: ${{ matrix.target }}
       build-args: ${{ matrix.args }}
-      sign-binaries: false
+      sign-binaries: ${{ vars.SIGN_BINARIES == 'true' }}
       asset-prefix: "handy"
       upload-artifacts: false
       release-id: ${{ needs.create-release.outputs.release-id }}

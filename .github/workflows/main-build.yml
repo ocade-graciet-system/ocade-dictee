@@ -6,7 +6,7 @@ name: "Main Branch Build"
 
 on:
   push:
-    branches: [main]
+    branches: [main, v1-cle-en-main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -48,9 +48,9 @@ jobs:
       target: ${{ matrix.target }}
       build-args: ${{ matrix.args }}
       upload-artifacts: true
-      # Fork sans secrets de signature (Apple/Azure) : build non signé, comme
-      # la release — build.yml applique alors la signature ad-hoc macOS ("-").
-      # Avec true, l'import du certificat échoue (secrets vides) et les deux
-      # jobs macOS tombent avant même de compiler.
-      sign-binaries: false
+      # Signature Apple/Azure pilotée par la variable de dépôt SIGN_BINARIES
+      # (Settings → Secrets and variables → Actions → Variables). Absente ou
+      # différente de "true" : build non signé (signature ad-hoc macOS "-").
+      # Avec "true", les secrets APPLE_* / AZURE_* / KEYCHAIN_PASSWORD doivent exister.
+      sign-binaries: ${{ vars.SIGN_BINARIES == 'true' }}
     secrets: inherit
