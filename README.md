@@ -39,7 +39,7 @@ The process is entirely local:
 
 ### Installation (OCADE Dictée)
 
-Télécharge la **[dernière release OCADE-HANDY](https://github.com/valentincharrier/OCADE-HANDY/releases/latest)** — chaque release contient un guide de téléchargement, et 3 fichiers seulement :
+Télécharge la **[dernière release](https://github.com/ocade-graciet-system/ocade-dictee/releases/latest)** — chaque release contient un guide de téléchargement, et 3 fichiers seulement :
 
 | Ta machine                                                                            | Fichier            |
 | ------------------------------------------------------------------------------------- | ------------------ |
@@ -66,7 +66,7 @@ For detailed build instructions including platform-specific requirements, see [B
 
 > Section propre au fork **OCADE-HANDY** (fork de [cjpais/Handy](https://github.com/cjpais/Handy)).
 
-Le code est hébergé sur GitHub, où GitHub Actions dispose de runners macOS et Windows gratuits.
+Le code est hébergé sur [github.com/ocade-graciet-system/ocade-dictee](https://github.com/ocade-graciet-system/ocade-dictee) ; GitHub Actions construit les 3 plateformes.
 
 À chaque **tag de version** (`v*`), le workflow [`.github/workflows/release.yml`](.github/workflows/release.yml) construit et publie une **Release GitHub** contenant :
 
@@ -85,7 +85,7 @@ Les binaires sont actuellement **non signés** (avertissement Gatekeeper/SmartSc
 # 2. Créer et pousser le tag correspondant :
 git tag v0.9.4
 git push origin v0.9.4
-# → GitLab pousse le tag vers GitHub → build .exe + .dmg → Release GitHub publiée
+# → build .exe + .dmg + .AppImage → Release GitHub publiée
 ```
 
 La Release est **publiée automatiquement** une fois tous les builds terminés (les installeurs sont attachés avant publication).
