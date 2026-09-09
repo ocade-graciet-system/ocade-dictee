@@ -608,9 +608,8 @@ fn default_post_process_enabled() -> bool {
 }
 
 fn default_app_language() -> String {
-    tauri_plugin_os::locale()
-        .map(|l| l.replace('_', "-"))
-        .unwrap_or_else(|| "en".to_string())
+    // Interface en français uniquement (issue #11).
+    "fr".to_string()
 }
 
 fn default_show_tray_icon() -> bool {
@@ -994,6 +993,13 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
                 entry.insert(value);
                 updated = true;
             }
+        }
+
+        // Interface en français uniquement (issue #11) : un profil antérieur peut
+        // porter une autre langue ; on la normalise à chaque chargement.
+        if settings.app_language != "fr" {
+            settings.app_language = "fr".to_string();
+            updated = true;
         }
 
         if updated {

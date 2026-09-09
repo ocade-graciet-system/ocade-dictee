@@ -152,7 +152,7 @@ src/i18n/
     └── ...
 ```
 
-For translation contribution guidelines, see [CONTRIBUTING_TRANSLATIONS.md](CONTRIBUTING_TRANSLATIONS.md).
+The UI is French only: the single locale is `src/i18n/locales/fr/translation.json`; `bun run check:translations` verifies every key used in the code exists there.
 
 ## Code Style
 
@@ -211,7 +211,7 @@ See the [Troubleshooting](README.md#troubleshooting) section in README.md.
 - **Opening a PR:** One PR per issue, on a branch created from `v1-cle-en-main` (or `main` once 1.0 ships). Read [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) and fill it in completely: link the issue (`Closes #`), write the summary, tick the verification checklist, and list anything you could only test on one OS under "À vérifier en recette".
 - **Opening an issue:** Read [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/). You can open an issue with no template at all (blank issues are enabled); `bug_report.md` is there as an optional template for bugs, not a requirement.
 - **Proposing a feature:** There's no freeze on new features — open a PR directly, following the rules in [CONTRIBUTING.md](CONTRIBUTING.md).
-- **Translations:** Follow [CONTRIBUTING_TRANSLATIONS.md](CONTRIBUTING_TRANSLATIONS.md).
+- **Translations:** French only — add new keys to `src/i18n/locales/fr/translation.json` (see CONTRIBUTING.md, rule 5).
 - **Full contributor workflow:** [CONTRIBUTING.md](CONTRIBUTING.md).
 
 **Commits:** Use conventional commit prefixes (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`). Focus the message on _why_, not _what_.

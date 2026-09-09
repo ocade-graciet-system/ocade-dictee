@@ -228,7 +228,7 @@ fn stage_transcribe_runtime_libs() {
 /// Generate tray menu translations from frontend locale files.
 ///
 /// Source of truth: src/i18n/locales/*/translation.json
-/// The English "tray" section defines the struct fields.
+/// The French "tray" section defines the struct fields.
 fn generate_tray_translations() {
     use std::collections::BTreeMap;
     use std::fs;
@@ -261,9 +261,13 @@ fn generate_tray_translations() {
         }
     }
 
-    // English defines the schema
-    let english = translations.get("en").unwrap().as_object().unwrap();
-    let fields: Vec<_> = english
+    // Le français définit le schéma (seule locale embarquée — issue #11)
+    let reference = translations
+        .get("fr")
+        .expect("src/i18n/locales/fr/translation.json doit contenir une section \"tray\"")
+        .as_object()
+        .unwrap();
+    let fields: Vec<_> = reference
         .keys()
         .map(|k| (camel_to_snake(k), k.clone()))
         .collect();
