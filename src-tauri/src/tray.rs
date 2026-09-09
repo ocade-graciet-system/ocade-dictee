@@ -232,3 +232,20 @@ pub fn set_tray_visibility(app: &AppHandle, visible: bool) {
         info!("Tray visibility set to: {}", visible);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::load_tray_icon;
+
+    #[test]
+    fn tray_icon_resolution_failure_is_returned_instead_of_panicking() {
+        assert!(load_tray_icon(Err(tauri::Error::UnknownPath)).is_err());
+    }
+
+    #[test]
+    fn tray_icon_returns_err_when_file_does_not_exist() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let missing = dir.path().join("does_not_exist.png");
+        assert!(load_tray_icon(Ok(missing)).is_err());
+    }
+}

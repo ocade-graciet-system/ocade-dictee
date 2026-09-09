@@ -695,10 +695,14 @@ impl ShortcutAction for TranscribeAction {
                     let file_name = format!("handy-{}.wav", chrono::Utc::now().timestamp());
                     let wav_path = hm.recordings_dir().join(&file_name);
                     let wav_path_for_verify = wav_path.clone();
-                    let samples_for_wav = samples.clone();
                     // v1 (issue #9) : history_limit = 0 → aucun fichier audio n'est
                     // écrit sur le disque, pas même temporairement.
                     let history_enabled = crate::settings::get_settings(&ah).history_limit > 0;
+                    let samples_for_wav = if history_enabled {
+                        samples.clone()
+                    } else {
+                        Vec::new()
+                    };
                     let wav_handle = tauri::async_runtime::spawn_blocking(move || {
                         if !history_enabled {
                             return Ok(());
