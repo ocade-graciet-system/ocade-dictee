@@ -10,6 +10,13 @@ import { commands } from "@/bindings";
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // toutes les 24 h (issue #6)
 const RETRY_WHEN_BUSY_MS = 5 * 60 * 1000; // dictée ou téléchargement en cours → réessai dans 5 min
+// Un échec (réseau coupé, serveur injoignable, release absente…) ne doit pas
+// attendre le tick de 24 h : on réessaie dans 30 min, toujours en silence.
+const RETRY_AFTER_FAILURE_MS = 30 * 60 * 1000;
+// Borne de la requête de vérification. Sans elle, un socket semi-ouvert ne
+// rejette jamais : `busy` resterait armé et plus aucune tentative ne repartirait
+// de la session.
+const CHECK_TIMEOUT_MS = 30 * 1000;
 // Borne totale de la requête de téléchargement. Sans elle, un socket
 // semi-ouvert ne rejette jamais et l'écran non fermable bloque l'application.
 // Large à dessein : le bundle pèse quelques dizaines de Mo.
@@ -51,17 +58,21 @@ export const ForcedUpdater: React.FC = () => {
   // de l'enregistrement : `isTranscribing` couvre la suite, jusqu'au collage du
   // texte. Une préparation de modèle non plus : elle reprendrait après le
   // redémarrage, mais l'écran de préparation du premier lancement disparaîtrait
-  // en plein transfert de 512 Mo. Une transcription de fichier, elle, se compte
-  // en minutes et serait perdue.
+  // en plein transfert de 512 Mo. Côté page Fichier, tout est également perdu
+  // par un redémarrage : la transcription et le formatage se comptent en
+  // minutes, un téléchargement de vidéo repartirait de zéro.
   const isBusyElsewhere = async () => {
     const models = useModelStore.getState();
+    const files = useFileTranscriptionStore.getState();
     return (
       (await commands.isRecording()) ||
       (await commands.isTranscribing()) ||
       Object.keys(models.downloadingModels).length > 0 ||
       Object.keys(models.verifyingModels).length > 0 ||
       Object.keys(models.extractingModels).length > 0 ||
-      useFileTranscriptionStore.getState().status === "processing"
+      files.status === "processing" ||
+      files.formatting ||
+      Object.keys(files.videoDownloads).length > 0
     );
   };
 
@@ -77,9 +88,9 @@ export const ForcedUpdater: React.FC = () => {
     }
   };
 
-  const retryLater = () => {
+  const retryLater = (delayMs: number = RETRY_WHEN_BUSY_MS) => {
     if (retryTimer.current) clearTimeout(retryTimer.current);
-    retryTimer.current = setTimeout(() => void run(), RETRY_WHEN_BUSY_MS);
+    retryTimer.current = setTimeout(() => void run(), delayMs);
   };
 
   const download = async (pending: Update) => {
@@ -143,7 +154,8 @@ export const ForcedUpdater: React.FC = () => {
 
       // Une tentative précédente a pu télécharger le paquet sans pouvoir
       // l'installer : on repart de là plutôt que de refaire un `check()`.
-      pending = downloaded.current ?? (await check());
+      pending =
+        downloaded.current ?? (await check({ timeout: CHECK_TIMEOUT_MS }));
       if (!pending) return;
 
       if (!downloaded.current) {
@@ -176,6 +188,7 @@ export const ForcedUpdater: React.FC = () => {
       downloaded.current = null;
       await release(pending);
       setUpdate(null);
+      retryLater(RETRY_AFTER_FAILURE_MS);
     } finally {
       busy.current = false;
     }
