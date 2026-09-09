@@ -50,6 +50,18 @@ export const ForcedUpdater: React.FC = () => {
     );
   };
 
+  // Chaque `check()` réussi alloue une ressource côté Rust. Dès qu'on renonce à
+  // l'installer, il faut la rendre : sinon chaque vérification en laisse une
+  // ouverte pour toute la durée de vie de l'application.
+  const release = async (resource: Update | null) => {
+    if (!resource) return;
+    try {
+      await resource.close();
+    } catch {
+      // Ressource déjà libérée ou app en cours de fermeture : sans importance.
+    }
+  };
+
   const retryLater = () => {
     if (retryTimer.current) clearTimeout(retryTimer.current);
     retryTimer.current = setTimeout(() => void run(), RETRY_WHEN_BUSY_MS);
@@ -101,6 +113,7 @@ export const ForcedUpdater: React.FC = () => {
   const run = async () => {
     if (busy.current) return;
     busy.current = true;
+    let pending: Update | null = null;
     try {
       // Installation portable (Windows) : jamais de mise à jour automatique,
       // et aucun message (l'utilisateur gère son dossier lui-même).
@@ -108,11 +121,14 @@ export const ForcedUpdater: React.FC = () => {
 
       // Une tentative précédente a pu télécharger le paquet sans pouvoir
       // l'installer : on repart de là plutôt que de refaire un `check()`.
-      const pending = downloaded.current ?? (await check());
+      pending = downloaded.current ?? (await check());
       if (!pending) return;
 
       if (!downloaded.current) {
         if (await isBusyElsewhere()) {
+          // Rien n'est encore téléchargé : on rend la ressource, la prochaine
+          // tentative repartira d'un `check()` neuf.
+          await release(pending);
           retryLater();
           return;
         }
@@ -136,6 +152,7 @@ export const ForcedUpdater: React.FC = () => {
       // démarre normalement, rien n'est montré à l'utilisateur.
       console.warn("Mise à jour automatique impossible pour le moment :", e);
       downloaded.current = null;
+      await release(pending);
       setUpdate(null);
     } finally {
       busy.current = false;
