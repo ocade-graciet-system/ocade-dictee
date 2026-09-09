@@ -392,11 +392,6 @@ export const useModelStore = create<ModelsStore>()(
         );
       });
 
-      listen<string>("model-deleted", () => {
-        get().loadModels();
-        get().loadCurrentModel();
-      });
-
       listen("model-state-changed", () => {
         get().loadModels();
         get().loadCurrentModel();

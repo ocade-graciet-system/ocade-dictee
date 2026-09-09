@@ -368,21 +368,6 @@ fn local_caps(probe: &CapabilityProbe) -> LocalCaps {
     }
 }
 
-/// Validate a candidate filename for [`ModelManager::import_model_file`].
-/// Error codes are stable strings the frontend maps to localized messages.
-// v1 modèle unique (issue #2) : plus aucune commande n'importe de modèle, la
-// mécanique et ses tests restent en place pour un éventuel retour de la fonction.
-#[allow(dead_code)]
-fn validate_import_filename(filename: &str, reserved: &HashSet<String>) -> Result<()> {
-    if filename.starts_with('.') || !(filename.ends_with(".bin") || filename.ends_with(".gguf")) {
-        return Err(anyhow::anyhow!("invalid_extension"));
-    }
-    if reserved.contains(filename) {
-        return Err(anyhow::anyhow!("reserved_filename"));
-    }
-    Ok(())
-}
-
 /// Bridges hf-hub's async download progress to Handy's `model-download-progress`
 /// event. hf-hub clones the reporter, so shared state lives behind an `Arc`.
 #[derive(Clone)]
@@ -1280,58 +1265,6 @@ impl ModelManager {
                 flag: self.is_rescanning.clone(),
             })
         }
-    }
-
-    /// Import a user-picked Whisper-family model file (.bin / .gguf) into the
-    /// managed models directory, then rescan local sources so it shows up
-    /// immediately. Returns the imported model's id (the filename stem).
-    ///
-    /// The copy goes through an `.import-partial` staging name — the custom
-    /// scanner only picks up `.bin`/`.gguf` files, so an interrupted copy can
-    /// never be mistaken for a complete model — then an atomic same-volume
-    /// rename publishes it.
-    // v1 modèle unique (issue #2) : la commande `import_custom_model` a été
-    // retirée, plus aucun appelant côté production.
-    #[allow(dead_code)]
-    pub fn import_model_file(&self, source: &Path) -> Result<String> {
-        let filename = source
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(str::to_string)
-            .ok_or_else(|| anyhow::anyhow!("invalid_extension"))?;
-
-        // Filenames of built-in file-based models are reserved: importing over
-        // one would let an unverified file impersonate a catalog download
-        // (is_downloaded is a bare existence check).
-        let reserved: HashSet<String> = {
-            let models = self.available_models.lock().unwrap();
-            models
-                .values()
-                .filter(|m| !m.is_custom && !m.is_directory)
-                .map(|m| m.filename.clone())
-                .collect()
-        };
-        validate_import_filename(&filename, &reserved)?;
-
-        let dest = self.models_dir.join(&filename);
-        if dest.exists() {
-            return Err(anyhow::anyhow!("file_exists"));
-        }
-
-        let staging = self.models_dir.join(format!("{filename}.import-partial"));
-        let copied = fs::copy(source, &staging).and_then(|_| fs::rename(&staging, &dest));
-        if let Err(e) = copied {
-            let _ = fs::remove_file(&staging);
-            return Err(anyhow::anyhow!("copy failed: {e}"));
-        }
-
-        self.rescan_local_models()?;
-
-        Ok(filename
-            .strip_suffix(".bin")
-            .or_else(|| filename.strip_suffix(".gguf"))
-            .unwrap_or(&filename)
-            .to_string())
     }
 
     /// Re-run the local discovery scans (custom models dir + shared HF cache) so
@@ -2425,105 +2358,6 @@ impl ModelManager {
         Ok(())
     }
 
-    // v1 modèle unique (issue #2) : la commande `delete_model` a été retirée
-    // (le modèle FR ne se supprime plus depuis l'interface), plus aucun appelant.
-    #[allow(dead_code)]
-    pub fn delete_model(&self, model_id: &str) -> Result<()> {
-        debug!("ModelManager: delete_model called for: {}", model_id);
-
-        let model_info = {
-            let models = self.available_models.lock().unwrap();
-            models.get(model_id).cloned()
-        };
-
-        let model_info =
-            model_info.ok_or_else(|| anyhow::anyhow!("Model not found: {}", model_id))?;
-
-        debug!("ModelManager: Found model info: {:?}", model_info);
-
-        if let ModelSource::HuggingFace { repo_id, revision } = &model_info.source {
-            // Cached at <cache>/models--org--name/snapshots/<rev>/<file>; remove
-            // the whole repo dir (blobs + refs + snapshots). Per product decision,
-            // delete hard-removes from the shared HF cache.
-            let mut deleted = false;
-            if let Some(file) = hf_cached_path(repo_id, revision, &model_info.filename) {
-                if let Some(repo_dir) = file.ancestors().nth(3) {
-                    if repo_dir
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.starts_with("models--"))
-                    {
-                        info!("Deleting HF cache repo at: {:?}", repo_dir);
-                        fs::remove_dir_all(repo_dir)?;
-                        deleted = true;
-                    }
-                }
-            }
-            if !deleted {
-                return Err(anyhow::anyhow!("No model files found to delete"));
-            }
-            self.update_download_status()?;
-            let _ = self.app_handle.emit("model-deleted", model_id);
-            return Ok(());
-        }
-
-        let model_path = self.models_dir.join(&model_info.filename);
-        let partial_path = self
-            .models_dir
-            .join(format!("{}.partial", &model_info.filename));
-        debug!("ModelManager: Model path: {:?}", model_path);
-        debug!("ModelManager: Partial path: {:?}", partial_path);
-
-        let mut deleted_something = false;
-
-        if model_info.is_directory {
-            // Delete complete model directory if it exists
-            if model_path.exists() && model_path.is_dir() {
-                info!("Deleting model directory at: {:?}", model_path);
-                fs::remove_dir_all(&model_path)?;
-                info!("Model directory deleted successfully");
-                deleted_something = true;
-            }
-        } else {
-            // Delete complete model file if it exists
-            if model_path.exists() {
-                info!("Deleting model file at: {:?}", model_path);
-                fs::remove_file(&model_path)?;
-                info!("Model file deleted successfully");
-                deleted_something = true;
-            }
-        }
-
-        // Delete partial file if it exists (same for both types)
-        if partial_path.exists() {
-            info!("Deleting partial file at: {:?}", partial_path);
-            fs::remove_file(&partial_path)?;
-            info!("Partial file deleted successfully");
-            deleted_something = true;
-        }
-
-        if !deleted_something {
-            return Err(anyhow::anyhow!("No model files found to delete"));
-        }
-
-        // Custom models should be removed from the list entirely since they
-        // have no download URL and can't be re-downloaded
-        if model_info.is_custom {
-            let mut models = self.available_models.lock().unwrap();
-            models.remove(model_id);
-            debug!("ModelManager: removed custom model from available models");
-        } else {
-            // Update download status (marks predefined models as not downloaded)
-            self.update_download_status()?;
-            debug!("ModelManager: download status updated");
-        }
-
-        // Emit event to notify UI
-        let _ = self.app_handle.emit("model-deleted", model_id);
-
-        Ok(())
-    }
-
     pub fn get_model_path(&self, model_id: &str) -> Result<PathBuf> {
         let model_info = self
             .get_model_info(model_id)
@@ -3006,27 +2840,6 @@ mod tests {
         assert!(
             !models.contains_key("someone/llama-7b/llama-q8.gguf"),
             "non-ASR gguf must be ignored"
-        );
-    }
-
-    #[test]
-    fn test_import_filename_validation() {
-        let reserved: HashSet<String> = ["ggml-small.bin".to_string()].into_iter().collect();
-        let err = |name: &str| {
-            validate_import_filename(name, &reserved)
-                .unwrap_err()
-                .to_string()
-        };
-
-        assert!(validate_import_filename("my-model.bin", &reserved).is_ok());
-        assert!(validate_import_filename("my-model.gguf", &reserved).is_ok());
-        assert_eq!(err("model.zip"), "invalid_extension");
-        assert_eq!(err(".hidden.bin"), "invalid_extension");
-        assert_eq!(err("model.bin.import-partial"), "invalid_extension");
-        assert_eq!(
-            err("ggml-small.bin"),
-            "reserved_filename",
-            "built-in filenames must not be shadowed by imports"
         );
     }
 
