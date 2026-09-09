@@ -845,8 +845,9 @@ pub const LOCK_MUTE_OTHERS_WHILE_RECORDING: bool = false;
 /// Force les valeurs imposées de la v1. Appelée à chaque lecture des réglages :
 /// un store existant, une ancienne version ou une commande détournée ne peuvent
 /// jamais réactiver un réglage retiré de l'interface. Les clés restent
-/// présentes (compatibilité des profils). Renvoie `true` si quelque chose a
-/// changé (l'appelant persiste).
+/// présentes (compatibilité des profils) — à l'exception du binding
+/// `transcribe_with_post_process`, retiré (post-traitement supprimé). Renvoie
+/// `true` si quelque chose a changé (l'appelant persiste).
 pub fn apply_v1_locks(settings: &mut AppSettings) -> bool {
     let before = serde_json::to_value(&*settings).ok();
 
@@ -1192,12 +1193,10 @@ pub fn get_bindings(app: &AppHandle) -> HashMap<String, ShortcutBinding> {
     settings.bindings
 }
 
-pub fn get_stored_binding(app: &AppHandle, id: &str) -> ShortcutBinding {
+pub fn get_stored_binding(app: &AppHandle, id: &str) -> Option<ShortcutBinding> {
     let bindings = get_bindings(app);
 
-    let binding = bindings.get(id).unwrap().clone();
-
-    binding
+    bindings.get(id).cloned()
 }
 
 pub fn get_history_limit(app: &AppHandle) -> usize {
@@ -1599,7 +1598,24 @@ mod tests {
         s.overlay_style = OverlayStyle::None;
         s.model_unload_timeout = ModelUnloadTimeout::Min5;
         s.bindings.get_mut("transcribe").unwrap().current_binding = "f13".to_string();
+        s.post_process_enabled = true;
+        s.always_on_microphone = true;
+        s.mute_others_while_recording = true;
+        s.show_tray_icon = false;
+        s.paste_method = PasteMethod::Direct;
+        s.recording_retention_period = RecordingRetentionPeriod::Never;
         assert!(apply_v1_locks(&mut s));
+        assert!(!s.post_process_enabled && !s.always_on_microphone);
+        assert_eq!(
+            s.mute_others_while_recording,
+            LOCK_MUTE_OTHERS_WHILE_RECORDING
+        );
+        assert!(s.show_tray_icon);
+        assert_eq!(s.paste_method, PasteMethod::default());
+        assert_eq!(
+            s.recording_retention_period,
+            RecordingRetentionPeriod::PreserveLimit
+        );
         assert!(s.push_to_talk && s.audio_feedback && s.mute_while_recording);
         assert_eq!(s.audio_feedback_volume, 1.0);
         assert_eq!(s.history_limit, 0);
