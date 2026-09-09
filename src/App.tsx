@@ -226,6 +226,7 @@ function App() {
       } else {
         // New user - start full onboarding
         setIsReturningUser(false);
+        await revealMainWindowForPermissions();
         setOnboardingStep("accessibility");
       }
     } catch (error) {
