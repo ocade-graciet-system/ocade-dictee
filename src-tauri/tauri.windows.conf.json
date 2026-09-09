@@ -1,5 +1,6 @@
 {
   "bundle": {
+    "targets": ["nsis"],
     "externalBin": ["binaries/yt-dlp"],
     "resources": {
       "resources": "resources",
