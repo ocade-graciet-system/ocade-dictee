@@ -31,7 +31,7 @@ in
     package = lib.mkOption {
       type = lib.types.package;
       defaultText = lib.literalExpression "handy.packages.\${system}.handy";
-      description = "OCADE Dictée — dictée vocale locale (fork de Handy)";
+      description = "Le paquet OCADE Dictée à utiliser.";
     };
   };
 
