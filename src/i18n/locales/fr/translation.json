@@ -157,7 +157,9 @@
   },
   "progressBar": {
     "downloading": "Téléchargement…",
-    "downloadingCount": "{{count}} téléchargements en cours…"
+    "downloadingCount": "{{count}} téléchargements en cours…",
+    "downloadingCount_one": "{{count}} téléchargement en cours…",
+    "downloadingCount_other": "{{count}} téléchargements en cours…"
   },
   "settings": {
     "modelSettings": {
@@ -601,8 +603,8 @@
         "description": "Couper le son du système pendant l'enregistrement"
       },
       "appendTrailingSpace": {
-        "label": "Ajouter une espace final",
-        "description": "Ajouter une espace après la transcription collée"
+        "label": "Ajouter un espace final",
+        "description": "Ajouter un espace après la transcription collée"
       },
       "keyboardImplementation": {
         "title": "Gestion du clavier",

@@ -36,7 +36,11 @@ function App() {
   const [isReturningUser, setIsReturningUser] = useState(false);
   const [currentSection, setCurrentSection] =
     useState<SidebarSection>("general");
-  const { settings } = useSettings();
+  // `settings` n'est pas consommé ici : seul l'effet de bord du hook compte
+  // (déclenche store.initialize(), qui charge store.settings). Nécessaire dès
+  // le montage car ModelCard (étape "model" de l'onboarding, avant que
+  // Sidebar ne monte) lit settings.debug_mode via useSettingsStore.
+  useSettings();
   const direction = getLanguageDirection(i18n.language);
   const refreshAudioDevices = useSettingsStore(
     (state) => state.refreshAudioDevices,
