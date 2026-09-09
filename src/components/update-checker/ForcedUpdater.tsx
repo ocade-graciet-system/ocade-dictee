@@ -47,14 +47,17 @@ export const ForcedUpdater: React.FC = () => {
   // l'autre pour ne jamais retélécharger après un report.
   const downloaded = useRef<Update | null>(null);
 
-  // Une dictée ne doit jamais être interrompue. Une préparation de modèle non
-  // plus : elle reprendrait après le redémarrage, mais l'écran de préparation
-  // du premier lancement disparaîtrait en plein transfert de 512 Mo. Une
-  // transcription de fichier, elle, se compte en minutes et serait perdue.
+  // Une dictée ne doit jamais être interrompue. `isRecording` s'arrête à la fin
+  // de l'enregistrement : `isTranscribing` couvre la suite, jusqu'au collage du
+  // texte. Une préparation de modèle non plus : elle reprendrait après le
+  // redémarrage, mais l'écran de préparation du premier lancement disparaîtrait
+  // en plein transfert de 512 Mo. Une transcription de fichier, elle, se compte
+  // en minutes et serait perdue.
   const isBusyElsewhere = async () => {
     const models = useModelStore.getState();
     return (
       (await commands.isRecording()) ||
+      (await commands.isTranscribing()) ||
       Object.keys(models.downloadingModels).length > 0 ||
       Object.keys(models.verifyingModels).length > 0 ||
       Object.keys(models.extractingModels).length > 0 ||
