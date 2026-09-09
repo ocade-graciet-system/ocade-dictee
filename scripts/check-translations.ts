@@ -23,11 +23,11 @@ const fr = JSON.parse(fs.readFileSync(FR_PATH, "utf8")) as Record<
 function hasKey(obj: Record<string, unknown>, dotted: string): boolean {
   let cur: unknown = obj;
   for (const part of dotted.split(".")) {
-    if (typeof cur !== "object" || cur === null || !(part in (cur as object)))
+    if (typeof cur !== "object" || cur === null || !Object.hasOwn(cur, part))
       return false;
     cur = (cur as Record<string, unknown>)[part];
   }
-  return true;
+  return typeof cur === "string";
 }
 
 function sourceFiles(dir: string, out: string[] = []): string[] {

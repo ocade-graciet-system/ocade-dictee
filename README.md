@@ -6,9 +6,9 @@ Dictée vocale **locale** et **clé en main** : maintenez un raccourci, parlez, 
 
 ## Installation
 
-Télécharge la **[dernière release](https://github.com/ocade-graciet-system/ocade-dictee/releases/latest)** — un fichier par machine :
+Téléchargez la **[dernière release](https://github.com/ocade-graciet-system/ocade-dictee/releases/latest)** — un fichier par machine :
 
-| Ta machine                                                 | Fichier            |
+| Votre machine                                              | Fichier            |
 | ---------------------------------------------------------- | ------------------ |
 | **Windows** (64 bits, y compris Windows ARM via émulation) | `…_x64-setup.exe`  |
 | **Mac Apple Silicon** (M1 et suivants)                     | `…_aarch64.dmg`    |
@@ -21,8 +21,8 @@ Au premier lancement, l'application télécharge le modèle de reconnaissance fr
 
 ## Utilisation
 
-1. Choisis ton raccourci dans **Général** (4 propositions, identiques sur les 3 systèmes).
-2. Maintiens-le, parle, relâche : le texte apparaît dans l'application active.
+1. Choisissez votre raccourci dans **Général** (4 propositions, identiques sur les 3 systèmes).
+2. Maintenez-le, parlez, relâchez : le texte apparaît dans l'application active.
 3. Onglet **Fichier** : transcription d'un fichier audio/vidéo ou d'une URL, export Markdown.
 
 ## Développement
@@ -38,7 +38,7 @@ Prérequis par OS : [BUILD.md](BUILD.md). Règles de contribution : [CONTRIBUTIN
 
 ### Releases
 
-Un tag `vX.Y.Z` poussé sur ce dépôt déclenche `.github/workflows/release.yml` : build des 4 artefacts, `latest.json` signé pour l'updater, release GitHub (pré-release si le tag contient un suffixe, ex. `v1.0.0-rc.1`).
+Un tag `vX.Y.Z` poussé sur ce dépôt déclenche `.github/workflows/release.yml` : build des 4 artefacts, `latest.json` signé pour l'updater, release GitHub (pré-release si le tag contient un suffixe, ex. `v1.0.0-rc.1` — elle n'est jamais servie comme « latest » à l'updater).
 
 ```bash
 # 1. Mettre à jour la version dans src-tauri/tauri.conf.json, package.json, src-tauri/Cargo.toml
@@ -49,7 +49,7 @@ Les binaires sont non signés tant que la variable de dépôt `SIGN_BINARIES` n'
 
 **Secrets et variables du workflow de release :**
 
-- **Obligatoires** : le secret `TAURI_SIGNING_PRIVATE_KEY` (clé privée minisign de l'updater) et, si elle est protégée par un mot de passe, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Sans eux, le build échoue.
+- **Obligatoires** : le secret `TAURI_SIGNING_PRIVATE_KEY` (clé privée minisign de l'updater ; sa clé publique est `plugins.updater.pubkey` dans `src-tauri/tauri.conf.json` ; sans ce secret, `createUpdaterArtifacts: true` fait échouer le build) et, si elle est protégée par un mot de passe, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Sans eux, le build échoue.
 - **Optionnels** (signature OS des binaires, pas encore activée) : la variable de dépôt `SIGN_BINARIES=true`, plus les secrets `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `KEYCHAIN_PASSWORD` (macOS) et `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` (Windows).
 
 ## Licence

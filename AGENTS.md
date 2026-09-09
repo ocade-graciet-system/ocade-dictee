@@ -137,7 +137,7 @@ All user-facing strings must use i18next translations. ESLint enforces this (no 
 
 **Adding new text:**
 
-1. Add the key to `src/i18n/locales/fr/translation.json` (French, tutoiement — same tone as the rest of the UI).
+1. Add the key to `src/i18n/locales/fr/translation.json` (French, vouvoiement — same tone as the rest of the UI (vous/votre)).
 2. Use it in the component: `const { t } = useTranslation(); t('key.path')`
 
 `bun run check:translations` fails if a key used in the code (`t("...")`) is missing from `fr/translation.json`.
@@ -192,7 +192,7 @@ Access debug features: `Cmd+Shift+D` (macOS) or `Ctrl+Shift+D` (Windows/Linux)
 
 ## Troubleshooting
 
-See the [Troubleshooting](README.md#troubleshooting) section in README.md.
+Installation and troubleshooting procedures per OS live in `docs/installation/` (added in a later plan).
 
 ## GitHub workflow for AI coding assistants
 
