@@ -2094,8 +2094,18 @@ impl ModelManager {
             disarmed: false,
         };
 
-        // Create HTTP client with range request for resuming
-        let client = reqwest::Client::new();
+        // Create HTTP client with range request for resuming.
+        // Délais explicites (issue #2) : sans eux, un miroir qui accepte la
+        // connexion puis se tait bloque la boucle de lecture indéfiniment —
+        // ni repli sur l'autre source, ni bouton « Réessayer » atteignable.
+        // `read_timeout` est une inactivité *par lecture* (le compteur repart à
+        // chaque paquet reçu) : un débit faible mais continu passe. Un `timeout`
+        // global est au contraire proscrit ici, il couperait un téléchargement
+        // de 512 Mo légitimement lent.
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(30))
+            .read_timeout(Duration::from_secs(60))
+            .build()?;
         let mut request = client.get(&url);
 
         if resume_from > 0 {
