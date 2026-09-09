@@ -1999,6 +1999,24 @@ impl ModelManager {
         Ok(())
     }
 
+    /// URL primaire du modèle FR : asset de la pré-release `models-v1` de ce
+    /// dépôt, servi par le CDN GitHub via une redirection 302 (issue #2).
+    /// L'URL Hugging Face du catalogue reste le repli.
+    pub const DEFAULT_FR_MODEL_PRIMARY_URL: &str =
+        "https://github.com/ocade-graciet-system/ocade-dictee/releases/download/models-v1/whisper-distil-fr-dec2-q5_0.bin";
+
+    /// Sources à essayer dans l'ordre pour `model_id` : miroir GitHub d'abord
+    /// pour le modèle FR par défaut, URL du catalogue ensuite. Les deux servent
+    /// le même fichier (même taille, même SHA-256), donc une reprise entamée
+    /// sur l'une peut se terminer sur l'autre.
+    fn download_candidates(model_id: &str, catalog_url: String) -> Vec<String> {
+        if model_id == DEFAULT_FR_MODEL_ID {
+            vec![Self::DEFAULT_FR_MODEL_PRIMARY_URL.to_string(), catalog_url]
+        } else {
+            vec![catalog_url]
+        }
+    }
+
     pub async fn download_model(&self, model_id: &str) -> Result<()> {
         let model_info = {
             let models = self.available_models.lock().unwrap();
@@ -2019,6 +2037,66 @@ impl ModelManager {
                 return Err(anyhow::anyhow!("No download source for model"));
             }
         };
+
+        let candidates = Self::download_candidates(model_id, url);
+
+        // Un seul jeton d'annulation pour toute la série de miroirs : il permet
+        // de distinguer « le miroir a échoué » de « l'utilisateur a annulé »
+        // même quand l'annulation remonte sous la forme d'une erreur réseau.
+        let cancel_token = CancellationToken::new();
+
+        let mut last_error: Option<anyhow::Error> = None;
+        for (index, candidate) in candidates.iter().enumerate() {
+            match self
+                .download_from_url(
+                    model_id,
+                    &model_info,
+                    candidate,
+                    expected_sha256.clone(),
+                    &cancel_token,
+                )
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    // Une annulation par l'utilisateur ne doit pas relancer le
+                    // téléchargement sur le miroir suivant. Vue dans la boucle
+                    // de streaming elle renvoie déjà Ok(()) ; ici on rattrape la
+                    // course où l'erreur réseau remonte avant le jeton.
+                    if cancel_token.is_cancelled() {
+                        info!(
+                            "Téléchargement de {} annulé, pas de bascule sur le miroir suivant ({})",
+                            model_id, e
+                        );
+                        return Ok(());
+                    }
+                    if index + 1 < candidates.len() {
+                        warn!(
+                            "Téléchargement depuis {} échoué ({}), essai du miroir suivant",
+                            candidate, e
+                        );
+                    }
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No download source for model")))
+    }
+
+    /// Télécharge le modèle depuis une source précise. Le jeton d'annulation est
+    /// partagé par tous les miroirs d'un même téléchargement, et le fichier
+    /// `.partial` est commun : la reprise est indifférente à la source, seul le
+    /// SHA-256 final fait foi.
+    async fn download_from_url(
+        &self,
+        model_id: &str,
+        model_info: &ModelInfo,
+        url: &str,
+        expected_sha256: Option<String>,
+        cancel_token: &CancellationToken,
+    ) -> Result<()> {
+        let url = url.to_string();
         let model_path = self.models_dir.join(&model_info.filename);
         let partial_path = self
             .models_dir
@@ -2052,8 +2130,8 @@ impl ModelManager {
             }
         }
 
-        // Create cancellation token for this download
-        let cancel_token = CancellationToken::new();
+        // Register the cancellation token shared by every mirror attempt so
+        // `cancel_download` aborts whichever attempt is in flight.
         {
             let mut flags = self.cancel_flags.lock().unwrap();
             flags.insert(model_id.to_string(), cancel_token.clone());
@@ -2218,7 +2296,7 @@ impl ModelManager {
         let _ = self.app_handle.emit("model-verification-started", model_id);
         info!("Verifying SHA256 for model {}...", model_id);
         let verify_path = partial_path.clone();
-        let verify_expected = expected_sha256.clone();
+        let verify_expected = expected_sha256;
         let verify_model_id = model_id.to_string();
         let verify_result = tokio::task::spawn_blocking(move || {
             Self::verify_sha256(&verify_path, verify_expected.as_deref(), &verify_model_id)
@@ -2800,6 +2878,37 @@ mod tests {
             ModelManager::verify_sha256(&missing_path, Some("anyexpectedhash"), "missing_model");
 
         assert!(result.is_err(), "missing file must return an error");
+    }
+
+    #[test]
+    fn test_download_candidates_puts_github_mirror_before_catalog_for_default_fr_model() {
+        let catalog_url = "https://huggingface.co/bofenghuang/whisper-large-v3-french-distil-dec2/resolve/main/ggml-model-q5_0.bin";
+
+        let candidates =
+            ModelManager::download_candidates(DEFAULT_FR_MODEL_ID, catalog_url.to_string());
+
+        assert_eq!(
+            candidates,
+            vec![
+                ModelManager::DEFAULT_FR_MODEL_PRIMARY_URL.to_string(),
+                catalog_url.to_string(),
+            ],
+            "le modèle FR par défaut doit tenter la release GitHub puis Hugging Face"
+        );
+    }
+
+    #[test]
+    fn test_download_candidates_keeps_catalog_url_alone_for_other_models() {
+        let catalog_url = "https://example.invalid/some-other-model.bin";
+
+        let candidates =
+            ModelManager::download_candidates("some-other-model", catalog_url.to_string());
+
+        assert_eq!(
+            candidates,
+            vec![catalog_url.to_string()],
+            "les autres modèles gardent la seule URL du catalogue"
+        );
     }
 
     fn push_gguf_str(out: &mut Vec<u8>, val: &str) {
