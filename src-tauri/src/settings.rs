@@ -485,10 +485,10 @@ pub struct AppSettings {
 
 fn default_model() -> String {
     // Fork OCADE : le modèle français est pré-sélectionné pour les nouvelles
-    // installations. Il est auto-téléchargé en tâche de fond au premier lancement
-    // (voir l'auto-provisionnement dans `lib.rs`), donc la première dictée se fait
-    // en français sans aucune action de l'utilisateur. Les installations existantes
-    // conservent leur `selected_model` déjà persisté.
+    // installations. Il est téléchargé au premier lancement par l'écran dédié
+    // (`FirstLaunchModelSetup`), donc la première dictée se fait en français sans
+    // aucun choix à faire. Les installations existantes conservent leur
+    // `selected_model` déjà persisté.
     crate::managers::model::DEFAULT_FR_MODEL_ID.to_string()
 }
 

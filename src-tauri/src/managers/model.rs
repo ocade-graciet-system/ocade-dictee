@@ -1,7 +1,6 @@
 use super::model_capabilities::{
     CapabilityProbe, CapabilityProber, Compatibility, GgufHeaderProber,
 };
-use crate::settings::{get_settings, write_settings};
 use anyhow::Result;
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
@@ -84,9 +83,9 @@ const CHINESE_LANGUAGE_CODE: &str = "zh";
 
 /// Identifiant du modèle Whisper français distillé du fork OCADE (variant dec2,
 /// 2 couches de décodeur — le plus rapide). C'est le modèle par défaut (voir
-/// `settings::default_model`) et la cible de l'auto-provisionnement silencieux au
-/// premier lancement (voir `lib.rs`). Doit rester synchronisé avec l'entrée
-/// injectée dans le catalogue plus bas.
+/// `settings::default_model`) et le modèle téléchargé au premier lancement par
+/// l'écran dédié du front (`FirstLaunchModelSetup`). Doit rester synchronisé avec
+/// l'entrée injectée dans le catalogue plus bas.
 pub const DEFAULT_FR_MODEL_ID: &str = "whisper-distil-fr-dec2-q5_0";
 
 /// Taille exacte du fichier `whisper-distil-fr-dec2-q5_0.bin` (sha256 e41b30e8…).
@@ -352,6 +351,9 @@ fn local_caps(probe: &CapabilityProbe) -> LocalCaps {
 
 /// Validate a candidate filename for [`ModelManager::import_model_file`].
 /// Error codes are stable strings the frontend maps to localized messages.
+// v1 modèle unique (issue #2) : plus aucune commande n'importe de modèle, la
+// mécanique et ses tests restent en place pour un éventuel retour de la fonction.
+#[allow(dead_code)]
 fn validate_import_filename(filename: &str, reserved: &HashSet<String>) -> Result<()> {
     if filename.starts_with('.') || !(filename.ends_with(".bin") || filename.ends_with(".gguf")) {
         return Err(anyhow::anyhow!("invalid_extension"));
@@ -692,7 +694,7 @@ impl ModelManager {
         // decoder layers — the fastest distil). Hosted on Hugging Face
         // (bofenghuang), not blob.handy.computer; sha256 verified against the
         // file actually served by the LFS CDN. This is the default FR model (see
-        // `DEFAULT_FR_MODEL_ID`) and the auto-provision target on first launch.
+        // `DEFAULT_FR_MODEL_ID`), downloaded by the first-launch screen.
         //
         // `supported_languages` is French despite the file carrying the
         // multilingual large-v3 vocab (n_vocab 51866): the distillation was
@@ -1201,9 +1203,6 @@ impl ModelManager {
         // Check which models are already downloaded
         manager.update_download_status()?;
 
-        // Auto-select a model if none is currently selected
-        manager.auto_select_model_if_needed()?;
-
         Ok(manager)
     }
 
@@ -1272,6 +1271,9 @@ impl ModelManager {
     /// scanner only picks up `.bin`/`.gguf` files, so an interrupted copy can
     /// never be mistaken for a complete model — then an atomic same-volume
     /// rename publishes it.
+    // v1 modèle unique (issue #2) : la commande `import_custom_model` a été
+    // retirée, plus aucun appelant côté production.
+    #[allow(dead_code)]
     pub fn import_model_file(&self, source: &Path) -> Result<String> {
         let filename = source
             .file_name()
@@ -1357,7 +1359,6 @@ impl ModelManager {
         }
 
         self.update_download_status()?;
-        self.auto_select_model_if_needed()?;
         if added > 0 {
             info!("Model rescan discovered {} new model(s)", added);
         }
@@ -1530,59 +1531,6 @@ impl ModelManager {
                 } else {
                     model.partial_size = 0;
                 }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn auto_select_model_if_needed(&self) -> Result<()> {
-        let mut settings = get_settings(&self.app_handle);
-
-        // Clear stale selection: selected model is set but doesn't exist
-        // in available_models (e.g. deleted custom model file)
-        if !settings.selected_model.is_empty() {
-            let models = self.available_models.lock().unwrap();
-            let exists = models.contains_key(&settings.selected_model);
-            drop(models);
-
-            if !exists {
-                info!(
-                    "Selected model '{}' not found in available models, clearing selection",
-                    settings.selected_model
-                );
-                settings.selected_model = String::new();
-                write_settings(&self.app_handle, settings.clone());
-            }
-        }
-
-        // If onboarding is still pending, do not auto-select just because a
-        // compatible model exists on disk or in the shared HF cache. The
-        // onboarding model step should present that choice explicitly.
-        if !settings.onboarding_completed {
-            debug!("Skipping model auto-selection until onboarding is complete");
-            return Ok(());
-        }
-
-        // If no model is selected, pick the first downloaded one using the same
-        // ranked order the UI receives.
-        if settings.selected_model.is_empty() {
-            if let Some(available_model) = self
-                .get_available_models()
-                .into_iter()
-                .find(|model| model.is_downloaded)
-            {
-                info!(
-                    "Auto-selecting model: {} ({})",
-                    available_model.id, available_model.name
-                );
-
-                // Update settings with the selected model
-                let mut updated_settings = settings;
-                updated_settings.selected_model = available_model.id.clone();
-                write_settings(&self.app_handle, updated_settings);
-
-                info!("Successfully auto-selected model: {}", available_model.id);
             }
         }
 
@@ -2425,6 +2373,9 @@ impl ModelManager {
         Ok(())
     }
 
+    // v1 modèle unique (issue #2) : la commande `delete_model` a été retirée
+    // (le modèle FR ne se supprime plus depuis l'interface), plus aucun appelant.
+    #[allow(dead_code)]
     pub fn delete_model(&self, model_id: &str) -> Result<()> {
         debug!("ModelManager: delete_model called for: {}", model_id);
 

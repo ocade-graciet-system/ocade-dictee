@@ -19,6 +19,16 @@
     "about": "À propos"
   },
   "onboarding": {
+    "firstLaunch": {
+      "title": "Préparation d'OCADE Dictée",
+      "subtitle": "Le modèle de reconnaissance vocale française (512 Mo) se télécharge une seule fois. Ensuite, tout fonctionne hors ligne.",
+      "downloading": "Téléchargement… {{percentage}} % ({{speed}} Mo/s)",
+      "verifying": "Vérification du fichier…",
+      "activating": "Activation du modèle…",
+      "failed": "Le téléchargement a échoué. Vérifiez la connexion Internet puis réessayez.",
+      "selectFailed": "Le modèle n'a pas pu être activé. Relancez l'application.",
+      "retry": "Réessayer"
+    },
     "subtitle": "Pour commencer, choisissez un modèle de transcription",
     "existingModelsTitle": "Compatible Models",
     "downloadModelsTitle": "Available to Download",

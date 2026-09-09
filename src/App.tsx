@@ -11,7 +11,11 @@ import { ModelStateEvent, RecordingErrorEvent } from "./lib/types/events";
 import "./App.css";
 import AccessibilityPermissions from "./components/AccessibilityPermissions";
 import Footer from "./components/footer";
-import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
+import {
+  AccessibilityOnboarding,
+  DEFAULT_FR_MODEL_ID,
+  FirstLaunchModelSetup,
+} from "./components/onboarding";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
 import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
@@ -31,15 +35,12 @@ function App() {
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep | null>(
     null,
   );
-  // Track if this is a returning user who just needs to grant permissions
-  // (vs a new user who needs full onboarding including model selection)
-  const [isReturningUser, setIsReturningUser] = useState(false);
   const [currentSection, setCurrentSection] =
     useState<SidebarSection>("general");
   // `settings` n'est pas consommé ici : seul l'effet de bord du hook compte
   // (déclenche store.initialize(), qui charge store.settings). Nécessaire dès
-  // le montage car ModelCard (étape "model" de l'onboarding, avant que
-  // Sidebar ne monte) lit settings.debug_mode via useSettingsStore.
+  // le montage car l'onboarding s'appuie déjà sur le store des réglages
+  // (AccessibilityOnboarding), avant que Sidebar ne monte.
   useSettings();
   const direction = getLanguageDirection(i18n.language);
   const refreshAudioDevices = useSettingsStore(
@@ -189,8 +190,6 @@ function App() {
 
       if (hasCompletedOnboarding) {
         // Returning user - check if they need to grant permissions first
-        setIsReturningUser(true);
-
         if (currentPlatform === "macos") {
           try {
             const [hasAccessibility, hasMicrophone] = await Promise.all([
@@ -226,10 +225,25 @@ function App() {
           }
         }
 
+        // Le modèle unique doit être sur le disque : sinon on repasse par
+        // l'écran de premier lancement (fichier supprimé, disque nettoyé…).
+        try {
+          const info = await commands.getModelInfo(DEFAULT_FR_MODEL_ID);
+          if (
+            info.status === "ok" &&
+            (info.data === null || !info.data.is_downloaded)
+          ) {
+            await revealMainWindowForPermissions();
+            setOnboardingStep("model");
+            return;
+          }
+        } catch (e) {
+          console.warn("Failed to check model presence:", e);
+        }
+
         setOnboardingStep("done");
       } else {
         // New user - start full onboarding
-        setIsReturningUser(false);
         await revealMainWindowForPermissions();
         setOnboardingStep("accessibility");
       }
@@ -240,13 +254,13 @@ function App() {
   };
 
   const handleAccessibilityComplete = () => {
-    // Returning users already have models, skip to main app
-    // New users need to select a model
-    setOnboardingStep(isReturningUser ? "done" : "model");
+    // Toujours l'étape modèle : si le fichier est déjà là, l'écran de premier
+    // lancement l'active et enchaîne tout seul, sans rien demander.
+    setOnboardingStep("model");
   };
 
   const handleModelSelected = () => {
-    // Transition to main app - user has started a download
+    // Modèle téléchargé puis activé : on passe à l'application.
     setOnboardingStep("done");
   };
 
@@ -284,7 +298,7 @@ function App() {
       <AccessibilityOnboarding onComplete={handleAccessibilityComplete} />
     );
   } else if (onboardingStep === "model") {
-    content = <Onboarding onModelSelected={handleModelSelected} />;
+    content = <FirstLaunchModelSetup onReady={handleModelSelected} />;
   } else {
     content = (
       <div
