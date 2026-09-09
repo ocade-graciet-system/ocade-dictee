@@ -155,12 +155,22 @@
       "streaming": "Affiche la transcription en direct pendant que vous parlez"
     }
   },
+  "progressBar": {
+    "downloading": "Téléchargement…",
+    "downloadingCount": "{{count}} téléchargements en cours…",
+    "downloadingCount_one": "{{count}} téléchargement en cours…",
+    "downloadingCount_other": "{{count}} téléchargements en cours…"
+  },
   "settings": {
     "modelSettings": {
       "title": "Paramètres de {{model}}"
     },
     "general": {
       "title": "Général",
+      "shortcutPreset": {
+        "title": "Raccourci de dictée",
+        "description": "Maintenez ce raccourci pour dicter, relâchez pour coller le texte."
+      },
       "shortcut": {
         "title": "Raccourcis",
         "description": "Configurer les raccourcis clavier pour déclencher l'enregistrement de la reconnaissance vocale",
@@ -307,7 +317,6 @@
       "overlay": {
         "style": {
           "title": "Overlay",
-          "description": "Choose the recording overlay: None hides it, Minimal shows a compact pill, Live shows transcription in real time as you speak (streaming-capable models only — look for the Streaming badge in the model picker). On Linux 'None' is recommended.",
           "options": {
             "none": "Aucune",
             "minimal": "Minimal",
@@ -594,8 +603,8 @@
         "description": "Couper le son du système pendant l'enregistrement"
       },
       "appendTrailingSpace": {
-        "label": "Ajouter une espace final",
-        "description": "Ajouter une espace après la transcription collée"
+        "label": "Ajouter un espace final",
+        "description": "Ajouter un espace après la transcription collée"
       },
       "keyboardImplementation": {
         "title": "Gestion du clavier",

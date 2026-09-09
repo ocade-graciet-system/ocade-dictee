@@ -278,7 +278,12 @@ fn generate_tray_translations() {
     );
 
     // Struct
-    out.push_str("#[derive(Debug, Clone)]\npub struct TrayStrings {\n");
+    //
+    // `#[allow(dead_code)]` : la v1 clé en main (issue #12) n'affiche plus que
+    // 3 des 7 champs du schéma JSON dans le menu (settings/quit/cancel) ; les
+    // autres restent générés pour ne pas complexifier ce build script, mais
+    // ne sont plus lus.
+    out.push_str("#[derive(Debug, Clone)]\n#[allow(dead_code)]\npub struct TrayStrings {\n");
     for (rust_field, _) in &fields {
         out.push_str(&format!("    pub {rust_field}: String,\n"));
     }

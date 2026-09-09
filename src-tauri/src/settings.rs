@@ -442,7 +442,7 @@ pub struct AppSettings {
     pub comm_mute_shortcut: String,
     #[serde(default)]
     pub comm_mute_mode: CommMuteMode,
-    #[serde(default)]
+    #[serde(default = "default_append_trailing_space")]
     pub append_trailing_space: bool,
     #[serde(default = "default_app_language")]
     pub app_language: String,
@@ -492,7 +492,7 @@ fn default_model() -> String {
     crate::managers::model::DEFAULT_FR_MODEL_ID.to_string()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 1;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 2;
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
@@ -511,11 +511,15 @@ fn default_translate_to_english() -> bool {
 }
 
 fn default_start_hidden() -> bool {
-    false
+    true
 }
 
 fn default_autostart_enabled() -> bool {
-    false
+    true
+}
+
+fn default_append_trailing_space() -> bool {
+    true
 }
 
 fn default_update_checks_enabled() -> bool {
@@ -811,15 +815,83 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
 
 pub const SETTINGS_STORE_PATH: &str = "settings_store.json";
 
+// ---------------------------------------------------------------------------
+// OCADE v1 « clé en main » — réglages verrouillés (épic #1, principe n° 1)
+// ---------------------------------------------------------------------------
+
+/// Raccourcis de dictée proposés à l'utilisateur (issue #3). Ordre = ordre
+/// d'affichage ; le premier est le défaut. Identiques sur les 3 OS, seule la
+/// graphie du modificateur change (`option` sur macOS, `alt` ailleurs).
+#[cfg(target_os = "macos")]
+pub const SHORTCUT_PRESETS: [&str; 4] = [
+    "ctrl+option+space",
+    "ctrl+shift+space",
+    "ctrl+option+d",
+    "ctrl+shift+d",
+];
+#[cfg(not(target_os = "macos"))]
+pub const SHORTCUT_PRESETS: [&str; 4] = [
+    "ctrl+alt+space",
+    "ctrl+shift+space",
+    "ctrl+alt+d",
+    "ctrl+shift+d",
+];
+
+/// Mute du micro dans les apps de communication pendant la dictée (issue #5) :
+/// activé par défaut **uniquement** si la recette croisée prouve qu'il ne bloque
+/// ni touche ni collage. Invisible dans l'interface dans les deux cas.
+pub const LOCK_MUTE_OTHERS_WHILE_RECORDING: bool = false;
+
+/// Force les valeurs imposées de la v1. Appelée à chaque lecture des réglages :
+/// un store existant, une ancienne version ou une commande détournée ne peuvent
+/// jamais réactiver un réglage retiré de l'interface. Les clés restent
+/// présentes (compatibilité des profils) — à l'exception du binding
+/// `transcribe_with_post_process`, retiré (post-traitement supprimé). Renvoie
+/// `true` si quelque chose a changé (l'appelant persiste).
+pub fn apply_v1_locks(settings: &mut AppSettings) -> bool {
+    let before = serde_json::to_value(&*settings).ok();
+
+    settings.push_to_talk = true;
+    settings.always_on_microphone = false;
+    settings.audio_feedback = true;
+    settings.audio_feedback_volume = 1.0;
+    settings.mute_while_recording = true;
+    settings.mute_others_while_recording = LOCK_MUTE_OTHERS_WHILE_RECORDING;
+    settings.translate_to_english = false;
+    settings.selected_language = "fr".to_string();
+    settings.app_language = "fr".to_string();
+    settings.overlay_style = OverlayStyle::Live;
+    settings.overlay_position = OverlayPosition::Bottom;
+    settings.show_tray_icon = true;
+    settings.model_unload_timeout = ModelUnloadTimeout::Never;
+    settings.experimental_enabled = false;
+    // Presse-papier (Ctrl/Cmd+V) sur macOS et Windows ; Linux conserve son défaut
+    // plateforme (`Direct`), seul collage fiable sous Wayland.
+    settings.paste_method = PasteMethod::default();
+    settings.clipboard_handling = ClipboardHandling::DontModify;
+    settings.auto_submit = false;
+    settings.history_limit = 0;
+    settings.recording_retention_period = RecordingRetentionPeriod::PreserveLimit;
+    settings.update_checks_enabled = true;
+    settings.show_whats_new_on_update = false;
+    settings.post_process_enabled = false;
+    // Un profil hérité avec `debug_mode: true` afficherait l'onglet Débogage
+    // sans --debug ; seul le flag CLI (voir get_app_settings) le révèle.
+    settings.debug_mode = false;
+
+    settings.bindings.remove("transcribe_with_post_process");
+    if let Some(binding) = settings.bindings.get_mut("transcribe") {
+        binding.default_binding = SHORTCUT_PRESETS[0].to_string();
+        if !SHORTCUT_PRESETS.contains(&binding.current_binding.as_str()) {
+            binding.current_binding = SHORTCUT_PRESETS[0].to_string();
+        }
+    }
+
+    serde_json::to_value(&*settings).ok() != before
+}
+
 pub fn get_default_settings() -> AppSettings {
-    #[cfg(target_os = "windows")]
-    let default_shortcut = "ctrl+space";
-    #[cfg(target_os = "macos")]
-    let default_shortcut = "option+space";
-    #[cfg(target_os = "linux")]
-    let default_shortcut = "ctrl+space";
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    let default_shortcut = "alt+space";
+    let default_shortcut = SHORTCUT_PRESETS[0];
 
     let mut bindings = HashMap::new();
     bindings.insert(
@@ -830,26 +902,6 @@ pub fn get_default_settings() -> AppSettings {
             description: "Converts your speech into text.".to_string(),
             default_binding: default_shortcut.to_string(),
             current_binding: default_shortcut.to_string(),
-        },
-    );
-    #[cfg(target_os = "windows")]
-    let default_post_process_shortcut = "ctrl+shift+space";
-    #[cfg(target_os = "macos")]
-    let default_post_process_shortcut = "option+shift+space";
-    #[cfg(target_os = "linux")]
-    let default_post_process_shortcut = "ctrl+shift+space";
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    let default_post_process_shortcut = "alt+shift+space";
-
-    bindings.insert(
-        "transcribe_with_post_process".to_string(),
-        ShortcutBinding {
-            id: "transcribe_with_post_process".to_string(),
-            name: "Transcribe with Post-Processing".to_string(),
-            description: "Converts your speech into text and applies AI post-processing."
-                .to_string(),
-            default_binding: default_post_process_shortcut.to_string(),
-            current_binding: default_post_process_shortcut.to_string(),
         },
     );
     bindings.insert(
@@ -863,7 +915,7 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
-    AppSettings {
+    let mut settings = AppSettings {
         settings_schema_version: default_settings_schema_version(),
         bindings,
         push_to_talk: default_push_to_talk(),
@@ -906,7 +958,7 @@ pub fn get_default_settings() -> AppSettings {
         mute_others_while_recording: false,
         comm_mute_shortcut: "ctrl+alt+shift+m".to_string(),
         comm_mute_mode: CommMuteMode::PushToMute,
-        append_trailing_space: false,
+        append_trailing_space: default_append_trailing_space(),
         app_language: default_app_language(),
         theme: default_theme(),
         experimental_enabled: false,
@@ -924,7 +976,10 @@ pub fn get_default_settings() -> AppSettings {
         extra_recording_buffer_ms: 0,
         vad_enabled: default_vad_enabled(),
         overlay_style: default_overlay_style(),
-    }
+    };
+    // Les défauts sont eux-mêmes verrouillés : un store neuf part sur les valeurs v1.
+    apply_v1_locks(&mut settings);
+    settings
 }
 
 impl Default for AppSettings {
@@ -995,10 +1050,7 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
             }
         }
 
-        // Interface en français uniquement (issue #11) : un profil antérieur peut
-        // porter une autre langue ; on la normalise à chaque chargement.
-        if settings.app_language != "fr" {
-            settings.app_language = "fr".to_string();
+        if apply_v1_locks(&mut settings) {
             updated = true;
         }
 
@@ -1095,6 +1147,16 @@ fn apply_settings_migrations(
             settings.transcribe_accelerator = TranscribeAcceleratorSetting::Auto;
             settings.transcribe_gpu_device = default_transcribe_gpu_device();
         }
+        settings.settings_schema_version = 1;
+        updated = true;
+    }
+
+    if stored_schema_version < 2 {
+        // v1 « clé en main » (épic #1) : les réglables « activés par défaut »
+        // sont activés une seule fois sur les profils existants.
+        settings.start_hidden = true;
+        settings.autostart_enabled = true;
+        settings.append_trailing_space = true;
         settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
         updated = true;
     }
@@ -1134,12 +1196,10 @@ pub fn get_bindings(app: &AppHandle) -> HashMap<String, ShortcutBinding> {
     settings.bindings
 }
 
-pub fn get_stored_binding(app: &AppHandle, id: &str) -> ShortcutBinding {
+pub fn get_stored_binding(app: &AppHandle, id: &str) -> Option<ShortcutBinding> {
     let bindings = get_bindings(app);
 
-    let binding = bindings.get(id).unwrap().clone();
-
-    binding
+    bindings.get(id).cloned()
 }
 
 pub fn get_history_limit(app: &AppHandle) -> usize {
@@ -1186,7 +1246,7 @@ mod tests {
         // Note "log_level": 2 — the legacy numeric format, kept deliberately.
         let stored: serde_json::Value = serde_json::from_str(
             r##"{
-            "settings_schema_version": 1,
+            "settings_schema_version": 2,
             "bindings": {
                 "transcribe": {
                     "id": "transcribe",
@@ -1528,5 +1588,111 @@ mod tests {
         let out = format!("{:?}", map);
         assert!(!out.contains("secret"));
         assert!(out.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn v1_locks_force_imposed_values() {
+        let mut s = get_default_settings();
+        s.push_to_talk = false;
+        s.audio_feedback = false;
+        s.audio_feedback_volume = 0.3;
+        s.history_limit = 5;
+        s.selected_language = "auto".to_string();
+        s.overlay_style = OverlayStyle::None;
+        s.model_unload_timeout = ModelUnloadTimeout::Min5;
+        s.bindings.get_mut("transcribe").unwrap().current_binding = "f13".to_string();
+        s.post_process_enabled = true;
+        s.always_on_microphone = true;
+        s.mute_others_while_recording = true;
+        s.show_tray_icon = false;
+        s.paste_method = PasteMethod::Direct;
+        s.recording_retention_period = RecordingRetentionPeriod::Never;
+        s.debug_mode = true;
+        assert!(apply_v1_locks(&mut s));
+        assert!(!s.post_process_enabled && !s.always_on_microphone);
+        assert!(!s.debug_mode);
+        assert_eq!(
+            s.mute_others_while_recording,
+            LOCK_MUTE_OTHERS_WHILE_RECORDING
+        );
+        assert!(s.show_tray_icon);
+        assert_eq!(s.paste_method, PasteMethod::default());
+        assert_eq!(
+            s.recording_retention_period,
+            RecordingRetentionPeriod::PreserveLimit
+        );
+        assert!(s.push_to_talk && s.audio_feedback && s.mute_while_recording);
+        assert_eq!(s.audio_feedback_volume, 1.0);
+        assert_eq!(s.history_limit, 0);
+        assert_eq!(s.selected_language, "fr");
+        assert_eq!(s.app_language, "fr");
+        assert_eq!(s.overlay_style, OverlayStyle::Live);
+        assert_eq!(s.overlay_position, OverlayPosition::Bottom);
+        assert_eq!(s.model_unload_timeout, ModelUnloadTimeout::Never);
+        assert_eq!(s.clipboard_handling, ClipboardHandling::DontModify);
+        assert!(!s.auto_submit && !s.experimental_enabled && !s.translate_to_english);
+        assert!(s.update_checks_enabled && !s.show_whats_new_on_update);
+        assert_eq!(
+            s.bindings["transcribe"].current_binding,
+            SHORTCUT_PRESETS[0]
+        );
+        assert!(!s.bindings.contains_key("transcribe_with_post_process"));
+        assert!(
+            !apply_v1_locks(&mut s),
+            "idempotent : rien à changer au 2e passage"
+        );
+    }
+
+    #[test]
+    fn v1_locks_keep_a_preset_binding() {
+        let mut s = get_default_settings();
+        s.bindings.get_mut("transcribe").unwrap().current_binding = SHORTCUT_PRESETS[2].to_string();
+        apply_v1_locks(&mut s);
+        assert_eq!(
+            s.bindings["transcribe"].current_binding,
+            SHORTCUT_PRESETS[2]
+        );
+    }
+
+    #[test]
+    fn defaults_are_locked_and_adjustable_defaults_are_on() {
+        let s = get_default_settings();
+        assert!(s.start_hidden && s.autostart_enabled && s.append_trailing_space);
+        assert!(s.audio_feedback && s.mute_while_recording && s.push_to_talk);
+        assert_eq!(s.history_limit, 0);
+        assert_eq!(s.model_unload_timeout, ModelUnloadTimeout::Never);
+        assert_eq!(s.settings_schema_version, 2);
+        assert_eq!(
+            s.bindings["transcribe"].current_binding,
+            SHORTCUT_PRESETS[0]
+        );
+    }
+
+    #[test]
+    fn schema_v2_migration_turns_adjustable_defaults_on_once() {
+        let mut s = get_default_settings();
+        s.start_hidden = false;
+        s.autostart_enabled = false;
+        s.append_trailing_space = false;
+        s.settings_schema_version = 1;
+        let stored = serde_json::json!({
+            "settings_schema_version": 1,
+            "onboarding_completed": true,
+            "whats_new_last_seen_version": "0.9.17",
+            "overlay_style": "live"
+        });
+        assert!(apply_settings_migrations(&mut s, &stored));
+        assert!(s.start_hidden && s.autostart_enabled && s.append_trailing_space);
+        assert_eq!(s.settings_schema_version, 2);
+        // Déjà en v2 : l'utilisateur a pu désactiver, on ne réimpose pas.
+        s.start_hidden = false;
+        let stored_v2 = serde_json::json!({
+            "settings_schema_version": 2,
+            "onboarding_completed": true,
+            "whats_new_last_seen_version": "0.9.17",
+            "overlay_style": "live"
+        });
+        apply_settings_migrations(&mut s, &stored_v2);
+        assert!(!s.start_hidden);
     }
 }

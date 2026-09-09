@@ -210,8 +210,28 @@ pub fn change_binding(
 #[tauri::command]
 #[specta::specta]
 pub fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, String> {
-    let binding = settings::get_stored_binding(&app, &id);
-    change_binding(app, id, binding.default_binding)
+    match settings::get_stored_binding(&app, &id) {
+        Some(binding) => change_binding(app, id, binding.default_binding),
+        None => {
+            let error_msg = format!("Binding with id '{}' not found in settings", id);
+            warn!("reset_binding error: {}", error_msg);
+            Ok(BindingResponse {
+                success: false,
+                binding: None,
+                error: Some(error_msg),
+            })
+        }
+    }
+}
+
+/// Liste des raccourcis de dictée proposés (issue #3), dans l'ordre d'affichage.
+#[tauri::command]
+#[specta::specta]
+pub fn get_shortcut_presets() -> Vec<String> {
+    settings::SHORTCUT_PRESETS
+        .iter()
+        .map(|preset| preset.to_string())
+        .collect()
 }
 
 /// Temporarily unregister a binding while the user is editing it in the UI.

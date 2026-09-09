@@ -21,6 +21,12 @@ async resetBinding(id: string) : Promise<Result<BindingResponse, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Liste des raccourcis de dictée proposés (issue #3), dans l'ordre d'affichage.
+ */
+async getShortcutPresets() : Promise<string[]> {
+    return await TAURI_INVOKE("get_shortcut_presets");
+},
 async changePttSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_ptt_setting", { enabled }) };
