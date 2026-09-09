@@ -132,7 +132,7 @@ function App() {
       toast.error(t("errors.pasteFailedTitle"), {
         description: t("errors.pasteFailedClipboard", {
           defaultValue:
-            "Le collage automatique a échoué, mais le texte a été copié dans le presse-papiers : colle-le avec Cmd+V.",
+            "Le collage automatique a échoué, mais le texte a été copié dans le presse-papiers : collez-le avec Ctrl+V (⌘V sur Mac).",
         }),
       });
     });
@@ -163,7 +163,7 @@ function App() {
         {
           description: t("errors.transcriptionEmpty", {
             defaultValue:
-              "Aucune parole détectée. Parle un peu plus fort, rapproche-toi du micro, puis réessaie.",
+              "Aucune parole détectée. Parlez un peu plus fort, rapprochez-vous du micro, puis réessayez.",
           }),
         },
       );

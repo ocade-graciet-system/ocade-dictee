@@ -255,7 +255,7 @@
       },
       "muteMicInOtherApps": {
         "title": "Couper mon micro dans les autres apps pendant la dictée",
-        "description": "Envoie un raccourci de mute à ton app d'appel active (ex. Discord) pour que les autres n'entendent pas ta dictée. Définis le MÊME raccourci comme mute GLOBAL dans cette app.",
+        "description": "Envoyez un raccourci de mute à votre app d'appel active (ex. Discord) pour que les autres n'entendent pas votre dictée. Définissez le MÊME raccourci comme mute GLOBAL dans cette app.",
         "shortcutLabel": "Raccourci de mute à envoyer",
         "shortcutPlaceholder": "ctrl+alt+shift+m",
         "modeLabel": "Mode",
@@ -639,11 +639,6 @@
         "description": "Voir le code source et contribuer",
         "button": "Voir sur GitHub"
       },
-      "supportDevelopment": {
-        "title": "Soutenir le développement",
-        "description": "Aidez-nous à continuer à construire OCADE Dictée",
-        "button": "Faire un don"
-      },
       "acknowledgments": {
         "title": "Remerciements",
         "ggml": {
@@ -699,10 +694,10 @@
     "modelLoadFailedUnknown": "modèle inconnu",
     "pasteFailedTitle": "Échec du collage du texte",
     "pasteFailed": "Le texte n'a pas pu être collé dans l'application active.",
-    "pasteFailedClipboard": "Le collage automatique a échoué, mais le texte a été copié dans le presse-papiers : colle-le avec Cmd+V.",
+    "pasteFailedClipboard": "Le collage automatique a échoué, mais le texte a été copié dans le presse-papiers : collez-le avec Ctrl+V (⌘V sur Mac).",
     "transcriptionFailedTitle": "Échec de la transcription",
     "transcriptionEmptyTitle": "Rien entendu",
-    "transcriptionEmpty": "Aucune parole détectée. Parle un peu plus fort, rapproche-toi du micro, puis réessaie."
+    "transcriptionEmpty": "Aucune parole détectée. Parlez un peu plus fort, rapprochez-vous du micro, puis réessayez."
   },
   "appLanguage": {
     "title": "Langue de l'application",
