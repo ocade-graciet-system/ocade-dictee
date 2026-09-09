@@ -10,6 +10,10 @@ import { commands } from "@/bindings";
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // toutes les 24 h (issue #6)
 const RETRY_WHEN_BUSY_MS = 5 * 60 * 1000; // dictée ou téléchargement en cours → réessai dans 5 min
+// Borne totale de la requête de téléchargement. Sans elle, un socket
+// semi-ouvert ne rejette jamais et l'écran non fermable bloque l'application.
+// Large à dessein : le bundle pèse quelques dizaines de Mo.
+const DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000;
 
 // Mise à jour forcée : aucune question, aucun report. Montée à la racine de
 // l'app pour couvrir aussi les écrans de premier lancement.
@@ -57,29 +61,32 @@ export const ForcedUpdater: React.FC = () => {
     setProgress(0);
     downloadedBytes.current = 0;
     totalBytes.current = 0;
-    await pending.download((event) => {
-      switch (event.event) {
-        case "Started":
-          totalBytes.current = event.data.contentLength ?? 0;
-          break;
-        case "Progress":
-          downloadedBytes.current += event.data.chunkLength;
-          if (totalBytes.current > 0) {
-            setProgress(
-              Math.min(
-                100,
-                Math.round(
-                  (downloadedBytes.current / totalBytes.current) * 100,
+    await pending.download(
+      (event) => {
+        switch (event.event) {
+          case "Started":
+            totalBytes.current = event.data.contentLength ?? 0;
+            break;
+          case "Progress":
+            downloadedBytes.current += event.data.chunkLength;
+            if (totalBytes.current > 0) {
+              setProgress(
+                Math.min(
+                  100,
+                  Math.round(
+                    (downloadedBytes.current / totalBytes.current) * 100,
+                  ),
                 ),
-              ),
-            );
-          }
-          break;
-        case "Finished":
-          setProgress(100);
-          break;
-      }
-    });
+              );
+            }
+            break;
+          case "Finished":
+            setProgress(100);
+            break;
+        }
+      },
+      { timeout: DOWNLOAD_TIMEOUT_MS },
+    );
   };
 
   const installAndRelaunch = async (pending: Update) => {
