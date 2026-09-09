@@ -102,6 +102,11 @@ fn should_use_streaming_overlay(style: OverlayStyle, is_streaming: bool) -> bool
 }
 
 async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
+    if !settings.post_process_enabled {
+        debug!("Post-processing skipped because it is disabled");
+        return None;
+    }
+
     if is_blank_transcription(transcription) {
         debug!("Post-processing skipped because the transcription is empty");
         return None;
