@@ -8,7 +8,7 @@ OCADE Dictée est un fork de [Handy](https://github.com/cjpais/Handy) (MIT) adap
 2. Avant d'ouvrir la PR : `bun run format && bun run lint && bun run build && (cd src-tauri && cargo test) && bun run check:translations`.
 3. **Tout ce qui n'est pas réglable n'apparaît nulle part dans l'outil** (voir principe n° 1 de l'épic). Ne pas réintroduire de réglage sans décision dans une issue.
 4. **Chaque comportement doit fonctionner sur macOS, Windows et Linux.** Ce qui n'a pu être testé que sur un OS est listé dans la PR, section « À vérifier en recette ».
-5. Interface en français. Ajouter les clés dans `src/i18n/locales/fr/translation.json` (seule locale).
+5. Interface en français. Ajouter les clés dans `src/i18n/locales/fr/translation.json` — et, tant que d'autres locales existent dans `src/i18n/locales/`, dans `en/translation.json` aussi (le contrôle `check:translations` compare chaque locale à `en`).
 
 ## Démarrer
 
