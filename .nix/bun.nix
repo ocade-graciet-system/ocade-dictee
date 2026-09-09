@@ -401,13 +401,13 @@
     url = "https://registry.npmjs.org/@tauri-apps/plugin-clipboard-manager/-/plugin-clipboard-manager-2.3.3.tgz";
     hash = "sha512-KnyoTs9gj1yEgDkSPUNjOIOHjJTr5wk8IWcYMOWxYTIJCip6QwlyPW8u2X+6bd6kHM4fAdZNpxoal0gy/TwJbg==";
   };
-  "@tauri-apps/plugin-dialog@2.7.3" = fetchurl {
-    url = "https://registry.npmjs.org/@tauri-apps/plugin-dialog/-/plugin-dialog-2.7.3.tgz";
-    hash = "sha512-CRgE+7TP4tvq9MjBU6f04NLTFIqVMLKHk3hAqlhil00ngK9ACTrXPH3oHpKMProxILodd3YjBoKbMwSI4IEcfA==";
+  "@tauri-apps/plugin-dialog@2.6.0" = fetchurl {
+    url = "https://registry.npmjs.org/@tauri-apps/plugin-dialog/-/plugin-dialog-2.6.0.tgz";
+    hash = "sha512-q4Uq3eY87TdcYzXACiYSPhmpBA76shgmQswGkSVio4C82Sz2W4iehe9TnKYwbq7weHiL88Yw19XZm7v28+Micg==";
   };
-  "@tauri-apps/plugin-fs@2.5.2" = fetchurl {
-    url = "https://registry.npmjs.org/@tauri-apps/plugin-fs/-/plugin-fs-2.5.2.tgz";
-    hash = "sha512-XXvMSnFiob+G1H+YHCDf+bzWVumseQuEIhzpbOJzevUfL4k0U+sTApZWJHpoLiamggnVPJm5dJ5sDsniRyWxlg==";
+  "@tauri-apps/plugin-fs@2.4.5" = fetchurl {
+    url = "https://registry.npmjs.org/@tauri-apps/plugin-fs/-/plugin-fs-2.4.5.tgz";
+    hash = "sha512-dVxWWGE6VrOxC7/jlhyE+ON/Cc2REJlM35R3PJX3UvFw2XwYhLGQVAIyrehenDdKjotipjYEVc4YjOl3qq90fA==";
   };
   "@tauri-apps/plugin-global-shortcut@2.3.2" = fetchurl {
     url = "https://registry.npmjs.org/@tauri-apps/plugin-global-shortcut/-/plugin-global-shortcut-2.3.2.tgz";
@@ -433,9 +433,9 @@
     url = "https://registry.npmjs.org/@tauri-apps/plugin-store/-/plugin-store-2.4.4.tgz";
     hash = "sha512-oxSMaj/QpVfJcBMYX5aOQV94fWvga0MwQMfD6TLlbK2dh+ShPWAzefd8HWXhvOKjPRJdGVAkW7ZGO76JzzjaDA==";
   };
-  "@tauri-apps/plugin-updater@2.11.0" = fetchurl {
-    url = "https://registry.npmjs.org/@tauri-apps/plugin-updater/-/plugin-updater-2.11.0.tgz";
-    hash = "sha512-AE36XkOoSna24G40jZMY15nzAnkXEPL/73tGoseGrtGOHuI/cZwWzHpZFLjKXDPgzYZ435z1gHu28LgrsBwIxQ==";
+  "@tauri-apps/plugin-updater@2.10.1" = fetchurl {
+    url = "https://registry.npmjs.org/@tauri-apps/plugin-updater/-/plugin-updater-2.10.1.tgz";
+    hash = "sha512-NFYMg+tWOZPJdzE/PpFj2qfqwAWwNS3kXrb1tm1gnBJ9mYzZ4WDRrwy8udzWoAnfGCHLuePNLY1WVCNHnh3eRA==";
   };
   "@tybys/wasm-util@0.10.3" = fetchurl {
     url = "https://registry.npmjs.org/@tybys/wasm-util/-/wasm-util-0.10.3.tgz";
