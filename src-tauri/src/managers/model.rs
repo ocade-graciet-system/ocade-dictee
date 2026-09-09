@@ -2122,6 +2122,29 @@ impl ModelManager {
             response = client.get(&url).send().await?;
         }
 
+        // Reprise refusée par le serveur (416 Range Not Satisfiable) : le
+        // `.partial` est plus grand que la ressource — fichier remplacé côté
+        // miroir, ou reliquat d'un autre modèle. Sans ce traitement l'échec est
+        // définitif : les deux miroirs renvoient le même 416 et chaque
+        // « Réessayer » le rejoue à l'identique. On repart donc de zéro, comme
+        // pour un serveur qui ignore `Range` (cas 200 juste au-dessus). Une
+        // seule relance : `resume_from` vaut 0 ensuite, plus aucun en-tête
+        // `Range` n'est envoyé.
+        if resume_from > 0 && response.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+            warn!(
+                "Reprise refusée (HTTP 416) pour le modèle {}, suppression du fichier partiel et téléchargement complet",
+                model_id
+            );
+            drop(response);
+            let _ = fs::remove_file(&partial_path);
+
+            // Plus rien à reprendre : on repart de l'octet 0.
+            resume_from = 0;
+
+            // Rejeu de la requête sans en-tête `Range`.
+            response = client.get(&url).send().await?;
+        }
+
         // Check for success or partial content status
         if !response.status().is_success()
             && response.status() != reqwest::StatusCode::PARTIAL_CONTENT
