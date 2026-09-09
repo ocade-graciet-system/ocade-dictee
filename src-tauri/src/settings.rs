@@ -485,10 +485,10 @@ pub struct AppSettings {
 
 fn default_model() -> String {
     // Fork OCADE : le modèle français est pré-sélectionné pour les nouvelles
-    // installations. Il est auto-téléchargé en tâche de fond au premier lancement
-    // (voir l'auto-provisionnement dans `lib.rs`), donc la première dictée se fait
-    // en français sans aucune action de l'utilisateur. Les installations existantes
-    // conservent leur `selected_model` déjà persisté.
+    // installations. Il est téléchargé au premier lancement par l'écran dédié
+    // (`FirstLaunchModelSetup`), donc la première dictée se fait en français sans
+    // aucun choix à faire. Les installations existantes conservent leur
+    // `selected_model` déjà persisté.
     crate::managers::model::DEFAULT_FR_MODEL_ID.to_string()
 }
 
@@ -858,6 +858,9 @@ pub fn apply_v1_locks(settings: &mut AppSettings) -> bool {
     settings.mute_while_recording = true;
     settings.mute_others_while_recording = LOCK_MUTE_OTHERS_WHILE_RECORDING;
     settings.translate_to_english = false;
+    // Modèle unique proposé par l'app (voir `default_model`) : un store hérité
+    // ne doit pas pouvoir réactiver un autre modèle que le FR.
+    settings.selected_model = crate::managers::model::DEFAULT_FR_MODEL_ID.to_string();
     settings.selected_language = "fr".to_string();
     settings.app_language = "fr".to_string();
     settings.overlay_style = OverlayStyle::Live;
@@ -1598,6 +1601,7 @@ mod tests {
         s.audio_feedback_volume = 0.3;
         s.history_limit = 5;
         s.selected_language = "auto".to_string();
+        s.selected_model = "whisper-large-v3-turbo".to_string();
         s.overlay_style = OverlayStyle::None;
         s.model_unload_timeout = ModelUnloadTimeout::Min5;
         s.bindings.get_mut("transcribe").unwrap().current_binding = "f13".to_string();
@@ -1625,6 +1629,10 @@ mod tests {
         assert_eq!(s.audio_feedback_volume, 1.0);
         assert_eq!(s.history_limit, 0);
         assert_eq!(s.selected_language, "fr");
+        assert_eq!(
+            s.selected_model,
+            crate::managers::model::DEFAULT_FR_MODEL_ID
+        );
         assert_eq!(s.app_language, "fr");
         assert_eq!(s.overlay_style, OverlayStyle::Live);
         assert_eq!(s.overlay_position, OverlayPosition::Bottom);

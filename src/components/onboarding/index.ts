@@ -1,4 +1,5 @@
-export { default } from "./Onboarding";
+export {
+  default as FirstLaunchModelSetup,
+  DEFAULT_FR_MODEL_ID,
+} from "./FirstLaunchModelSetup";
 export { default as AccessibilityOnboarding } from "./AccessibilityOnboarding";
-export { default as ModelCard, isLegacySource } from "./ModelCard";
-export type { ModelCardStatus } from "./ModelCard";

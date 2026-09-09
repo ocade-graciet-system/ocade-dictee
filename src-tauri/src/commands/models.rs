@@ -35,23 +35,6 @@ pub async fn rescan_local_models(
         .map_err(|e| e.to_string())
 }
 
-/// Copy a user-picked model file (.bin / .gguf) into the managed models
-/// directory so it can be used without touching the filesystem by hand.
-/// Returns the imported model's id. The copy runs off the async runtime —
-/// model files are hundreds of MB.
-#[tauri::command]
-#[specta::specta]
-pub async fn import_custom_model(
-    model_manager: State<'_, Arc<ModelManager>>,
-    source_path: String,
-) -> Result<String, String> {
-    let mm = model_manager.inner().clone();
-    tokio::task::spawn_blocking(move || mm.import_model_file(std::path::Path::new(&source_path)))
-        .await
-        .map_err(|e| format!("import task panicked: {e}"))?
-        .map_err(|e| e.to_string())
-}
-
 #[tauri::command]
 #[specta::specta]
 pub async fn download_model(
@@ -72,31 +55,6 @@ pub async fn download_model(
     }
 
     result
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn delete_model(
-    app_handle: AppHandle,
-    model_manager: State<'_, Arc<ModelManager>>,
-    transcription_manager: State<'_, Arc<TranscriptionManager>>,
-    model_id: String,
-) -> Result<(), String> {
-    // If deleting the active model, unload it and clear the setting
-    let settings = get_settings(&app_handle);
-    if settings.selected_model == model_id {
-        transcription_manager
-            .unload_model()
-            .map_err(|e| format!("Failed to unload model: {}", e))?;
-
-        let mut settings = get_settings(&app_handle);
-        settings.selected_model = String::new();
-        write_settings(&app_handle, settings);
-    }
-
-    model_manager
-        .delete_model(&model_id)
-        .map_err(|e| e.to_string())
 }
 
 /// Shared logic for switching the active model, used by both the Tauri command
