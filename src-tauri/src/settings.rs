@@ -875,6 +875,9 @@ pub fn apply_v1_locks(settings: &mut AppSettings) -> bool {
     settings.update_checks_enabled = true;
     settings.show_whats_new_on_update = false;
     settings.post_process_enabled = false;
+    // Un profil hérité avec `debug_mode: true` afficherait l'onglet Débogage
+    // sans --debug ; seul le flag CLI (voir get_app_settings) le révèle.
+    settings.debug_mode = false;
 
     settings.bindings.remove("transcribe_with_post_process");
     if let Some(binding) = settings.bindings.get_mut("transcribe") {
@@ -1604,8 +1607,10 @@ mod tests {
         s.show_tray_icon = false;
         s.paste_method = PasteMethod::Direct;
         s.recording_retention_period = RecordingRetentionPeriod::Never;
+        s.debug_mode = true;
         assert!(apply_v1_locks(&mut s));
         assert!(!s.post_process_enabled && !s.always_on_microphone);
+        assert!(!s.debug_mode);
         assert_eq!(
             s.mute_others_while_recording,
             LOCK_MUTE_OTHERS_WHILE_RECORDING

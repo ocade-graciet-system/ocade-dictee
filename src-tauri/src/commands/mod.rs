@@ -36,7 +36,12 @@ pub fn get_app_dir_path(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 #[specta::specta]
 pub fn get_app_settings(app: AppHandle) -> Result<AppSettings, String> {
-    Ok(get_settings(&app))
+    let mut settings = get_settings(&app);
+    // --debug ne révèle l'onglet Débogage que pour ce processus ; jamais écrit dans le store.
+    if app.state::<crate::cli::CliArgs>().debug {
+        settings.debug_mode = true;
+    }
+    Ok(settings)
 }
 
 #[tauri::command]
