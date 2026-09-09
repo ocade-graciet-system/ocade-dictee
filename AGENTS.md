@@ -133,26 +133,16 @@ The app enforces single instance behavior — launching when already running bri
 
 ## Internationalization (i18n)
 
-All user-facing strings must use i18next translations. ESLint enforces this (no hardcoded strings in JSX).
+All user-facing strings must use i18next translations. ESLint enforces this (no hardcoded strings in JSX). The UI is French only — a single locale, `src/i18n/locales/fr/translation.json`.
 
 **Adding new text:**
 
-1. Add key to `src/i18n/locales/en/translation.json`
-2. Use in component: `const { t } = useTranslation(); t('key.path')`
+1. Add the key to `src/i18n/locales/fr/translation.json` (French, tutoiement — same tone as the rest of the UI).
+2. Use it in the component: `const { t } = useTranslation(); t('key.path')`
 
-**File structure:**
+`bun run check:translations` fails if a key used in the code (`t("...")`) is missing from `fr/translation.json`.
 
-```
-src/i18n/
-├── index.ts           # i18n setup
-├── languages.ts       # Language metadata
-└── locales/
-    ├── en/translation.json  # English (source)
-    ├── de/, es/, fr/, ja/, ru/, zh/, ...
-    └── ...
-```
-
-The UI is French only: the single locale is `src/i18n/locales/fr/translation.json`; `bun run check:translations` verifies every key used in the code exists there.
+The tray menu strings are generated at build time by `src-tauri/build.rs` from the `tray` section of `fr/translation.json` — they aren't hand-written in Rust.
 
 ## Code Style
 
@@ -211,7 +201,7 @@ See the [Troubleshooting](README.md#troubleshooting) section in README.md.
 - **Opening a PR:** One PR per issue, on a branch created from `v1-cle-en-main` (or `main` once 1.0 ships). Read [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) and fill it in completely: link the issue (`Closes #`), write the summary, tick the verification checklist, and list anything you could only test on one OS under "À vérifier en recette".
 - **Opening an issue:** Read [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/). You can open an issue with no template at all (blank issues are enabled); `bug_report.md` is there as an optional template for bugs, not a requirement.
 - **Proposing a feature:** There's no freeze on new features — open a PR directly, following the rules in [CONTRIBUTING.md](CONTRIBUTING.md).
-- **Translations:** French only — add new keys to `src/i18n/locales/fr/translation.json` (see CONTRIBUTING.md, rule 5).
+- **Translations:** French only — add new keys to `src/i18n/locales/fr/translation.json` (see [CONTRIBUTING.md](CONTRIBUTING.md), rule 5).
 - **Full contributor workflow:** [CONTRIBUTING.md](CONTRIBUTING.md).
 
 **Commits:** Use conventional commit prefixes (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`). Focus the message on _why_, not _what_.
