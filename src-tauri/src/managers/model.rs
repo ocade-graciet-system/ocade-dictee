@@ -2895,6 +2895,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_default_fr_model_primary_url_targets_the_models_v1_release_asset() {
+        // Garde-fou de forme : l'URL primaire doit rester l'asset `models-v1` du
+        // dépôt du fork. Une faute de frappe sur le tag ou le nom de fichier ne
+        // se voit qu'au premier lancement d'une installation neuve, en 404.
+        let url = ModelManager::DEFAULT_FR_MODEL_PRIMARY_URL;
+
+        assert!(
+            url.starts_with(
+                "https://github.com/ocade-graciet-system/ocade-dictee/releases/download/models-v1/"
+            ),
+            "URL primaire inattendue : {url}"
+        );
+        assert!(
+            url.ends_with("whisper-distil-fr-dec2-q5_0.bin"),
+            "URL primaire inattendue : {url}"
+        );
+    }
+
     fn push_gguf_str(out: &mut Vec<u8>, val: &str) {
         out.extend_from_slice(&(val.len() as u64).to_le_bytes());
         out.extend_from_slice(val.as_bytes());
