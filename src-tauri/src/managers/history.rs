@@ -526,12 +526,7 @@ impl HistoryManager {
         Ok(entry)
     }
 
-    /// Get the latest entry with non-empty transcription text.
-    pub fn get_latest_completed_entry(&self) -> Result<Option<HistoryEntry>> {
-        let conn = self.get_connection()?;
-        Self::get_latest_completed_entry_with_conn(&conn)
-    }
-
+    #[cfg(test)]
     fn get_latest_completed_entry_with_conn(conn: &Connection) -> Result<Option<HistoryEntry>> {
         let mut stmt = conn.prepare(
             "SELECT
