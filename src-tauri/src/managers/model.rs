@@ -89,6 +89,27 @@ const CHINESE_LANGUAGE_CODE: &str = "zh";
 /// injectée dans le catalogue plus bas.
 pub const DEFAULT_FR_MODEL_ID: &str = "whisper-distil-fr-dec2-q5_0";
 
+/// Taille exacte du fichier `whisper-distil-fr-dec2-q5_0.bin` (sha256 e41b30e8…).
+pub const DEFAULT_FR_MODEL_SIZE_BYTES: u64 = 537_819_875;
+
+/// Adopte un fichier importé à la main sous son nom Hugging Face d'origine
+/// (`ggml-model-q5_0.bin`) comme le modèle FR du catalogue : renommage sur
+/// place, sans re-télécharger 512 Mo sur les installations de test (issue #2).
+/// Ne touche à rien si la taille ne correspond pas (autre modèle homonyme).
+pub fn adopt_legacy_fr_model_file(models_dir: &Path, expected_len: u64) -> std::io::Result<bool> {
+    let legacy = models_dir.join("ggml-model-q5_0.bin");
+    let target = models_dir.join("whisper-distil-fr-dec2-q5_0.bin");
+    if target.exists() || !legacy.exists() {
+        return Ok(false);
+    }
+    if legacy.metadata()?.len() != expected_len {
+        return Ok(false);
+    }
+    std::fs::rename(&legacy, &target)?;
+    info!("Modèle FR importé à la main adopté sous son nom de catalogue");
+    Ok(true)
+}
+
 fn recognition_language(language: &str) -> &str {
     match language {
         "zh-Hans" | "zh-Hant" => CHINESE_LANGUAGE_CODE,
@@ -482,6 +503,10 @@ impl ModelManager {
 
         if !models_dir.exists() {
             fs::create_dir_all(&models_dir)?;
+        }
+
+        if let Err(e) = adopt_legacy_fr_model_file(&models_dir, DEFAULT_FR_MODEL_SIZE_BYTES) {
+            warn!("Adoption du modèle FR hérité impossible: {}", e);
         }
 
         let mut available_models = HashMap::new();
@@ -1183,9 +1208,14 @@ impl ModelManager {
     }
 
     pub fn get_available_models(&self) -> Vec<ModelInfo> {
+        // v1 clé en main (issue #2) : un seul modèle existe pour l'utilisateur.
         let mut list: Vec<ModelInfo> = {
             let models = self.available_models.lock().unwrap();
-            models.values().cloned().collect()
+            models
+                .values()
+                .filter(|m| m.id == DEFAULT_FR_MODEL_ID)
+                .cloned()
+                .collect()
         };
         // Stable, reasonable order: catalog editorial rank first (lower = higher
         // priority), then any other recommended model, then by accuracy, speed,
@@ -2867,5 +2897,30 @@ mod tests {
             "reserved_filename",
             "built-in filenames must not be shadowed by imports"
         );
+    }
+
+    #[test]
+    fn adopts_legacy_file_when_size_matches() {
+        let dir = std::env::temp_dir().join(format!("ocade-adopt-ok-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("ggml-model-q5_0.bin"), b"12345").unwrap();
+        assert!(adopt_legacy_fr_model_file(&dir, 5).unwrap());
+        assert!(dir.join("whisper-distil-fr-dec2-q5_0.bin").exists());
+        assert!(!dir.join("ggml-model-q5_0.bin").exists());
+        assert!(
+            !adopt_legacy_fr_model_file(&dir, 5).unwrap(),
+            "déjà adopté : no-op"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn ignores_legacy_file_with_wrong_size() {
+        let dir = std::env::temp_dir().join(format!("ocade-adopt-ko-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("ggml-model-q5_0.bin"), b"12345").unwrap();
+        assert!(!adopt_legacy_fr_model_file(&dir, 99).unwrap());
+        assert!(dir.join("ggml-model-q5_0.bin").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
