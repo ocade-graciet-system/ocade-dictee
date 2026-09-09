@@ -161,6 +161,10 @@
     },
     "general": {
       "title": "Général",
+      "shortcutPreset": {
+        "title": "Raccourci de dictée",
+        "description": "Maintenez ce raccourci pour dicter, relâchez pour coller le texte."
+      },
       "shortcut": {
         "title": "Raccourcis",
         "description": "Configurer les raccourcis clavier pour déclencher l'enregistrement de la reconnaissance vocale",
