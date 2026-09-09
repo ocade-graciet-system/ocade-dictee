@@ -214,6 +214,16 @@ pub fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, Stri
     change_binding(app, id, binding.default_binding)
 }
 
+/// Liste des raccourcis de dictée proposés (issue #3), dans l'ordre d'affichage.
+#[tauri::command]
+#[specta::specta]
+pub fn get_shortcut_presets() -> Vec<String> {
+    settings::SHORTCUT_PRESETS
+        .iter()
+        .map(|preset| preset.to_string())
+        .collect()
+}
+
 /// Temporarily unregister a binding while the user is editing it in the UI.
 /// This avoids firing the action while keys are being recorded.
 #[tauri::command]

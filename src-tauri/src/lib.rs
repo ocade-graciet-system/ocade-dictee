@@ -612,6 +612,7 @@ pub fn run(cli_args: CliArgs) {
         .commands(collect_commands![
             shortcut::change_binding,
             shortcut::reset_binding,
+            shortcut::get_shortcut_presets,
             shortcut::change_ptt_setting,
             shortcut::change_audio_feedback_setting,
             shortcut::change_audio_feedback_volume_setting,
