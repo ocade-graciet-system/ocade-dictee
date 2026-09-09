@@ -669,6 +669,7 @@
     "title": "Mise à jour vers la version {{version}}",
     "description": "OCADE Dictée s'installe et redémarre automatiquement. Ne fermez pas l'application.",
     "downloading": "Téléchargement… {{progress}} %",
+    "downloadingBytes": "Téléchargement… {{megabytes}} Mo",
     "installing": "Installation…"
   },
   "whatsNew": {

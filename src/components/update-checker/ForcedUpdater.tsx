@@ -15,6 +15,14 @@ const RETRY_WHEN_BUSY_MS = 5 * 60 * 1000; // dictée ou téléchargement en cour
 // Large à dessein : le bundle pèse quelques dizaines de Mo.
 const DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000;
 
+// Mo reçus, à une décimale et en typographie française (virgule décimale) :
+// l'écran est intégralement en français, la locale système n'a pas à s'y
+// substituer.
+const megabyteFormatter = new Intl.NumberFormat("fr-FR", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
 // Mise à jour forcée : aucune question, aucun report. Montée à la racine de
 // l'app pour couvrir aussi les écrans de premier lancement.
 export const ForcedUpdater: React.FC = () => {
@@ -27,6 +35,10 @@ export const ForcedUpdater: React.FC = () => {
   const [phase, setPhase] = useState<"downloading" | "installing">(
     "downloading",
   );
+  // Mo reçus quand le serveur n'annonce pas de `Content-Length` ; `null` quand
+  // la taille totale est connue et que le pourcentage suffit.
+  const [receivedMb, setReceivedMb] = useState<number | null>(null);
+  const screen = useRef<HTMLDivElement>(null);
   const busy = useRef(false);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const downloadedBytes = useRef(0);
@@ -71,6 +83,7 @@ export const ForcedUpdater: React.FC = () => {
     setPhase("downloading");
     setUpdate(pending);
     setProgress(0);
+    setReceivedMb(null);
     downloadedBytes.current = 0;
     totalBytes.current = 0;
     await pending.download(
@@ -78,6 +91,9 @@ export const ForcedUpdater: React.FC = () => {
         switch (event.event) {
           case "Started":
             totalBytes.current = event.data.contentLength ?? 0;
+            // Sans taille totale, le pourcentage resterait figé à 0 % : on
+            // bascule sur le volume reçu.
+            setReceivedMb(totalBytes.current > 0 ? null : 0);
             break;
           case "Progress":
             downloadedBytes.current += event.data.chunkLength;
@@ -90,10 +106,13 @@ export const ForcedUpdater: React.FC = () => {
                   ),
                 ),
               );
+            } else {
+              setReceivedMb(downloadedBytes.current / 1_048_576);
             }
             break;
           case "Finished":
             setProgress(100);
+            setReceivedMb(null);
             break;
         }
       },
@@ -159,6 +178,17 @@ export const ForcedUpdater: React.FC = () => {
     }
   };
 
+  // L'écran est modal et non fermable : il prend le focus et neutralise le
+  // clavier pour que l'interface masquée reste hors d'atteinte (Tab, raccourcis
+  // de l'app). Les raccourcis globaux, gérés côté Rust, ne sont pas concernés.
+  useEffect(() => {
+    if (!update) return;
+    screen.current?.focus();
+    const swallowKey = (e: KeyboardEvent) => e.preventDefault();
+    document.addEventListener("keydown", swallowKey, true);
+    return () => document.removeEventListener("keydown", swallowKey, true);
+  }, [update]);
+
   useEffect(() => {
     void run();
     const timer = setInterval(() => void run(), CHECK_INTERVAL_MS);
@@ -173,8 +203,15 @@ export const ForcedUpdater: React.FC = () => {
   if (!update) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-background select-none">
-      <h2 className="text-base font-semibold">
+    <div
+      ref={screen}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="updater-title"
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-background select-none outline-none"
+    >
+      <h2 id="updater-title" className="text-base font-semibold">
         {t("updater.title", { version: update.version })}
       </h2>
       <p className="text-sm text-text/70 max-w-md text-center">
@@ -186,10 +223,14 @@ export const ForcedUpdater: React.FC = () => {
           size="full"
         />
       </div>
-      <p className="text-sm text-text/60 tabular-nums">
+      <p className="text-sm text-text/60 tabular-nums" aria-live="polite">
         {phase === "installing"
           ? t("updater.installing")
-          : t("updater.downloading", { progress })}
+          : receivedMb === null
+            ? t("updater.downloading", { progress })
+            : t("updater.downloadingBytes", {
+                megabytes: megabyteFormatter.format(receivedMb),
+              })}
       </p>
     </div>
   );
