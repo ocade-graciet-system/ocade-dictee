@@ -200,7 +200,13 @@ export const ForcedUpdater: React.FC = () => {
   useEffect(() => {
     if (!update) return;
     screen.current?.focus();
-    const swallowKey = (e: KeyboardEvent) => e.preventDefault();
+    // `preventDefault` n'annule que l'effet par défaut, pas les écouteurs de
+    // l'app : `stopImmediatePropagation` coupe en plus la propagation, la
+    // touche ne descend jamais jusqu'à l'interface masquée.
+    const swallowKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
     document.addEventListener("keydown", swallowKey, true);
     return () => document.removeEventListener("keydown", swallowKey, true);
   }, [update]);
@@ -218,6 +224,8 @@ export const ForcedUpdater: React.FC = () => {
 
   if (!update) return null;
 
+  // `z-[60]` : au-dessus des `Dialog` (`z-50`), qu'un dialogue resté ouvert ne
+  // vienne pas se superposer à une mise à jour en cours.
   return (
     <div
       ref={screen}
@@ -225,7 +233,7 @@ export const ForcedUpdater: React.FC = () => {
       aria-modal="true"
       aria-labelledby="updater-title"
       tabIndex={-1}
-      className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-background select-none outline-none"
+      className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-4 bg-background select-none outline-none"
     >
       <h2 id="updater-title" className="text-base font-semibold">
         {t("updater.title", { version: update.version })}
@@ -239,7 +247,7 @@ export const ForcedUpdater: React.FC = () => {
           size="full"
         />
       </div>
-      <p className="text-sm text-text/60 tabular-nums" aria-live="polite">
+      <p className="text-sm text-text/60 tabular-nums">
         {phase === "installing"
           ? t("updater.installing")
           : receivedMb === null
@@ -247,6 +255,17 @@ export const ForcedUpdater: React.FC = () => {
             : t("updater.downloadingBytes", {
                 megabytes: megabyteFormatter.format(receivedMb),
               })}
+      </p>
+      {/* Le texte visible change plusieurs fois par seconde : annoncé, il
+          noierait la synthèse vocale. Seuls les changements de phase le sont
+          ici, via un contenu qui ne dépend que de `phase` — le libellé de
+          téléchargement est donc figé à son point de départ, 0 %. */}
+      <p className="sr-only" aria-live="polite">
+        {`${t("updater.title", { version: update.version })} — ${
+          phase === "installing"
+            ? t("updater.installing")
+            : t("updater.downloading", { progress: 0 })
+        }`}
       </p>
     </div>
   );
