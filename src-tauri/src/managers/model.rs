@@ -95,13 +95,32 @@ pub const DEFAULT_FR_MODEL_SIZE_BYTES: u64 = 537_819_875;
 /// (`ggml-model-q5_0.bin`) comme le modèle FR du catalogue : renommage sur
 /// place, sans re-télécharger 512 Mo sur les installations de test (issue #2).
 /// Ne touche à rien si la taille ne correspond pas (autre modèle homonyme).
+///
+/// Si le modèle de catalogue est *déjà* en place et que les deux fichiers font
+/// la taille attendue, l'ancien est un pur doublon de 512 Mo — que le scan des
+/// modèles locaux redécouvrirait qui plus est comme un modèle « custom »
+/// invisible dans l'interface v1. Il est alors supprimé, et la fonction renvoie
+/// `Ok(false)` : rien n'a été adopté.
+///
+/// Renvoie `Ok(true)` uniquement quand un renommage a bien eu lieu.
 pub fn adopt_legacy_fr_model_file(models_dir: &Path, expected_len: u64) -> std::io::Result<bool> {
     let legacy = models_dir.join("ggml-model-q5_0.bin");
     let target = models_dir.join("whisper-distil-fr-dec2-q5_0.bin");
-    if target.exists() || !legacy.exists() {
+    if !legacy.exists() {
         return Ok(false);
     }
     if legacy.metadata()?.len() != expected_len {
+        return Ok(false);
+    }
+    if target.exists() {
+        // Doublon avéré seulement si le fichier déjà en place fait lui aussi la
+        // taille attendue ; sinon on ne sait pas ce qu'on supprimerait.
+        if target.metadata()?.len() == expected_len {
+            std::fs::remove_file(&legacy)?;
+            info!(
+                "Doublon du modèle FR hérité supprimé : le modèle de catalogue était déjà en place"
+            );
+        }
         return Ok(false);
     }
     std::fs::rename(&legacy, &target)?;
@@ -3034,5 +3053,54 @@ mod tests {
         assert!(!adopt_legacy_fr_model_file(&dir, 99).unwrap());
         assert!(dir.join("ggml-model-q5_0.bin").exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn removes_legacy_duplicate_when_target_present() {
+        // Le modèle de catalogue est déjà là et l'ancien fichier lui est
+        // identique en taille : c'est un doublon de 512 Mo que le scan local
+        // redécouvrirait comme un modèle « custom » invisible dans l'interface.
+        let dir = TempDir::new().unwrap();
+        let legacy = dir.path().join("ggml-model-q5_0.bin");
+        let target = dir.path().join("whisper-distil-fr-dec2-q5_0.bin");
+        std::fs::write(&legacy, b"12345").unwrap();
+        std::fs::write(&target, b"12345").unwrap();
+
+        assert!(
+            !adopt_legacy_fr_model_file(dir.path(), 5).unwrap(),
+            "rien n'est adopté : le modèle de catalogue était déjà en place"
+        );
+        assert!(!legacy.exists(), "le doublon hérité doit être supprimé");
+        assert!(target.exists(), "le modèle de catalogue doit être conservé");
+    }
+
+    #[test]
+    fn keeps_legacy_file_beside_target_when_sizes_differ() {
+        // Une taille qui ne colle pas, d'un côté ou de l'autre, veut dire qu'on
+        // n'a pas affaire au modèle FR : aucun des deux fichiers n'est touché.
+        let dir = TempDir::new().unwrap();
+        let legacy = dir.path().join("ggml-model-q5_0.bin");
+        let target = dir.path().join("whisper-distil-fr-dec2-q5_0.bin");
+
+        // 1. L'ancien fichier est un autre modèle homonyme.
+        std::fs::write(&legacy, b"123456789").unwrap();
+        std::fs::write(&target, b"12345").unwrap();
+        assert!(!adopt_legacy_fr_model_file(dir.path(), 5).unwrap());
+        assert!(
+            legacy.exists(),
+            "un modèle homonyme ne doit pas être supprimé"
+        );
+        assert!(target.exists());
+
+        // 2. C'est le fichier en place qui n'a pas la taille attendue
+        // (téléchargement tronqué) : l'ancien reste la seule copie plausible.
+        std::fs::write(&legacy, b"12345").unwrap();
+        std::fs::write(&target, b"123456789").unwrap();
+        assert!(!adopt_legacy_fr_model_file(dir.path(), 5).unwrap());
+        assert!(
+            legacy.exists(),
+            "sans certitude sur le fichier en place, on ne supprime rien"
+        );
+        assert!(target.exists());
     }
 }
