@@ -11,7 +11,8 @@ export interface ProgressData {
 interface ProgressBarProps {
   progress: ProgressData[];
   className?: string;
-  size?: "small" | "medium" | "large";
+  /** `full` occupe toute la largeur du conteneur (pages plein écran). */
+  size?: "small" | "medium" | "large" | "full";
   showSpeed?: boolean;
   showLabel?: boolean;
 }
@@ -28,6 +29,7 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
     small: "w-16 h-1",
     medium: "w-20 h-1.5",
     large: "w-24 h-2",
+    full: "w-full h-2",
   };
 
   const progressClasses = sizeClasses[size];

@@ -37,6 +37,9 @@ function App() {
   );
   const [currentSection, setCurrentSection] =
     useState<SidebarSection>("general");
+  // `onboarding_completed` au démarrage : seul un utilisateur connu se voit
+  // proposer d'entrer dans l'application malgré un échec d'activation.
+  const [isReturningUser, setIsReturningUser] = useState(false);
   // `settings` n'est pas consommé ici : seul l'effet de bord du hook compte
   // (déclenche store.initialize(), qui charge store.settings). Nécessaire dès
   // le montage car l'onboarding s'appuie déjà sur le store des réglages
@@ -187,6 +190,7 @@ function App() {
         settingsResult.status === "ok" &&
         settingsResult.data.onboarding_completed === true;
       const currentPlatform = platform();
+      setIsReturningUser(hasCompletedOnboarding);
 
       if (hasCompletedOnboarding) {
         // Returning user - check if they need to grant permissions first
@@ -229,10 +233,11 @@ function App() {
         // l'écran de premier lancement (fichier supprimé, disque nettoyé…).
         try {
           const info = await commands.getModelInfo(DEFAULT_FR_MODEL_ID);
-          if (
-            info.status === "ok" &&
-            (info.data === null || !info.data.is_downloaded)
-          ) {
+          if (info.status === "error") {
+            // Symétrique du `catch` ci-dessous : sans trace, une commande en
+            // échec laisse croire que le modèle est bien là.
+            console.warn("Failed to check model presence:", info.error);
+          } else if (info.data === null || !info.data.is_downloaded) {
             await revealMainWindowForPermissions();
             setOnboardingStep("model");
             return;
@@ -298,7 +303,12 @@ function App() {
       <AccessibilityOnboarding onComplete={handleAccessibilityComplete} />
     );
   } else if (onboardingStep === "model") {
-    content = <FirstLaunchModelSetup onReady={handleModelSelected} />;
+    content = (
+      <FirstLaunchModelSetup
+        onReady={handleModelSelected}
+        isReturningUser={isReturningUser}
+      />
+    );
   } else {
     content = (
       <div

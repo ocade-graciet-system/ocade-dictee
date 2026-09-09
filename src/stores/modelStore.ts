@@ -3,7 +3,6 @@ import { subscribeWithSelector } from "zustand/middleware";
 import { produce } from "immer";
 import { listen } from "@tauri-apps/api/event";
 import { commands, type ModelInfo } from "@/bindings";
-import { toast } from "sonner";
 
 interface DownloadProgress {
   model_id: string;
@@ -323,10 +322,12 @@ export const useModelStore = create<ModelsStore>()(
               delete state.verifyingModels[modelId];
               delete state.downloadProgress[modelId];
               delete state.downloadStats[modelId];
+              // Chaîne technique de reqwest/anyhow, en anglais : conservée dans
+              // l'état pour être affichée en petit sous le message français de
+              // l'écran de premier lancement, mais plus en toast par-dessus lui.
               state.error = error;
             }),
           );
-          toast.error(error);
         },
       );
 

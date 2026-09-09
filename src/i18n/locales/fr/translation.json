@@ -26,8 +26,9 @@
       "verifying": "Vérification du fichier…",
       "activating": "Activation du modèle…",
       "failed": "Le téléchargement a échoué. Vérifiez la connexion Internet puis réessayez.",
-      "selectFailed": "Le modèle n'a pas pu être activé. Relancez l'application.",
-      "retry": "Réessayer"
+      "selectFailed": "Le modèle n'a pas pu être activé.",
+      "retry": "Réessayer",
+      "continueAnyway": "Continuer sans réactiver le modèle"
     },
     "subtitle": "Pour commencer, choisissez un modèle de transcription",
     "existingModelsTitle": "Compatible Models",
