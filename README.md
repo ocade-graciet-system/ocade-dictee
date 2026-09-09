@@ -39,7 +39,7 @@ The process is entirely local:
 
 ### Installation (OCADE Dictée)
 
-Télécharge la **[dernière release OCADE-HANDY](https://github.com/valentincharrier/OCADE-HANDY/releases/latest)** — chaque release contient un guide de téléchargement, et 3 fichiers seulement :
+Télécharge la **[dernière release](https://github.com/ocade-graciet-system/ocade-dictee/releases/latest)** — chaque release contient un guide de téléchargement, et 4 fichiers seulement :
 
 | Ta machine                                                                            | Fichier            |
 | ------------------------------------------------------------------------------------- | ------------------ |
@@ -66,7 +66,7 @@ For detailed build instructions including platform-specific requirements, see [B
 
 > Section propre au fork **OCADE-HANDY** (fork de [cjpais/Handy](https://github.com/cjpais/Handy)).
 
-Le code est hébergé sur GitHub, où GitHub Actions dispose de runners macOS et Windows gratuits.
+Le code est hébergé sur [github.com/ocade-graciet-system/ocade-dictee](https://github.com/ocade-graciet-system/ocade-dictee) ; GitHub Actions construit les 3 plateformes.
 
 À chaque **tag de version** (`v*`), le workflow [`.github/workflows/release.yml`](.github/workflows/release.yml) construit et publie une **Release GitHub** contenant :
 
@@ -78,15 +78,22 @@ Le code est hébergé sur GitHub, où GitHub Actions dispose de runners macOS et
 
 Les binaires sont actuellement **non signés** (avertissement Gatekeeper/SmartScreen au premier lancement).
 
+**Secrets et variables du workflow de release :**
+
+- **Obligatoires** : secret `TAURI_SIGNING_PRIVATE_KEY` (clé privée minisign de l'updater ; la clé publique correspondante est `plugins.updater.pubkey` dans `src-tauri/tauri.conf.json`) et, si cette clé est protégée par un mot de passe, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Sans eux, le build échoue (`createUpdaterArtifacts: true`).
+- **Optionnels** (signature OS des binaires, pas encore activée) : variable de dépôt `SIGN_BINARIES=true`, plus les secrets `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `KEYCHAIN_PASSWORD` (macOS) et `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` (Windows).
+
 **Publier une release :**
 
 ```bash
 # 1. Mettre à jour la version dans src-tauri/tauri.conf.json, committer
 # 2. Créer et pousser le tag correspondant :
-git tag v0.9.4
-git push origin v0.9.4
-# → GitLab pousse le tag vers GitHub → build .exe + .dmg → Release GitHub publiée
+git tag -a v1.0.0 -m "1.0.0"
+git push origin v1.0.0
+# → build .exe + .dmg + .AppImage → Release GitHub publiée
 ```
+
+Un tag contenant un suffixe (ex. `v1.0.0-rc.1`) publie une **pré-release** GitHub : elle n'est jamais servie comme version « latest » à l'updater intégré.
 
 La Release est **publiée automatiquement** une fois tous les builds terminés (les installeurs sont attachés avant publication).
 
@@ -154,7 +161,7 @@ handy --start-hidden --no-tray
 
 ## Known Issues & Current Limitations
 
-This project is actively being developed and has some [known issues](https://github.com/cjpais/Handy/issues). We believe in transparency about the current state:
+This project is actively being developed and has some [known issues](https://github.com/ocade-graciet-system/ocade-dictee/issues). We believe in transparency about the current state:
 
 ### Major Issues (Help Wanted)
 
@@ -499,11 +506,11 @@ Once you've found a flag that helps, export it from your shell profile (`~/.bash
 Exec=env HANDY_NO_GTK_LAYER_SHELL=1 handy
 ```
 
-If a workaround helps you, please [open an issue](https://github.com/cjpais/Handy/issues) describing your distro, desktop environment, and session type — that information helps us narrow down the underlying bug.
+If a workaround helps you, please [open an issue](https://github.com/ocade-graciet-system/ocade-dictee/issues) describing your distro, desktop environment, and session type — that information helps us narrow down the underlying bug.
 
 ### How to Contribute
 
-1. **Check existing issues** at [github.com/cjpais/Handy/issues](https://github.com/cjpais/Handy/issues)
+1. **Check existing issues** at [github.com/ocade-graciet-system/ocade-dictee/issues](https://github.com/ocade-graciet-system/ocade-dictee/issues)
 2. **Fork the repository** and create a feature branch
 3. **Test thoroughly** on your target platform
 4. **Submit a pull request** with clear description of changes
