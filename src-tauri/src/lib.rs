@@ -243,6 +243,11 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(model_manager.clone());
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
+    // v1 (issue #9) : la limite d'historique est verrouillée à 0 → les entrées et
+    // fichiers d'une version précédente sont purgés une fois au démarrage.
+    if let Err(e) = history_manager.cleanup_old_entries() {
+        log::warn!("Purge de l'historique impossible: {}", e);
+    }
     app_handle.manage(file_history_manager);
     app_handle.manage(tray::CurrentTrayIconState::new());
 
