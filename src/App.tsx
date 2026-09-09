@@ -17,6 +17,7 @@ import {
   FirstLaunchModelSetup,
 } from "./components/onboarding";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
+import { ForcedUpdater } from "./components/update-checker";
 import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
@@ -340,6 +341,7 @@ function App() {
   return (
     <>
       {toaster}
+      <ForcedUpdater />
       {content}
     </>
   );

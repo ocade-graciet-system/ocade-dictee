@@ -1,1 +1,1 @@
-export { default } from "./UpdateChecker";
+export { ForcedUpdater } from "./ForcedUpdater";

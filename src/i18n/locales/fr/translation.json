@@ -682,6 +682,12 @@
     "portableUpdateMessage": "Les installations portables ne peuvent pas être mises à jour automatiquement. Pour mettre à jour : téléchargez le dernier installateur NSIS depuis GitHub Releases, installez-le dans le même dossier, puis copiez votre dossier Data/ (paramètres, modèles, enregistrements) de l’ancienne version vers la nouvelle.",
     "portableUpdateButton": "Ouvrir GitHub Releases"
   },
+  "updater": {
+    "title": "Mise à jour vers la version {{version}}",
+    "description": "OCADE Dictée s'installe et redémarre automatiquement. Ne fermez pas l'application.",
+    "downloading": "Téléchargement… {{progress}} %",
+    "installing": "Installation…"
+  },
   "whatsNew": {
     "title": "Nouveautés d'OCADE Dictée v{{version}}"
   },
