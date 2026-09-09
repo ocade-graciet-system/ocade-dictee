@@ -5,6 +5,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
 import { ProgressBar } from "../shared";
 import { useModelStore } from "../../stores/modelStore";
+import { useFileTranscriptionStore } from "../../stores/fileTranscriptionStore";
 import { commands } from "@/bindings";
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // toutes les 24 h (issue #6)
@@ -16,24 +17,47 @@ export const ForcedUpdater: React.FC = () => {
   const { t } = useTranslation();
   const [update, setUpdate] = useState<Update | null>(null);
   const [progress, setProgress] = useState(0);
+  // Le téléchargement et l'installation sont deux étapes distinctes, séparées
+  // par une attente éventuelle : l'écran ne peut plus déduire l'étape du seul
+  // pourcentage.
+  const [phase, setPhase] = useState<"downloading" | "installing">(
+    "downloading",
+  );
   const busy = useRef(false);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const downloadedBytes = useRef(0);
   const totalBytes = useRef(0);
+  // Paquet déjà téléchargé mais pas encore installé : gardé d'une tentative à
+  // l'autre pour ne jamais retélécharger après un report.
+  const downloaded = useRef<Update | null>(null);
 
-  // Une dictée ne doit jamais être interrompue. Un téléchargement de modèle non
-  // plus : il reprendrait après le redémarrage, mais l'écran de préparation du
-  // premier lancement disparaîtrait en plein transfert de 512 Mo.
-  const isBusyElsewhere = async () =>
-    (await commands.isRecording()) ||
-    Object.keys(useModelStore.getState().downloadingModels).length > 0;
+  // Une dictée ne doit jamais être interrompue. Une préparation de modèle non
+  // plus : elle reprendrait après le redémarrage, mais l'écran de préparation
+  // du premier lancement disparaîtrait en plein transfert de 512 Mo. Une
+  // transcription de fichier, elle, se compte en minutes et serait perdue.
+  const isBusyElsewhere = async () => {
+    const models = useModelStore.getState();
+    return (
+      (await commands.isRecording()) ||
+      Object.keys(models.downloadingModels).length > 0 ||
+      Object.keys(models.verifyingModels).length > 0 ||
+      Object.keys(models.extractingModels).length > 0 ||
+      useFileTranscriptionStore.getState().status === "processing"
+    );
+  };
 
-  const install = async (pending: Update) => {
+  const retryLater = () => {
+    if (retryTimer.current) clearTimeout(retryTimer.current);
+    retryTimer.current = setTimeout(() => void run(), RETRY_WHEN_BUSY_MS);
+  };
+
+  const download = async (pending: Update) => {
+    setPhase("downloading");
     setUpdate(pending);
     setProgress(0);
     downloadedBytes.current = 0;
     totalBytes.current = 0;
-    await pending.downloadAndInstall((event) => {
+    await pending.download((event) => {
       switch (event.event) {
         case "Started":
           totalBytes.current = event.data.contentLength ?? 0;
@@ -56,6 +80,12 @@ export const ForcedUpdater: React.FC = () => {
           break;
       }
     });
+  };
+
+  const installAndRelaunch = async (pending: Update) => {
+    setPhase("installing");
+    setUpdate(pending);
+    await pending.install();
     // Sur Windows l'installateur NSIS ferme l'application lui-même : cette
     // ligne n'est atteinte que sur macOS et Linux.
     await relaunch();
@@ -68,18 +98,37 @@ export const ForcedUpdater: React.FC = () => {
       // Installation portable (Windows) : jamais de mise à jour automatique,
       // et aucun message (l'utilisateur gère son dossier lui-même).
       if (await commands.isPortable()) return;
-      const pending = await check();
+
+      // Une tentative précédente a pu télécharger le paquet sans pouvoir
+      // l'installer : on repart de là plutôt que de refaire un `check()`.
+      const pending = downloaded.current ?? (await check());
       if (!pending) return;
+
+      if (!downloaded.current) {
+        if (await isBusyElsewhere()) {
+          retryLater();
+          return;
+        }
+        await download(pending);
+        downloaded.current = pending;
+      }
+
+      // Le téléchargement dure de quelques dizaines de secondes à plusieurs
+      // minutes : une dictée a très bien pu démarrer entre-temps, et c'est le
+      // redémarrage qui la tuerait. On masque l'écran et on réessaiera plus
+      // tard, sans retélécharger.
       if (await isBusyElsewhere()) {
-        if (retryTimer.current) clearTimeout(retryTimer.current);
-        retryTimer.current = setTimeout(() => void run(), RETRY_WHEN_BUSY_MS);
+        setUpdate(null);
+        retryLater();
         return;
       }
-      await install(pending);
+
+      await installAndRelaunch(pending);
     } catch (e) {
       // Échec silencieux (réseau coupé, aucune release publiée…) : l'app
       // démarre normalement, rien n'est montré à l'utilisateur.
       console.warn("Mise à jour automatique impossible pour le moment :", e);
+      downloaded.current = null;
       setUpdate(null);
     } finally {
       busy.current = false;
@@ -114,9 +163,9 @@ export const ForcedUpdater: React.FC = () => {
         />
       </div>
       <p className="text-sm text-text/60 tabular-nums">
-        {progress < 100
-          ? t("updater.downloading", { progress })
-          : t("updater.installing")}
+        {phase === "installing"
+          ? t("updater.installing")
+          : t("updater.downloading", { progress })}
       </p>
     </div>
   );
