@@ -1,26 +1,10 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Cog,
-  FlaskConical,
-  History,
-  Info,
-  Sparkles,
-  Cpu,
-  FileAudio,
-} from "lucide-react";
+import { FlaskConical, Info, FileAudio } from "lucide-react";
 import HandyTextLogo from "./icons/HandyTextLogo";
 import HandyHand from "./icons/HandyHand";
 import { useSettings } from "../hooks/useSettings";
-import {
-  GeneralSettings,
-  AdvancedSettings,
-  HistorySettings,
-  DebugSettings,
-  AboutSettings,
-  PostProcessingSettings,
-  ModelsSettings,
-} from "./settings";
+import { GeneralSettings, DebugSettings, AboutSettings } from "./settings";
 import { FileTranscription } from "./file/FileTranscription";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
@@ -47,36 +31,13 @@ export const SECTIONS_CONFIG = {
     component: GeneralSettings,
     enabled: () => true,
   },
-  models: {
-    labelKey: "sidebar.models",
-    icon: Cpu,
-    component: ModelsSettings,
-    enabled: () => true,
-  },
-  advanced: {
-    labelKey: "sidebar.advanced",
-    icon: Cog,
-    component: AdvancedSettings,
-    enabled: () => true,
-  },
-  history: {
-    labelKey: "sidebar.history",
-    icon: History,
-    component: HistorySettings,
-    enabled: () => true,
-  },
   file: {
     labelKey: "sidebar.file",
     icon: FileAudio,
     component: FileTranscription,
     enabled: () => true,
   },
-  postprocessing: {
-    labelKey: "sidebar.postProcessing",
-    icon: Sparkles,
-    component: PostProcessingSettings,
-    enabled: (settings) => settings?.post_process_enabled ?? false,
-  },
+  // Outils de diagnostic réservés au support : visibles uniquement avec `--debug`.
   debug: {
     labelKey: "sidebar.debug",
     icon: FlaskConical,

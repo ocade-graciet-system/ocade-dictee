@@ -25,6 +25,7 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "OCADE",
     "createUpdaterArtifacts": true,
     "targets": "all",
     "resources": ["resources/**/*"],
