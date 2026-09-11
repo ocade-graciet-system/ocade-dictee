@@ -27,9 +27,28 @@ import { Button } from "../ui/Button";
 import { Alert } from "../ui/Alert";
 import { MarkdownContent } from "../whats-new/MarkdownContent";
 
-// Extensions the backend pipeline is expected to decode (symphonia-backed).
-// Kept in sync with the dialog filters and the drag-drop guard below.
-const ACCEPTED_EXTENSIONS = ["mp3", "mp4", "m4a", "wav", "aac", "flac", "ogg"];
+// Formats décodés nativement (symphonia) ou via le repli ffmpeg (issue #10).
+const ACCEPTED_EXTENSIONS = [
+  "mp3",
+  "mp4",
+  "m4a",
+  "mov",
+  "wav",
+  "aac",
+  "flac",
+  "ogg",
+  "oga",
+  "opus",
+  "aiff",
+  "aif",
+  "caf",
+  "mkv",
+  "webm",
+  "3gp",
+  "amr",
+  "wma",
+  "avi",
+];
 
 const getFileName = (path: string): string => {
   const parts = path.split(/[/\\]/);
