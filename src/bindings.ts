@@ -792,6 +792,15 @@ async getClamshellMicrophone() : Promise<Result<string, string>> {
 async isRecording() : Promise<boolean> {
     return await TAURI_INVOKE("is_recording");
 },
+/**
+ * Second half of the dictation pipeline: `is_recording` goes back to idle as
+ * soon as the samples are handed over, leaving the transcription and the
+ * paste uncovered. `try_state` because the coordinator is only managed during
+ * setup — before that, nothing is being transcribed.
+ */
+async isTranscribing() : Promise<boolean> {
+    return await TAURI_INVOKE("is_transcribing");
+},
 async setModelUnloadTimeout(timeout: ModelUnloadTimeout) : Promise<void> {
     await TAURI_INVOKE("set_model_unload_timeout", { timeout });
 },

@@ -1,6 +1,7 @@
 use crate::actions::ACTION_MAP;
 use crate::managers::audio::AudioRecordingManager;
 use log::{debug, error, warn};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -73,6 +74,11 @@ fn classify_ptt_event(
 /// the async transcribe-paste pipeline.
 pub struct TranscriptionCoordinator {
     tx: Sender<Command>,
+    /// Thread-safe mirror of `Stage::Processing`. The stage itself is owned by
+    /// the coordinator thread and unreachable from anywhere else, but callers
+    /// outside the pipeline need the same answer: is a dictation still being
+    /// transcribed and pasted? See `is_transcribing`.
+    processing: Arc<AtomicBool>,
 }
 
 pub fn is_transcribe_binding(id: &str) -> bool {
@@ -82,9 +88,12 @@ pub fn is_transcribe_binding(id: &str) -> bool {
 impl TranscriptionCoordinator {
     pub fn new(app: AppHandle) -> Self {
         let (tx, rx) = mpsc::channel();
+        let processing = Arc::new(AtomicBool::new(false));
+        let thread_processing = Arc::clone(&processing);
 
         thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let processing: &AtomicBool = &thread_processing;
                 let mut stage = Stage::Idle;
                 let mut last_press: Option<Instant> = None;
                 let mut pending_release: Option<PendingRelease> = None;
@@ -102,6 +111,7 @@ impl TranscriptionCoordinator {
                                         stop(
                                             &app,
                                             &mut stage,
+                                            processing,
                                             &pending.binding_id,
                                             &pending.hotkey_string,
                                         );
@@ -168,19 +178,37 @@ impl TranscriptionCoordinator {
 
                             if push_to_talk {
                                 if is_pressed && matches!(stage, Stage::Idle) {
-                                    start(&app, &mut stage, &binding_id, &hotkey_string);
+                                    start(
+                                        &app,
+                                        &mut stage,
+                                        processing,
+                                        &binding_id,
+                                        &hotkey_string,
+                                    );
                                 } else if !is_pressed
                                     && matches!(&stage, Stage::Recording(id) if id == &binding_id)
                                 {
-                                    stop(&app, &mut stage, &binding_id, &hotkey_string);
+                                    stop(&app, &mut stage, processing, &binding_id, &hotkey_string);
                                 }
                             } else if is_pressed {
                                 match &stage {
                                     Stage::Idle => {
-                                        start(&app, &mut stage, &binding_id, &hotkey_string);
+                                        start(
+                                            &app,
+                                            &mut stage,
+                                            processing,
+                                            &binding_id,
+                                            &hotkey_string,
+                                        );
                                     }
                                     Stage::Recording(id) if id == &binding_id => {
-                                        stop(&app, &mut stage, &binding_id, &hotkey_string);
+                                        stop(
+                                            &app,
+                                            &mut stage,
+                                            processing,
+                                            &binding_id,
+                                            &hotkey_string,
+                                        );
                                     }
                                     _ => {
                                         debug!("Ignoring press for '{binding_id}': pipeline busy")
@@ -196,22 +224,26 @@ impl TranscriptionCoordinator {
                             if !matches!(stage, Stage::Processing)
                                 && (recording_was_active || matches!(stage, Stage::Recording(_)))
                             {
-                                stage = Stage::Idle;
+                                set_stage(&mut stage, processing, Stage::Idle);
                             }
                         }
                         Command::ProcessingFinished => {
-                            stage = Stage::Idle;
+                            set_stage(&mut stage, processing, Stage::Idle);
                         }
                     }
                 }
                 debug!("Transcription coordinator exited");
             }));
+            // The stage dies with the thread. Leaving the mirror set would
+            // report a transcription that nothing can ever finish, and block
+            // every caller waiting on the pipeline for good.
+            thread_processing.store(false, Ordering::Relaxed);
             if let Err(e) = result {
                 error!("Transcription coordinator panicked: {e:?}");
             }
         });
 
-        Self { tx }
+        Self { tx, processing }
     }
 
     /// Send a keyboard/signal input event for a transcribe binding.
@@ -254,9 +286,30 @@ impl TranscriptionCoordinator {
             warn!("Transcription coordinator channel closed");
         }
     }
+
+    /// `true` while a dictation is being transcribed and pasted — from the end
+    /// of the recording to the end of the pipeline. Complements
+    /// `AudioRecordingManager::is_recording`, which only covers the recording
+    /// itself and goes back to idle as soon as the samples are handed over.
+    pub fn is_transcribing(&self) -> bool {
+        self.processing.load(Ordering::Relaxed)
+    }
 }
 
-fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &str) {
+/// Sole entry point for stage transitions: keeps the shared `processing`
+/// mirror in step with the stage the coordinator thread owns.
+fn set_stage(stage: &mut Stage, processing: &AtomicBool, next: Stage) {
+    processing.store(matches!(next, Stage::Processing), Ordering::Relaxed);
+    *stage = next;
+}
+
+fn start(
+    app: &AppHandle,
+    stage: &mut Stage,
+    processing: &AtomicBool,
+    binding_id: &str,
+    hotkey_string: &str,
+) {
     let Some(action) = ACTION_MAP.get(binding_id) else {
         warn!("No action in ACTION_MAP for '{binding_id}'");
         return;
@@ -266,19 +319,25 @@ fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &s
         .try_state::<Arc<AudioRecordingManager>>()
         .is_some_and(|a| a.is_recording())
     {
-        *stage = Stage::Recording(binding_id.to_string());
+        set_stage(stage, processing, Stage::Recording(binding_id.to_string()));
     } else {
         debug!("Start for '{binding_id}' did not begin recording; staying idle");
     }
 }
 
-fn stop(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &str) {
+fn stop(
+    app: &AppHandle,
+    stage: &mut Stage,
+    processing: &AtomicBool,
+    binding_id: &str,
+    hotkey_string: &str,
+) {
     let Some(action) = ACTION_MAP.get(binding_id) else {
         warn!("No action in ACTION_MAP for '{binding_id}'");
         return;
     };
     action.stop(app, binding_id, hotkey_string);
-    *stage = Stage::Processing;
+    set_stage(stage, processing, Stage::Processing);
 }
 
 #[cfg(test)]
@@ -517,5 +576,67 @@ mod tests {
             "a genuine release should stop recording exactly once"
         );
         assert_eq!(result.stage, SimStage::Processing);
+    }
+
+    // ---------------------------------------------------------------------
+    // `processing` mirror, read from outside the thread by `is_transcribing`.
+    //
+    // `set_stage` is the single funnel every stage transition goes through, so
+    // asserting it directly covers the whole mirror. No AppHandle is needed:
+    // only `start` and `stop` touch Tauri, and the mirror is written by
+    // `set_stage` alone.
+    // ---------------------------------------------------------------------
+
+    /// Nominal dictation cycle. The mirror must be set for exactly the window
+    /// the recording no longer covers: from `stop` (end of the recording) to
+    /// the `ProcessingFinished` the `FinishGuard` sends once the pipeline is
+    /// done — transcription *and* paste included.
+    #[test]
+    fn processing_mirror_is_set_only_while_transcribing() {
+        let processing = AtomicBool::new(false);
+        let mut stage = Stage::Idle;
+
+        set_stage(
+            &mut stage,
+            &processing,
+            Stage::Recording(BINDING.to_string()),
+        );
+        assert!(
+            !processing.load(Ordering::Relaxed),
+            "recording is covered by is_recording, not by is_transcribing"
+        );
+
+        set_stage(&mut stage, &processing, Stage::Processing);
+        assert!(
+            processing.load(Ordering::Relaxed),
+            "the pipeline is running: is_transcribing must say so"
+        );
+
+        // `Command::ProcessingFinished` — sent on every exit path of the async
+        // task, including a cancellation mid-pipeline and a transcription
+        // error, since the guard fires on drop.
+        set_stage(&mut stage, &processing, Stage::Idle);
+        assert!(
+            !processing.load(Ordering::Relaxed),
+            "the mirror must clear once the pipeline reports back"
+        );
+    }
+
+    /// Cancelling while still recording resets the stage without ever entering
+    /// `Processing` (`Command::Cancel`). The mirror must stay clear throughout:
+    /// nothing is being transcribed.
+    #[test]
+    fn cancel_while_recording_never_sets_the_processing_mirror() {
+        let processing = AtomicBool::new(false);
+        let mut stage = Stage::Idle;
+
+        set_stage(
+            &mut stage,
+            &processing,
+            Stage::Recording(BINDING.to_string()),
+        );
+        set_stage(&mut stage, &processing, Stage::Idle);
+
+        assert!(!processing.load(Ordering::Relaxed));
     }
 }
