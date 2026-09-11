@@ -1,4 +1,5 @@
-use crate::audio_toolkit::{chunk_ranges, decode_to_samples};
+use crate::audio_toolkit::{chunk_ranges, decode_to_samples, decode_to_samples_with_fallback};
+use crate::commands::video_download::ensure_ffmpeg;
 use crate::managers::document::assemble_document;
 use crate::managers::file_history::FileHistoryManager;
 use crate::managers::transcription::TranscriptionManager;
@@ -266,6 +267,21 @@ async fn ensure_yt_dlp_macos(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(bin_path)
 }
 
+/// Résout l'exécutable ffmpeg pour le repli de décodage (issue #10) :
+/// binaire téléchargé au premier usage dans les données de l'app, comme pour
+/// le téléchargement vidéo (`commands::video_download::ensure_ffmpeg`, même
+/// binaire partagé — pas de second téléchargement), sinon `ffmpeg` du PATH.
+/// `None` si rien n'est disponible : le message d'erreur du décodeur l'explique.
+async fn resolve_ffmpeg(app: &AppHandle) -> Option<PathBuf> {
+    match ensure_ffmpeg(app).await {
+        Ok(path) => Some(path),
+        Err(e) => {
+            warn!("ffmpeg indisponible via les données de l'app ({e}), essai du PATH");
+            crate::audio_toolkit::ffmpeg::ffmpeg_on_path()
+        }
+    }
+}
+
 /// Résout la commande yt-dlp de la plateforme : binaire téléchargé au premier
 /// usage sur macOS (voir [`ensure_yt_dlp_macos`]), sidecar embarqué ailleurs
 /// (tauri.{windows,linux}.conf.json). Partagé avec le téléchargement de vidéo
@@ -402,12 +418,43 @@ fn run_pipeline(
     let source_path = PathBuf::from(path);
 
     emit_progress(app, FileTranscriptionPhase::Decode, 0, 1);
-    let samples = decode_to_samples(&source_path).map_err(|e| {
-        format!(
-            "Format non supporté ou décodage impossible pour {}: {e}",
-            source_path.display()
-        )
-    })?;
+    // Décodage natif (symphonia) d'abord : rapide, couvre la majorité des
+    // formats (mp3, wav, m4a, flac...) et échoue vite sur les autres (le
+    // format n'est même pas reconnu à la sonde, avant toute lecture de
+    // paquet — voir `audio_toolkit::decode::decode_to_samples`). ffmpeg
+    // n'est résolu qu'en cas d'échec (repli, issue #10) pour ne pas
+    // déclencher un téléchargement d'environ 80 Mo au premier fichier venu
+    // alors que symphonia suffit déjà.
+    //
+    // Choix spawn_blocking/block_on : `run_pipeline` (cette fonction) n'est
+    // pas async et tourne déjà entièrement dans un
+    // `tauri::async_runtime::spawn_blocking` (voir `transcribe_audio_file` /
+    // `transcribe_url` plus haut) — donc hors de la boucle async. La
+    // conversion ffmpeg (`decode_to_samples_with_fallback`, qui lance
+    // `Command::output()` de façon bloquante) profite directement de ce
+    // même mécanisme, sans rien ajouter. Seule `resolve_ffmpeg` est `async`
+    // (elle peut télécharger ffmpeg via `reqwest`) : comme elle n'a de sens
+    // qu'ici, on la fait tourner via `tauri::async_runtime::block_on`, ce
+    // qui est sûr précisément parce qu'on est déjà sur le pool de threads
+    // bloquants de Tokio (spawn_blocking) et non sur un thread worker de la
+    // boucle async — aucun risque de geler le runtime ni de paniquer
+    // ("cannot block the current thread from within a runtime").
+    let samples = match decode_to_samples(&source_path) {
+        Ok(samples) => samples,
+        Err(native_err) => {
+            warn!(
+                "Décodage natif impossible pour {} ({native_err}), tentative via ffmpeg",
+                source_path.display()
+            );
+            let ffmpeg = tauri::async_runtime::block_on(resolve_ffmpeg(app));
+            decode_to_samples_with_fallback(&source_path, ffmpeg.as_deref()).map_err(|e| {
+                format!(
+                    "Format non supporté ou décodage impossible pour {}: {e}",
+                    source_path.display()
+                )
+            })?
+        }
+    };
     if samples.is_empty() {
         return Err(format!(
             "Aucun contenu audio décodable dans {}",

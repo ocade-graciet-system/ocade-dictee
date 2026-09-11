@@ -35,9 +35,10 @@ pub struct VideoDownloadProgress {
     pub percent: u32,
 }
 
-/// Source des binaires ffmpeg statiques (merge vidéo+audio par yt-dlp).
-/// Version épinglée : le merge/remux n'a pas besoin d'un ffmpeg dernier cri,
-/// et une URL stable garantit la reproductibilité.
+/// Source des binaires ffmpeg statiques (merge vidéo+audio par yt-dlp, et
+/// repli de décodage de l'onglet Fichier — voir [`ensure_ffmpeg`]).
+/// Version épinglée : ni le merge/remux ni la conversion n'ont besoin d'un
+/// ffmpeg dernier cri, et une URL stable garantit la reproductibilité.
 const FFMPEG_BASE_URL: &str = "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0";
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -56,7 +57,11 @@ const FFMPEG_ASSET: &str = "ffmpeg-win32-x64";
 /// Même stratégie que yt-dlp sur macOS : hors du bundle signé (pas de
 /// re-signature ad-hoc qui casse), hors navigateur (pas de quarantaine), et
 /// sans alourdir l'installeur d'environ 80 Mo pour une fonction optionnelle.
-async fn ensure_ffmpeg(app: &AppHandle) -> Result<PathBuf, String> {
+///
+/// `pub(crate)` : partagé avec le repli de décodage de l'onglet Fichier
+/// (issue #10, voir `commands::file_transcription::resolve_ffmpeg`) — même
+/// binaire, pas de second téléchargement ni de sidecar dédié.
+pub(crate) async fn ensure_ffmpeg(app: &AppHandle) -> Result<PathBuf, String> {
     let bin_dir = crate::portable::app_data_dir(app)
         .map_err(|e| format!("Dossier de données inaccessible: {e}"))?
         .join("bin");
