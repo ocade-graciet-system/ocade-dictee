@@ -69,14 +69,16 @@ pub fn decode_to_samples_with_fallback_cancellable(
         ));
     };
 
-    // Nom unique (pid + horodatage ms) : deux conversions concurrentes ne se
-    // marchent jamais dessus ; le fichier est de toute façon supprimé plus
-    // bas, succès, échec ou annulation.
-    let temp_wav = std::env::temp_dir().join(format!(
-        "ocade-dictee-{}-{}.wav",
-        std::process::id(),
-        chrono::Utc::now().timestamp_millis()
-    ));
+    // Fichier temporaire géré par `tempfile` : nom unique garanti par la
+    // crate (deux conversions concurrentes ne se marchent jamais dessus),
+    // suppression automatique au `Drop` de `temp_wav` — succès, échec,
+    // annulation ou même panique — donc plus aucun `remove_file` manuel
+    // nécessaire sur les chemins de sortie de cette fonction.
+    let temp_wav = tempfile::Builder::new()
+        .prefix("ocade-dictee-")
+        .suffix(".wav")
+        .tempfile()
+        .context("création du fichier temporaire pour ffmpeg")?;
 
     let mut cmd = Command::new(ffmpeg);
     cmd.args(["-y", "-loglevel", "error", "-nostdin", "-i"])
@@ -92,7 +94,7 @@ pub fn decode_to_samples_with_fallback_cancellable(
             "-f",
             "wav",
         ])
-        .arg(&temp_wav)
+        .arg(temp_wav.path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -123,7 +125,6 @@ pub fn decode_to_samples_with_fallback_cancellable(
             let _ = child.kill();
             let _ = child.wait();
             let _ = stderr_reader.join();
-            let _ = std::fs::remove_file(&temp_wav);
             return Err(anyhow!("Conversion annulée"));
         }
         if let Some(status) = child.try_wait().context("attente de ffmpeg")? {
@@ -135,7 +136,6 @@ pub fn decode_to_samples_with_fallback_cancellable(
     let stderr_output = stderr_reader.join().unwrap_or_default();
 
     if !status.success() {
-        let _ = std::fs::remove_file(&temp_wav);
         let stderr_excerpt: String = stderr_output
             .chars()
             .take(STDERR_EXCERPT_LEN)
@@ -153,9 +153,9 @@ pub fn decode_to_samples_with_fallback_cancellable(
         ));
     }
 
-    let result = decode_to_samples(&temp_wav).context("décodage du WAV converti par ffmpeg");
-    let _ = std::fs::remove_file(&temp_wav);
-    result
+    // `temp_wav` (NamedTempFile) est supprimé à sa sortie de portée en fin de
+    // fonction, quel que soit le chemin de retour emprunté ici.
+    decode_to_samples(temp_wav.path()).context("décodage du WAV converti par ffmpeg")
 }
 
 #[cfg(test)]
@@ -172,9 +172,25 @@ mod tests {
             .join(name)
     }
 
+    /// Verrou partagé entre les tests qui font réellement tourner ffmpeg vers
+    /// un fichier `ocade-dictee-*.wav` (les deux ci-dessous ; les tests sans
+    /// ffmpeg ou sans conversion réelle n'y touchent jamais). `cargo test`
+    /// exécute les tests en parallèle par défaut : sans ce verrou,
+    /// `cancelled_conversion_is_reported` (qui compte ces fichiers
+    /// avant/après) devient sporadiquement rouge si `falls_back_to_ffmpeg_for_opus_and_webm`
+    /// a, au même instant, sa propre conversion légitime en cours — donc son
+    /// propre fichier temporaire, compté à tort comme un résidu. Constaté
+    /// empiriquement : rouge systématique en parallèle, vert systématique
+    /// avec `cargo test -- --test-threads=1` ; le verrou restaure un vert
+    /// systématique en parallèle sans rien changer au code de production.
+    static FFMPEG_TEMP_FILE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Nombre de fichiers `ocade-dictee-*.wav` actuellement dans le dossier
-    /// temporaire du système (utilisé pour vérifier l'absence de résidu après
-    /// une annulation).
+    /// temporaire du système. `tempfile` garantit la suppression au `Drop`
+    /// (même en cas d'annulation ou de panique), donc plus aucun résidu n'est
+    /// possible en théorie ; on compare quand même avant/après plutôt que
+    /// d'asserter un zéro absolu, au cas où la machine de test porterait déjà
+    /// d'autres fichiers du même dépôt (autre run concurrent, etc.).
     fn count_ocade_dictee_temp_files() -> usize {
         std::fs::read_dir(std::env::temp_dir())
             .map(|entries| {
@@ -192,6 +208,9 @@ mod tests {
 
     #[test]
     fn falls_back_to_ffmpeg_for_opus_and_webm() {
+        let _guard = FFMPEG_TEMP_FILE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let Some(ffmpeg) = ffmpeg_on_path() else {
             eprintln!("ffmpeg absent du PATH : test de repli ignoré");
             return;
@@ -217,10 +236,14 @@ mod tests {
 
     #[test]
     fn cancelled_conversion_is_reported() {
+        let _guard = FFMPEG_TEMP_FILE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let Some(ffmpeg) = ffmpeg_on_path() else {
             eprintln!("ffmpeg absent du PATH : test d'annulation ignoré");
             return;
         };
+        let before = count_ocade_dictee_temp_files();
         let err = decode_to_samples_with_fallback_cancellable(
             &fixture("sample.opus"),
             Some(&ffmpeg),
@@ -230,7 +253,7 @@ mod tests {
         assert!(err.to_string().contains("annul"), "message: {err}");
         assert_eq!(
             count_ocade_dictee_temp_files(),
-            0,
+            before,
             "fichier temporaire ocade-dictee-*.wav résiduel après annulation"
         );
     }
