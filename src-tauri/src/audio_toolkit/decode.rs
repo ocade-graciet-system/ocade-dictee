@@ -179,19 +179,48 @@ fn resample_to_16k(mono: &[f32], source_rate: u32) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::decode_to_samples;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
-    #[test]
-    fn decodes_mp3_to_16k_mono_nonempty() {
-        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.mp3");
-        let samples = decode_to_samples(&p).expect("décodage MP3");
-        // ~2 s à 16 kHz → au moins 1 s de contenu
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name)
+    }
+
+    fn assert_two_seconds_16k(samples: &[f32], name: &str) {
+        // ~2 s à 16 kHz → au moins 1 s de contenu, valeurs bornées
         assert!(
             samples.len() >= 16_000,
-            "trop peu d'échantillons: {}",
+            "{name}: trop peu d'échantillons: {}",
             samples.len()
         );
-        // f32 bornés
-        assert!(samples.iter().all(|s| s.abs() <= 1.5));
+        assert!(
+            samples.iter().all(|s| s.abs() <= 1.5),
+            "{name}: échantillon hors bornes"
+        );
+    }
+
+    #[test]
+    fn decodes_native_formats_to_16k_mono() {
+        for name in [
+            "sample.mp3",
+            "sample.flac",
+            "sample.ogg",
+            "sample.m4a",
+            "sample.aiff",
+            "sample.caf",
+            "sample.mkv",
+        ] {
+            let samples =
+                decode_to_samples(&fixture(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_two_seconds_16k(&samples, name);
+        }
+    }
+
+    #[test]
+    fn opus_is_not_native() {
+        // Opus n'est pas décodé par symphonia : c'est le rôle du repli ffmpeg (voir `audio_toolkit::ffmpeg`).
+        assert!(decode_to_samples(&fixture("sample.opus")).is_err());
+        assert!(decode_to_samples(&fixture("sample.webm")).is_err());
     }
 }
