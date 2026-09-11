@@ -46,6 +46,7 @@ const ACCEPTED_EXTENSIONS = [
   "3gp",
   "amr",
   "wma",
+  "wmv",
   "avi",
 ];
 

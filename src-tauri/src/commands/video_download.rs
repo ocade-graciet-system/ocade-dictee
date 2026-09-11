@@ -56,7 +56,8 @@ const FFMPEG_ASSET: &str = "ffmpeg-win32-x64";
 /// Fournit ffmpeg depuis les données de l'app, téléchargé au premier usage.
 /// Même stratégie que yt-dlp sur macOS : hors du bundle signé (pas de
 /// re-signature ad-hoc qui casse), hors navigateur (pas de quarantaine), et
-/// sans alourdir l'installeur d'environ 80 Mo pour une fonction optionnelle.
+/// sans alourdir l'installeur de 45 à 80 Mo selon la plateforme pour une
+/// fonction optionnelle.
 ///
 /// `pub(crate)` : partagé avec le repli de décodage de l'onglet Fichier
 /// (issue #10, voir `commands::file_transcription::resolve_ffmpeg`) — même

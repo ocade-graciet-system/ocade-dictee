@@ -31,7 +31,7 @@ const STDERR_EXCERPT_LEN: usize = 200;
 
 /// `ffmpeg` disponible dans le PATH de l'utilisateur (dernier recours).
 pub fn ffmpeg_on_path() -> Option<PathBuf> {
-    let exe = if cfg!(windows) {
+    let exe = if cfg!(target_os = "windows") {
         "ffmpeg.exe"
     } else {
         "ffmpeg"
@@ -134,8 +134,19 @@ pub fn decode_to_samples_with_fallback_cancellable(
             let _ = stderr_reader.join();
             return Err(anyhow!("Conversion annulée"));
         }
-        if let Some(status) = child.try_wait().context("attente de ffmpeg")? {
-            break status;
+        // `match` plutôt que `?` : une erreur de `try_wait` (rare) ne doit pas
+        // faire sortir de la boucle sans tuer l'enfant ni joindre le thread
+        // stderr, comme pour l'annulation ci-dessus — sinon le process ffmpeg
+        // reste orphelin et le thread stderr ne serait jamais joint.
+        match child.try_wait().context("attente de ffmpeg") {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stderr_reader.join();
+                return Err(e);
+            }
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     };

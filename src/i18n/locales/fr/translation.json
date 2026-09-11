@@ -486,7 +486,7 @@
       "title": "Transcription de fichier",
       "description": "Transcrivez un fichier audio ou vidéo déjà existant en document texte.",
       "dropzoneTitle": "Déposez un fichier audio ou vidéo ici",
-      "dropzoneHint": "Formats pris en charge : MP3, MP4, M4A, MOV, WAV, AAC, FLAC, OGG, OGA, OPUS, AIFF, AIF, CAF, MKV, WEBM, 3GP, AMR, WMA, AVI",
+      "dropzoneHint": "Formats pris en charge : MP3, MP4, M4A, MOV, WAV, AAC, FLAC, OGG, OGA, OPUS, AIFF, AIF, CAF, MKV, WEBM, 3GP, AMR, WMA, WMV, AVI",
       "browse": "Parcourir...",
       "cancel": "Annuler",
       "newFile": "Transcrire un autre fichier",

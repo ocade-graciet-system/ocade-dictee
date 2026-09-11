@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn opus_is_not_native() {
-        // Opus n'est pas décodé par symphonia : c'est le rôle du repli ffmpeg (task 2).
+        // Opus n'est pas décodé par symphonia : c'est le rôle du repli ffmpeg (voir `audio_toolkit::ffmpeg`).
         assert!(decode_to_samples(&fixture("sample.opus")).is_err());
         assert!(decode_to_samples(&fixture("sample.webm")).is_err());
     }

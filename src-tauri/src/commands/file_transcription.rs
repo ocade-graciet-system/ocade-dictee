@@ -431,8 +431,8 @@ fn run_pipeline(
     // format n'est même pas reconnu à la sonde, avant toute lecture de
     // paquet — voir `audio_toolkit::decode::decode_to_samples`). ffmpeg
     // n'est résolu qu'en cas d'échec (repli, issue #10) pour ne pas
-    // déclencher un téléchargement d'environ 80 Mo au premier fichier venu
-    // alors que symphonia suffit déjà.
+    // déclencher un téléchargement de 45 à 80 Mo selon la plateforme au
+    // premier fichier venu alors que symphonia suffit déjà.
     //
     // Choix spawn_blocking/block_on : `run_pipeline` (cette fonction) n'est
     // pas async et tourne déjà entièrement dans un
