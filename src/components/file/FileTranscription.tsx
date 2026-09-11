@@ -17,7 +17,6 @@ import {
   Loader2,
   RotateCcw,
   Save,
-  Sparkles,
   Trash2,
   UploadCloud,
   X,
@@ -79,8 +78,6 @@ export const FileTranscription: React.FC = () => {
     formattedText,
     errorMessage,
     historyId,
-    formatReady,
-    formatting,
     cancelling,
     urlInput,
     history,
@@ -90,7 +87,6 @@ export const FileTranscription: React.FC = () => {
     startUrl,
     cancel,
     reset,
-    format,
     openHistoryEntry,
     deleteHistoryEntry,
     downloadVideo,
@@ -171,16 +167,6 @@ export const FileTranscription: React.FC = () => {
       return;
     }
     await startUrl(url);
-  };
-
-  const handleFormat = async () => {
-    const result = await format();
-    if (!result.ok && result.error !== "not ready") {
-      console.error("Document formatting failed:", result.error);
-      toast.error(t("settings.file.format.errorTitle"), {
-        description: result.error,
-      });
-    }
   };
 
   const handleCopy = async (text: string, which: "raw" | "formatted") => {
@@ -510,42 +496,6 @@ export const FileTranscription: React.FC = () => {
                 <div className="border border-mid-gray/20 rounded-lg p-4 max-h-[60vh] overflow-y-auto">
                   <MarkdownContent markdown={markdown} />
                 </div>
-              )}
-
-              {formatReady === true && formattedText === null && (
-                <div className="flex items-center gap-2">
-                  <Button
-                    onClick={() => void handleFormat()}
-                    variant="primary-soft"
-                    size="sm"
-                    disabled={formatting}
-                    className="flex items-center gap-2"
-                  >
-                    {formatting ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="w-4 h-4" />
-                    )}
-                    <span>
-                      {formatting
-                        ? t("settings.file.format.loading")
-                        : t("settings.file.format.button")}
-                    </span>
-                  </Button>
-                </div>
-              )}
-
-              {formatReady === false && (
-                <Alert variant="info">
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium">
-                      {t("settings.file.format.notConfiguredTitle")}
-                    </p>
-                    <p className="text-xs text-text/70">
-                      {t("settings.file.format.notConfiguredDescription")}
-                    </p>
-                  </div>
-                </Alert>
               )}
 
               {formattedText !== null && (

@@ -534,8 +534,6 @@
       "format": {
         "button": "Mettre en forme",
         "loading": "Mise en forme en cours...",
-        "notConfiguredTitle": "Aucun modèle de mise en forme configuré",
-        "notConfiguredDescription": "Configurez un fournisseur de post-traitement (Ollama en local ou une API cloud) et un modèle dans les réglages Avancé pour activer la mise en forme.",
         "notConfiguredLink": "Ouvrir les réglages Avancé",
         "rawTitle": "Texte brut",
         "formattedTitle": "Texte mis en forme",
