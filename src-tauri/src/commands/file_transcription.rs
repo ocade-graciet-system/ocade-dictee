@@ -1,4 +1,6 @@
-use crate::audio_toolkit::{chunk_ranges, decode_to_samples, decode_to_samples_with_fallback};
+use crate::audio_toolkit::{
+    chunk_ranges, decode_to_samples, decode_to_samples_with_fallback_cancellable,
+};
 use crate::commands::video_download::ensure_ffmpeg;
 use crate::managers::document::assemble_document;
 use crate::managers::file_history::FileHistoryManager;
@@ -430,15 +432,24 @@ fn run_pipeline(
     // pas async et tourne déjà entièrement dans un
     // `tauri::async_runtime::spawn_blocking` (voir `transcribe_audio_file` /
     // `transcribe_url` plus haut) — donc hors de la boucle async. La
-    // conversion ffmpeg (`decode_to_samples_with_fallback`, qui lance
-    // `Command::output()` de façon bloquante) profite directement de ce
-    // même mécanisme, sans rien ajouter. Seule `resolve_ffmpeg` est `async`
-    // (elle peut télécharger ffmpeg via `reqwest`) : comme elle n'a de sens
-    // qu'ici, on la fait tourner via `tauri::async_runtime::block_on`, ce
-    // qui est sûr précisément parce qu'on est déjà sur le pool de threads
-    // bloquants de Tokio (spawn_blocking) et non sur un thread worker de la
-    // boucle async — aucun risque de geler le runtime ni de paniquer
-    // ("cannot block the current thread from within a runtime").
+    // conversion ffmpeg (`decode_to_samples_with_fallback_cancellable`, qui
+    // lance ffmpeg via `Command::spawn()` et le sonde périodiquement) profite
+    // directement de ce même mécanisme, sans rien ajouter. Seule
+    // `resolve_ffmpeg` est `async` (elle peut télécharger ffmpeg via
+    // `reqwest`) : comme elle n'a de sens qu'ici, on la fait tourner via
+    // `tauri::async_runtime::block_on`, ce qui est sûr précisément parce
+    // qu'on est déjà sur le pool de threads bloquants de Tokio
+    // (spawn_blocking) et non sur un thread worker de la boucle async —
+    // aucun risque de geler le runtime ni de paniquer ("cannot block the
+    // current thread from within a runtime").
+    //
+    // Annulation : la conversion ffmpeg peut tourner un moment sur un gros
+    // fichier ou un fichier corrompu ; elle sonde le même drapeau que le
+    // téléchargement yt-dlp (`CANCEL_FILE_TRANSCRIPTION`, voir
+    // `download_media` plus haut) pour rester interruptible. Si elle est
+    // annulée, l'erreur remonte avec le même message que les autres points
+    // d'annulation du pipeline ("Transcription annulée par l'utilisateur"),
+    // plutôt que le message générique d'échec de décodage.
     let samples = match decode_to_samples(&source_path) {
         Ok(samples) => samples,
         Err(native_err) => {
@@ -447,11 +458,18 @@ fn run_pipeline(
                 source_path.display()
             );
             let ffmpeg = tauri::async_runtime::block_on(resolve_ffmpeg(app));
-            decode_to_samples_with_fallback(&source_path, ffmpeg.as_deref()).map_err(|e| {
-                format!(
-                    "Format non supporté ou décodage impossible pour {}: {e}",
-                    source_path.display()
-                )
+            decode_to_samples_with_fallback_cancellable(&source_path, ffmpeg.as_deref(), &|| {
+                CANCEL_FILE_TRANSCRIPTION.load(Ordering::Relaxed)
+            })
+            .map_err(|e| {
+                if CANCEL_FILE_TRANSCRIPTION.load(Ordering::Relaxed) {
+                    "Transcription annulée par l'utilisateur".to_string()
+                } else {
+                    format!(
+                        "Format non supporté ou décodage impossible pour {}: {e}",
+                        source_path.display()
+                    )
+                }
             })?
         }
     };

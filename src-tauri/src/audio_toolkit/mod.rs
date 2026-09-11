@@ -13,7 +13,7 @@ pub use audio::{
 };
 pub use chunk::chunk_ranges;
 pub use decode::decode_to_samples;
-pub use ffmpeg::decode_to_samples_with_fallback;
+pub use ffmpeg::{decode_to_samples_with_fallback, decode_to_samples_with_fallback_cancellable};
 pub use text::{apply_custom_words, filter_transcription_output};
 pub use utils::get_cpal_host;
 pub use vad::{SileroVad, VoiceActivityDetector};
