@@ -1,13 +1,17 @@
 //! Repli ffmpeg pour les formats que symphonia ne décode pas (Opus, AMR, WMA,
-//! WebM…) : conversion en WAV 16 kHz mono dans un fichier temporaire, puis
-//! décodage par la voie native. ffmpeg est un exécutable séparé (GPL), jamais
-//! lié au binaire — voir THIRD_PARTY.md.
+//! WebM…) : conversion en WAV 16 kHz mono dans un fichier temporaire
+//! auto-nettoyé (géré par `tempfile`, supprimé au `Drop` même en cas
+//! d'annulation ou de panique — voir [`decode_to_samples_with_fallback_cancellable`]),
+//! puis décodage par la voie native. La conversion est annulable : un
+//! drapeau est sondé périodiquement pendant que ffmpeg tourne, sur le même
+//! principe que le téléchargement yt-dlp. ffmpeg est un exécutable séparé
+//! (GPL), jamais lié au binaire — voir THIRD_PARTY.md.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
 use anyhow::{anyhow, Context, Result};
@@ -18,7 +22,7 @@ use super::decode::decode_to_samples;
 /// depuis l'application graphique ouvre une fenêtre console (comme pour
 /// yt-dlp, cf. `commands::file_transcription`, ici géré directement car ce
 /// module appelle `std::process::Command` sans passer par tauri-plugin-shell).
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Nombre de caractères de la sortie d'erreur de ffmpeg conservés dans le
@@ -98,12 +102,15 @@ pub fn decode_to_samples_with_fallback_cancellable(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    #[cfg(windows)]
+    #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
+    // `map_err` avec la cause `{e}` interpolée directement dans le message
+    // (plutôt qu'un `with_context`, dont le `Display` masquerait la cause OS
+    // — binaire absent, permissions… — sauf à afficher l'erreur avec `{:#}`).
     let mut child = cmd
         .spawn()
-        .with_context(|| format!("lancement de ffmpeg ({})", ffmpeg.display()))?;
+        .map_err(|e| anyhow!("lancement de ffmpeg ({}) : {e}", ffmpeg.display()))?;
 
     // stderr lu dans un thread dédié pendant tout le cycle de vie du process :
     // un tube plein (sortie ffmpeg abondante) bloquerait sinon indéfiniment,
