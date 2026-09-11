@@ -59,6 +59,12 @@ pub enum FileTranscriptionPhase {
     /// Téléchargement du média distant (transcription par URL uniquement) ;
     /// `current` transporte le pourcentage (0-100).
     Download,
+    /// Préparation de l'outil de conversion (repli ffmpeg, issue #10) :
+    /// téléchargement unique et non interruptible d'ffmpeg dans les données
+    /// de l'app quand le décodage natif a échoué et qu'aucun ffmpeg n'est
+    /// encore disponible (vague de correction n°2, item H3). Pas de suivi en
+    /// pourcentage (hors périmètre, voir issue #22).
+    PrepareTool,
     Decode,
     Transcribe,
     Assemble,
@@ -450,6 +456,19 @@ fn run_pipeline(
     // annulée, l'erreur remonte avec le même message que les autres points
     // d'annulation du pipeline ("Transcription annulée par l'utilisateur"),
     // plutôt que le message générique d'échec de décodage.
+    //
+    // Préparation de l'outil (vague de correction n°2, item H3) : avant cette
+    // correction, `resolve_ffmpeg` pouvait déclencher un téléchargement
+    // unique de plusieurs dizaines de Mo pendant lequel l'UI restait figée
+    // sur le stade Décodage et Annuler n'avait aucun effet. Le stade dédié
+    // `PrepareTool` rend ce temps d'attente visible ; le drapeau d'annulation
+    // est vérifié juste avant et juste après l'appel, ce qui permet d'honorer
+    // une annulation demandée pendant cette phase dès que possible. Le
+    // téléchargement lui-même (`reqwest::get(...).bytes()`, dans
+    // `ensure_ffmpeg`) reste non interruptible pendant son déroulement : il
+    // n'existe pas de point d'annulation à mi-téléchargement (hors périmètre
+    // de cette correction, voir issue #22 pour un suivi en pourcentage qui
+    // permettrait d'y revenir).
     let samples = match decode_to_samples(&source_path) {
         Ok(samples) => samples,
         Err(native_err) => {
@@ -457,7 +476,17 @@ fn run_pipeline(
                 "Décodage natif impossible pour {} ({native_err}), tentative via ffmpeg",
                 source_path.display()
             );
+            if CANCEL_FILE_TRANSCRIPTION.load(Ordering::Relaxed) {
+                return Err("Transcription annulée par l'utilisateur".to_string());
+            }
+            emit_progress(app, FileTranscriptionPhase::PrepareTool, 0, 1);
             let ffmpeg = tauri::async_runtime::block_on(resolve_ffmpeg(app));
+            if CANCEL_FILE_TRANSCRIPTION.load(Ordering::Relaxed) {
+                return Err("Transcription annulée par l'utilisateur".to_string());
+            }
+            // Retour au stade Décodage : la conversion ffmpeg qui suit peut
+            // elle aussi prendre un moment sur un gros fichier.
+            emit_progress(app, FileTranscriptionPhase::Decode, 0, 1);
             decode_to_samples_with_fallback_cancellable(&source_path, ffmpeg.as_deref(), &|| {
                 CANCEL_FILE_TRANSCRIPTION.load(Ordering::Relaxed)
             })

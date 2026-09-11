@@ -493,6 +493,7 @@
       "selectedFile": "Fichier sélectionné : {{name}}",
       "phase": {
         "download": "Téléchargement de l'audio... {{current}} %",
+        "preparetool": "Préparation de l'outil de conversion (téléchargement unique)…",
         "decode": "Décodage du fichier audio...",
         "transcribe": "Transcription en cours (tronçon {{current}}/{{total}})",
         "assemble": "Assemblage du document...",
