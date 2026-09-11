@@ -1,0 +1,39 @@
+# Recette v1 — matrice réglages × OS
+
+Légende : OK · KO #issue · N.A. (raison) · à faire. Une ligne = un comportement, testé tel que décrit.
+
+| Comportement                                                                                                                                 | macOS 15 AS | macOS 14 Intel | Windows 11 | Windows 10 | Ubuntu 24.04 X11 | Ubuntu 24.04 Wayland |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------- | ---------- | ---------- | ---------------- | -------------------- |
+| Installation sans terminal, avertissements couverts par la procédure                                                                         | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Premier lancement : modèle téléchargé, progression, app prête                                                                                | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Premier lancement hors-ligne : message + Réessayer, reprise                                                                                  | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Raccourci 1 (Ctrl+Alt/⌥+Espace), clavier AZERTY                                                                                              | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Raccourci 2 (Ctrl+Maj+Espace)                                                                                                                | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Raccourci 3 (Ctrl+Alt/⌥+D)                                                                                                                   | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Raccourci 4 (Ctrl+Maj+D)                                                                                                                     | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Appuyer-pour-parler : relâcher colle, pas de touche bloquée                                                                                  | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Changement de micro à chaud                                                                                                                  | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Changement de périphérique de sortie                                                                                                         | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Sons début/fin audibles                                                                                                                      | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Son système coupé pendant la dictée puis restauré (aussi après annulation)                                                                   | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Collage dans Word/LibreOffice, navigateur, Teams, terminal                                                                                   | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Presse-papier de l'utilisateur restauré après dictée                                                                                         | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Espace à la fin (activé) puis désactivé                                                                                                      | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Mots personnalisés pris en compte                                                                                                            | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Démarrage masqué                                                                                                                             | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Lancement à l'ouverture de session, puis désactivé/réactivé sans droits admin                                                                | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Icône de barre présente, menu = Réglages / Quitter                                                                                           | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Overlay en bas, mono et multi-écrans                                                                                                         | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Aucun fichier audio ni transcription conservé                                                                                                | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Mise à jour forcée au lancement (version N → N+1)                                                                                            | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Mise à jour automatique reportée pendant une dictée / une transcription de fichier, reprise 5 min plus tard                                  | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Fichier : mp3, m4a iPhone, mov, flac, ogg, opus WhatsApp, 3gp Android, wma, webm                                                             | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Transcription d'un fichier non natif : téléchargement unique de l'outil de conversion (45 à 80 Mo), puis transcription ; annulation possible | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Thème Système / Clair / Sombre                                                                                                               | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Interface intégralement en français quel que soit l'OS                                                                                       | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Mode débogage : `--debug` après avoir quitté l'application → onglet Débogage visible                                                         | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+| Désinstallation propre (procédure)                                                                                                           | à faire     | à faire        | à faire    | à faire    | à faire          | à faire              |
+
+## Test utilisateur non technique
+
+Personne : … · Date : … · OS : … · Résultat : … · Remarques : …
