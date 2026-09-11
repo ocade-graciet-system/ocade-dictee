@@ -35,9 +35,10 @@ pub struct VideoDownloadProgress {
     pub percent: u32,
 }
 
-/// Source des binaires ffmpeg statiques (merge vidéo+audio par yt-dlp).
-/// Version épinglée : le merge/remux n'a pas besoin d'un ffmpeg dernier cri,
-/// et une URL stable garantit la reproductibilité.
+/// Source des binaires ffmpeg statiques (merge vidéo+audio par yt-dlp, et
+/// repli de décodage de l'onglet Fichier — voir [`ensure_ffmpeg`]).
+/// Version épinglée : ni le merge/remux ni la conversion n'ont besoin d'un
+/// ffmpeg dernier cri, et une URL stable garantit la reproductibilité.
 const FFMPEG_BASE_URL: &str = "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0";
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -55,8 +56,13 @@ const FFMPEG_ASSET: &str = "ffmpeg-win32-x64";
 /// Fournit ffmpeg depuis les données de l'app, téléchargé au premier usage.
 /// Même stratégie que yt-dlp sur macOS : hors du bundle signé (pas de
 /// re-signature ad-hoc qui casse), hors navigateur (pas de quarantaine), et
-/// sans alourdir l'installeur d'environ 80 Mo pour une fonction optionnelle.
-async fn ensure_ffmpeg(app: &AppHandle) -> Result<PathBuf, String> {
+/// sans alourdir l'installeur de 45 à 80 Mo selon la plateforme pour une
+/// fonction optionnelle.
+///
+/// `pub(crate)` : partagé avec le repli de décodage de l'onglet Fichier
+/// (issue #10, voir `commands::file_transcription::resolve_ffmpeg`) — même
+/// binaire, pas de second téléchargement ni de sidecar dédié.
+pub(crate) async fn ensure_ffmpeg(app: &AppHandle) -> Result<PathBuf, String> {
     let bin_dir = crate::portable::app_data_dir(app)
         .map_err(|e| format!("Dossier de données inaccessible: {e}"))?
         .join("bin");
@@ -83,15 +89,36 @@ async fn ensure_ffmpeg(app: &AppHandle) -> Result<PathBuf, String> {
         .await
         .map_err(|e| format!("Téléchargement de ffmpeg interrompu: {e}"))?;
 
-    let staging = bin_dir.join("ffmpeg.download");
-    std::fs::write(&staging, &bytes).map_err(|e| format!("Écriture de ffmpeg impossible: {e}"))?;
+    // Nom de staging unique par appel (au lieu d'un nom fixe partagé,
+    // `ffmpeg.download`) : le téléchargement vidéo et le repli de décodage de
+    // l'onglet Fichier appellent tous deux `ensure_ffmpeg`, chacun gardé par
+    // son propre drapeau de ré-entrance (`VIDEO_DOWNLOAD_RUNNING`,
+    // `FILE_TRANSCRIPTION_RUNNING`) : rien n'empêche les deux de démarrer un
+    // téléchargement en parallèle au tout premier lancement (aucun binaire
+    // encore présent pour aucun des deux). Avec un nom de staging fixe,
+    // leurs écritures s'entrelaceraient dans le même fichier et
+    // corrompraient le binaire final de façon permanente (le fichier
+    // existerait désormais, donc plus jamais retéléchargé ni réparé).
+    let staging = tempfile::Builder::new()
+        .prefix("ffmpeg-")
+        .tempfile_in(&bin_dir)
+        .map_err(|e| format!("Fichier temporaire ffmpeg impossible: {e}"))?;
+    std::fs::write(staging.path(), &bytes)
+        .map_err(|e| format!("Écriture de ffmpeg impossible: {e}"))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755))
+        std::fs::set_permissions(staging.path(), std::fs::Permissions::from_mode(0o755))
             .map_err(|e| format!("Permissions de ffmpeg impossibles: {e}"))?;
     }
-    std::fs::rename(&staging, &bin_path)
+
+    // Un appelant concurrent a pu terminer son propre téléchargement entre-
+    // temps (même contenu attendu, même URL) : on ne l'écrase pas.
+    if bin_path.exists() {
+        return Ok(bin_path);
+    }
+    staging
+        .persist(&bin_path)
         .map_err(|e| format!("Installation de ffmpeg impossible: {e}"))?;
 
     Ok(bin_path)

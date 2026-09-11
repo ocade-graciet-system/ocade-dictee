@@ -1,4 +1,7 @@
-use crate::audio_toolkit::{chunk_ranges, decode_to_samples};
+use crate::audio_toolkit::{
+    chunk_ranges, decode_to_samples, decode_to_samples_with_fallback_cancellable,
+};
+use crate::commands::video_download::ensure_ffmpeg;
 use crate::managers::document::assemble_document;
 use crate::managers::file_history::FileHistoryManager;
 use crate::managers::transcription::TranscriptionManager;
@@ -56,6 +59,12 @@ pub enum FileTranscriptionPhase {
     /// Téléchargement du média distant (transcription par URL uniquement) ;
     /// `current` transporte le pourcentage (0-100).
     Download,
+    /// Préparation de l'outil de conversion (repli ffmpeg, issue #10) :
+    /// téléchargement unique et non interruptible d'ffmpeg dans les données
+    /// de l'app quand le décodage natif a échoué et qu'aucun ffmpeg n'est
+    /// encore disponible (vague de correction n°2, item H3). Pas de suivi en
+    /// pourcentage (hors périmètre, voir issue #22).
+    PrepareTool,
     Decode,
     Transcribe,
     Assemble,
@@ -266,6 +275,21 @@ async fn ensure_yt_dlp_macos(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(bin_path)
 }
 
+/// Résout l'exécutable ffmpeg pour le repli de décodage (issue #10) :
+/// binaire téléchargé au premier usage dans les données de l'app, comme pour
+/// le téléchargement vidéo (`commands::video_download::ensure_ffmpeg`, même
+/// binaire partagé — pas de second téléchargement), sinon `ffmpeg` du PATH.
+/// `None` si rien n'est disponible : le message d'erreur du décodeur l'explique.
+async fn resolve_ffmpeg(app: &AppHandle) -> Option<PathBuf> {
+    match ensure_ffmpeg(app).await {
+        Ok(path) => Some(path),
+        Err(e) => {
+            warn!("ffmpeg indisponible via les données de l'app ({e}), essai du PATH");
+            crate::audio_toolkit::ffmpeg::ffmpeg_on_path()
+        }
+    }
+}
+
 /// Résout la commande yt-dlp de la plateforme : binaire téléchargé au premier
 /// usage sur macOS (voir [`ensure_yt_dlp_macos`]), sidecar embarqué ailleurs
 /// (tauri.{windows,linux}.conf.json). Partagé avec le téléchargement de vidéo
@@ -402,12 +426,82 @@ fn run_pipeline(
     let source_path = PathBuf::from(path);
 
     emit_progress(app, FileTranscriptionPhase::Decode, 0, 1);
-    let samples = decode_to_samples(&source_path).map_err(|e| {
-        format!(
-            "Format non supporté ou décodage impossible pour {}: {e}",
-            source_path.display()
-        )
-    })?;
+    // Décodage natif (symphonia) d'abord : rapide, couvre la majorité des
+    // formats (mp3, wav, m4a, flac...) et échoue vite sur les autres (le
+    // format n'est même pas reconnu à la sonde, avant toute lecture de
+    // paquet — voir `audio_toolkit::decode::decode_to_samples`). ffmpeg
+    // n'est résolu qu'en cas d'échec (repli, issue #10) pour ne pas
+    // déclencher un téléchargement de 45 à 80 Mo selon la plateforme au
+    // premier fichier venu alors que symphonia suffit déjà.
+    //
+    // Choix spawn_blocking/block_on : `run_pipeline` (cette fonction) n'est
+    // pas async et tourne déjà entièrement dans un
+    // `tauri::async_runtime::spawn_blocking` (voir `transcribe_audio_file` /
+    // `transcribe_url` plus haut) — donc hors de la boucle async. La
+    // conversion ffmpeg (`decode_to_samples_with_fallback_cancellable`, qui
+    // lance ffmpeg via `Command::spawn()` et le sonde périodiquement) profite
+    // directement de ce même mécanisme, sans rien ajouter. Seule
+    // `resolve_ffmpeg` est `async` (elle peut télécharger ffmpeg via
+    // `reqwest`) : comme elle n'a de sens qu'ici, on la fait tourner via
+    // `tauri::async_runtime::block_on`, ce qui est sûr précisément parce
+    // qu'on est déjà sur le pool de threads bloquants de Tokio
+    // (spawn_blocking) et non sur un thread worker de la boucle async —
+    // aucun risque de geler le runtime ni de paniquer ("cannot block the
+    // current thread from within a runtime").
+    //
+    // Annulation : la conversion ffmpeg peut tourner un moment sur un gros
+    // fichier ou un fichier corrompu ; elle sonde le même drapeau que le
+    // téléchargement yt-dlp (`CANCEL_FILE_TRANSCRIPTION`, voir
+    // `download_media` plus haut) pour rester interruptible. Si elle est
+    // annulée, l'erreur remonte avec le même message que les autres points
+    // d'annulation du pipeline ("Transcription annulée par l'utilisateur"),
+    // plutôt que le message générique d'échec de décodage.
+    //
+    // Préparation de l'outil (vague de correction n°2, item H3) : avant cette
+    // correction, `resolve_ffmpeg` pouvait déclencher un téléchargement
+    // unique de plusieurs dizaines de Mo pendant lequel l'UI restait figée
+    // sur le stade Décodage et Annuler n'avait aucun effet. Le stade dédié
+    // `PrepareTool` rend ce temps d'attente visible ; le drapeau d'annulation
+    // est vérifié juste avant et juste après l'appel, ce qui permet d'honorer
+    // une annulation demandée pendant cette phase dès que possible. Le
+    // téléchargement lui-même (`reqwest::get(...).bytes()`, dans
+    // `ensure_ffmpeg`) reste non interruptible pendant son déroulement : il
+    // n'existe pas de point d'annulation à mi-téléchargement (hors périmètre
+    // de cette correction, voir issue #22 pour un suivi en pourcentage qui
+    // permettrait d'y revenir).
+    let samples = match decode_to_samples(&source_path) {
+        Ok(samples) => samples,
+        Err(native_err) => {
+            warn!(
+                "Décodage natif impossible pour {} ({native_err}), tentative via ffmpeg",
+                source_path.display()
+            );
+            if CANCEL_FILE_TRANSCRIPTION.load(Ordering::Relaxed) {
+                return Err("Transcription annulée par l'utilisateur".to_string());
+            }
+            emit_progress(app, FileTranscriptionPhase::PrepareTool, 0, 1);
+            let ffmpeg = tauri::async_runtime::block_on(resolve_ffmpeg(app));
+            if CANCEL_FILE_TRANSCRIPTION.load(Ordering::Relaxed) {
+                return Err("Transcription annulée par l'utilisateur".to_string());
+            }
+            // Retour au stade Décodage : la conversion ffmpeg qui suit peut
+            // elle aussi prendre un moment sur un gros fichier.
+            emit_progress(app, FileTranscriptionPhase::Decode, 0, 1);
+            decode_to_samples_with_fallback_cancellable(&source_path, ffmpeg.as_deref(), &|| {
+                CANCEL_FILE_TRANSCRIPTION.load(Ordering::Relaxed)
+            })
+            .map_err(|e| {
+                if CANCEL_FILE_TRANSCRIPTION.load(Ordering::Relaxed) {
+                    "Transcription annulée par l'utilisateur".to_string()
+                } else {
+                    format!(
+                        "Format non supporté ou décodage impossible pour {}: {e}",
+                        source_path.display()
+                    )
+                }
+            })?
+        }
+    };
     if samples.is_empty() {
         return Err(format!(
             "Aucun contenu audio décodable dans {}",

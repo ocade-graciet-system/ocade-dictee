@@ -1163,7 +1163,15 @@ export type FileTranscriptionPhase =
  * Téléchargement du média distant (transcription par URL uniquement) ;
  * `current` transporte le pourcentage (0-100).
  */
-"download" | "decode" | "transcribe" | "assemble" | "done"
+"download" | 
+/**
+ * Préparation de l'outil de conversion (repli ffmpeg, issue #10) :
+ * téléchargement unique et non interruptible d'ffmpeg dans les données
+ * de l'app quand le décodage natif a échoué et qu'aucun ffmpeg n'est
+ * encore disponible (vague de correction n°2, item H3). Pas de suivi en
+ * pourcentage (hors périmètre, voir issue #22).
+ */
+"preparetool" | "decode" | "transcribe" | "assemble" | "done"
 /**
  * Progression du pipeline de transcription de fichier, émise à chaque étape
  * (décodage, chaque tronçon transcrit, assemblage, puis fin).

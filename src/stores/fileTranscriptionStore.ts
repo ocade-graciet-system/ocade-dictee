@@ -43,7 +43,6 @@ interface FileTranscriptionStore {
   errorMessage: string | null;
   /** Id de l'entrée d'historique affichée (null si l'enregistrement a échoué). */
   historyId: number | null;
-  formatReady: boolean | null;
   formatting: boolean;
   cancelling: boolean;
   urlInput: string;
@@ -87,7 +86,6 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
       formattedText: null,
       errorMessage: null,
       historyId: null,
-      formatReady: null,
       formatting: false,
     });
 
@@ -103,7 +101,6 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
         status: "done",
       });
       void get().loadHistory();
-      void checkFormatReady();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error("File transcription failed:", message);
@@ -118,16 +115,6 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
     }
   };
 
-  const checkFormatReady = async (): Promise<void> => {
-    try {
-      const ready = await commands.formatReady();
-      set({ formatReady: ready });
-    } catch (error) {
-      console.error("Failed to check formatting availability:", error);
-      set({ formatReady: false });
-    }
-  };
-
   return {
     status: "idle",
     sourceLabel: null,
@@ -139,7 +126,6 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
     formattedText: null,
     errorMessage: null,
     historyId: null,
-    formatReady: null,
     formatting: false,
     cancelling: false,
     urlInput: "",
@@ -198,7 +184,6 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
         formattedText: null,
         errorMessage: null,
         historyId: null,
-        formatReady: null,
         formatting: false,
       });
     },
@@ -268,10 +253,8 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
           outputPath: null,
           errorMessage: null,
           progress: null,
-          formatReady: null,
           formatting: false,
         });
-        void checkFormatReady();
         return true;
       } catch (error) {
         console.error("Failed to open file history entry:", error);
