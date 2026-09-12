@@ -24,7 +24,7 @@ Cet avertissement ne s'affiche qu'à la toute première ouverture de l'applicati
 L'application demande deux autorisations. Sans elles, la dictée ne fonctionne pas.
 
 1. **Microphone** : cliquez sur **Autoriser** dans la fenêtre système.
-2. **Accessibilité** (nécessaire pour coller le texte) : la fenêtre **Réglages Système → Confidentialité et sécurité → Accessibilité** s'affiche ; activez l'interrupteur **OCADE Dictée** (mot de passe de session demandé).
+2. **Accessibilité** (nécessaire pour coller le texte) : la fenêtre **Réglages Système → Confidentialité et sécurité → Accessibilité** s'affiche ; activez l'interrupteur **OCADE Dictée** (mot de passe de session demandé). Si l'interrupteur est déjà activé (par exemple après une mise à jour), désactivez-le puis réactivez-le, ou retirez l'application (−) puis rajoutez-la (+).
 3. Revenez dans OCADE Dictée : l'écran continue automatiquement.
 
 ## 4. Téléchargement du modèle
