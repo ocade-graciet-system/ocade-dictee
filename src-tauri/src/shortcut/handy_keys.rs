@@ -28,11 +28,11 @@
 //! via Tauri's event system.
 
 use handy_keys::{Hotkey, HotkeyId, HotkeyManager, HotkeyState, KeyboardListener};
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use serde::Serialize;
 use specta::Type;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -70,6 +70,10 @@ pub struct HandyKeysState {
     recording_binding_id: Mutex<Option<String>>,
     /// Flag to stop recording loop
     recording_running: Arc<AtomicBool>,
+    /// Numéro de la session de capture en cours. Incrémenté à chaque
+    /// démarrage : une boucle d'une session précédente qui n'a pas encore vu
+    /// le drapeau d'arrêt s'interrompt au lieu de lire le listener en double.
+    recording_generation: AtomicU64,
 }
 
 /// Key event sent to frontend during recording mode
@@ -103,6 +107,7 @@ impl HandyKeysState {
             is_recording: AtomicBool::new(false),
             recording_binding_id: Mutex::new(None),
             recording_running: Arc::new(AtomicBool::new(false)),
+            recording_generation: AtomicU64::new(0),
         })
     }
 
@@ -259,10 +264,17 @@ impl HandyKeysState {
             .map_err(|_| "Failed to receive unregister response")?
     }
 
-    /// Start recording mode for a specific binding
+    /// Start recording mode for a specific binding.
+    ///
+    /// Une capture restée ouverte (fenêtre masquée, composant démonté avant
+    /// d'avoir pu l'arrêter) ne doit jamais condamner la fonction : au lieu de
+    /// refuser, on arrête proprement la session précédente et on en ouvre une
+    /// neuve. Sans cela, tout clic suivant sur le champ renvoyait
+    /// « Already recording » jusqu'au redémarrage de l'application.
     pub fn start_recording(&self, app: &AppHandle, binding_id: String) -> Result<(), String> {
         if self.is_recording.load(Ordering::SeqCst) {
-            return Err("Already recording".into());
+            warn!("Capture handy-keys déjà en cours : arrêt puis redémarrage");
+            self.stop_recording()?;
         }
 
         // Create a new keyboard listener for recording
@@ -286,12 +298,13 @@ impl HandyKeysState {
 
         self.is_recording.store(true, Ordering::SeqCst);
         self.recording_running.store(true, Ordering::SeqCst);
+        let generation = self.recording_generation.fetch_add(1, Ordering::SeqCst) + 1;
 
         // Start a thread to emit key events to the frontend
         let app_clone = app.clone();
         let recording_running = Arc::clone(&self.recording_running);
         thread::spawn(move || {
-            Self::recording_loop(app_clone, recording_running);
+            Self::recording_loop(app_clone, recording_running, generation);
         });
 
         debug!("Started handy-keys recording mode");
@@ -299,13 +312,19 @@ impl HandyKeysState {
     }
 
     /// Recording loop - emits key events to frontend during recording
-    fn recording_loop(app: AppHandle, running: Arc<AtomicBool>) {
+    fn recording_loop(app: AppHandle, running: Arc<AtomicBool>, generation: u64) {
         while running.load(Ordering::SeqCst) {
             let event = {
                 let state = match app.try_state::<HandyKeysState>() {
                     Some(s) => s,
                     None => break,
                 };
+                // Une session plus récente a pris la main pendant que cette
+                // boucle dormait : elle s'arrête plutôt que de consommer les
+                // événements du nouveau listener en parallèle.
+                if state.recording_generation.load(Ordering::SeqCst) != generation {
+                    break;
+                }
                 let listener = state.recording_listener.lock().ok();
                 listener.as_ref().and_then(|l| l.as_ref()?.try_recv())
             };
@@ -334,7 +353,10 @@ impl HandyKeysState {
         debug!("Recording loop ended");
     }
 
-    /// Stop recording mode
+    /// Stop recording mode.
+    ///
+    /// Idempotent : appelable sans capture en cours (annulation côté interface,
+    /// démontage du composant, redémarrage depuis `start_recording`).
     pub fn stop_recording(&self) -> Result<(), String> {
         self.is_recording.store(false, Ordering::SeqCst);
         self.recording_running.store(false, Ordering::SeqCst);
