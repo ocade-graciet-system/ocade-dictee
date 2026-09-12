@@ -147,6 +147,70 @@ fn should_force_show_permissions_window(app: &AppHandle) -> bool {
     false
 }
 
+/// Tauri's default menu bar is the untranslated File/Edit/View/Window/Help
+/// set (no menu is otherwise configured for the window, only the tray has
+/// one — see tray.rs); replace it with a minimal French one. The labels are
+/// plain Rust strings, not i18n keys: the native menu bar isn't covered by
+/// i18next. No "À propos" entry: that's already a tab inside the app.
+#[cfg(target_os = "macos")]
+fn build_macos_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, PredefinedMenuItem, Submenu};
+
+    const HIDE: &str = "Masquer OCADE Dictée";
+    const HIDE_OTHERS: &str = "Masquer les autres";
+    const QUIT: &str = "Quitter OCADE Dictée";
+    const UNDO: &str = "Annuler";
+    const REDO: &str = "Rétablir";
+    const CUT: &str = "Couper";
+    const COPY: &str = "Copier";
+    const PASTE: &str = "Coller";
+    const SELECT_ALL: &str = "Tout sélectionner";
+    const MINIMIZE: &str = "Réduire";
+    const CLOSE_WINDOW: &str = "Fermer";
+
+    let app_menu = Submenu::with_items(
+        app,
+        "OCADE Dictée",
+        true,
+        &[
+            &PredefinedMenuItem::hide(app, Some(HIDE))?,
+            &PredefinedMenuItem::hide_others(app, Some(HIDE_OTHERS))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::quit(app, Some(QUIT))?,
+        ],
+    )?;
+
+    // These PredefinedMenuItems are what keeps ⌘C/⌘V/⌘X/⌘A/⌘Z bound and
+    // working in text fields; without an Edit menu carrying them, macOS
+    // disables the shortcuts app-wide.
+    let edit_menu = Submenu::with_items(
+        app,
+        "Édition",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, Some(UNDO))?,
+            &PredefinedMenuItem::redo(app, Some(REDO))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, Some(CUT))?,
+            &PredefinedMenuItem::copy(app, Some(COPY))?,
+            &PredefinedMenuItem::paste(app, Some(PASTE))?,
+            &PredefinedMenuItem::select_all(app, Some(SELECT_ALL))?,
+        ],
+    )?;
+
+    let window_menu = Submenu::with_items(
+        app,
+        "Fenêtre",
+        true,
+        &[
+            &PredefinedMenuItem::minimize(app, Some(MINIMIZE))?,
+            &PredefinedMenuItem::close_window(app, Some(CLOSE_WINDOW))?,
+        ],
+    )?;
+
+    Menu::with_items(app, &[&app_menu, &edit_menu, &window_menu])
+}
+
 fn initialize_core_logic(app_handle: &AppHandle) {
     // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
     // The frontend is responsible for calling the `initialize_enigo` command
@@ -830,6 +894,10 @@ pub fn run(cli_args: CliArgs) {
             WEBVIEW_LOG_STREAMING.store(settings.debug_mode, Ordering::Relaxed);
             let app_handle = app.handle().clone();
             app.manage(TranscriptionCoordinator::new(app_handle.clone()));
+
+            // Menu de la barre native macOS en français (menu par défaut de Tauri sinon).
+            #[cfg(target_os = "macos")]
+            app_handle.set_menu(build_macos_menu(&app_handle)?)?;
 
             initialize_core_logic(&app_handle);
 

@@ -256,6 +256,7 @@
     },
     "sound": {
       "title": "Son",
+      "defaultDevice": "Par défaut",
       "microphone": {
         "title": "Microphone",
         "description": "Sélectionnez votre périphérique d'entrée audio",
@@ -573,7 +574,8 @@
       },
       "soundTheme": {
         "label": "Thème sonore",
-        "description": "Choisir un thème sonore pour les retours de début et de fin d'enregistrement"
+        "description": "Choisir un thème sonore pour les retours de début et de fin d'enregistrement",
+        "preview": "Écouter le thème sonore (début puis fin)"
       },
       "wordCorrectionThreshold": {
         "title": "Seuil de correction des mots",
@@ -620,6 +622,8 @@
         "bindingsReset": "Raccourcis clavier étaient incompatibles et ont été réinitialisés aux valeurs par défaut"
       },
       "paths": {
+        "title": "Chemins de débogage",
+        "description": "Afficher les chemins et répertoires internes utilisés pour le débogage",
         "appData": "Données de l'application :",
         "models": "Modèles :",
         "settings": "Paramètres :"
@@ -683,7 +687,11 @@
     "open": "Ouvrir",
     "copy": "Copier",
     "clear": "Effacer",
-    "noOptionsFound": "Aucune option trouvée"
+    "noOptionsFound": "Aucune option trouvée",
+    "selectOption": "Sélectionner une option...",
+    "moreInformation": "Plus d'informations",
+    "copyToClipboard": "Copier dans le presse-papiers",
+    "notAvailable": "Non disponible"
   },
   "accessibility": {
     "permissionsDescription": "OCADE Dictée a besoin des autorisations d'accessibilité pour taper le texte transcrit.",
@@ -725,6 +733,7 @@
   },
   "overlay": {
     "transcribing": "Transcription...",
-    "processing": "Traitement..."
+    "processing": "Traitement...",
+    "cancel": "Annuler"
   }
 }

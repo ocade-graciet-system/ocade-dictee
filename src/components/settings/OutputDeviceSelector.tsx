@@ -4,6 +4,7 @@ import { Dropdown } from "../ui/Dropdown";
 import { SettingContainer } from "../ui/SettingContainer";
 import { ResetButton } from "../ui/ResetButton";
 import { useSettings } from "../../hooks/useSettings";
+import { getAudioDeviceLabel } from "../../lib/utils/audioDeviceTranslation";
 import type { AudioDevice } from "@/bindings";
 
 interface OutputDeviceSelectorProps {
@@ -41,7 +42,7 @@ export const OutputDeviceSelector: React.FC<OutputDeviceSelectorProps> =
 
       const outputDeviceOptions = outputDevices.map((device: AudioDevice) => ({
         value: device.name,
-        label: device.name,
+        label: getAudioDeviceLabel(device, t),
       }));
 
       return (
