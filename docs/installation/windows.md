@@ -36,7 +36,7 @@ Au premier lancement, si l'application signale l'accès refusé : ouvrez **Param
 
 Certaines combinaisons sont refusées ; la raison s'affiche sous le champ :
 
-- une combinaison **sans touche de modification** (Ctrl, Alt, Maj, touche Windows) : elle se déclencherait en pleine frappe ;
+- une combinaison **sans touche de modification** (Ctrl, Alt, Maj, touche Windows (affichée « Win » dans l'application)) : elle se déclencherait en pleine frappe ;
 - **Maj + une lettre, un chiffre ou une ponctuation** : vous ne pourriez plus taper les majuscules ;
 - la touche **Échap** : elle sert déjà à annuler une dictée en cours ;
 - les raccourcis **réservés par Windows** (Ctrl + Alt + Suppr, Alt + Tab, Alt + F4, Windows + L, Windows + E…) : le système les intercepte avant l'application.

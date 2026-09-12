@@ -29,21 +29,9 @@ Selon l'environnement (GNOME, KDE), une demande d'accès au micro peut apparaît
 
 **Paramètres… → Général → Raccourci de dictée.**
 
-- La liste propose quatre raccourcis prêts à l'emploi : **Ctrl + Alt + Espace**, **Ctrl + Maj + Espace**, **Ctrl + Alt + D**, **Ctrl + Maj + D**.
-- Pour une autre combinaison, choisissez **Personnalisé…** dans la liste : un champ apparaît sous la liste. Cliquez dessus, puis appuyez sur la combinaison souhaitée et relâchez — le raccourci est enregistré. La touche **Échap** annule la capture.
-
-Certaines combinaisons sont refusées ; la raison s'affiche sous le champ :
-
-- une combinaison **sans touche de modification** (Ctrl, Alt, Maj, Super) : elle se déclencherait en pleine frappe ;
-- **Maj + une lettre, un chiffre ou une ponctuation** : vous ne pourriez plus taper les majuscules ;
-- la touche **Échap** : elle sert déjà à annuler une dictée en cours ;
-- les raccourcis **réservés par le bureau** (Ctrl + Alt + T, Ctrl + Alt + Retour arrière, Alt + Tab, Alt + F4, Super + L) : ils sont interceptés avant l'application.
-
-Quand un raccourci est refusé, **le raccourci précédent reste actif** : la dictée continue de fonctionner.
+Sous Linux, la liste propose quatre raccourcis prêts à l'emploi : **Ctrl + Alt + Espace**, **Ctrl + Maj + Espace**, **Ctrl + Alt + D**, **Ctrl + Maj + D** ; la capture d'une combinaison personnalisée n'est pas disponible sur Linux dans cette version (l'entrée **Personnalisé…** affiche alors « La capture d'un raccourci n'est pas disponible sur cet ordinateur »).
 
 Après un changement, faites un essai dans une application. Si rien ne se passe, la combinaison est déjà utilisée par votre environnement de bureau ou par un autre logiciel : choisissez-en une autre.
-
-> Si le message « La capture d'un raccourci n'est pas disponible sur cet ordinateur » s'affiche, restez sur l'un des quatre raccourcis proposés dans la liste.
 
 ## 6. Transcrire un fichier audio ou vidéo
 
