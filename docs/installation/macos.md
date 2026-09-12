@@ -37,7 +37,27 @@ L'écran « Préparation d'OCADE Dictée » télécharge le modèle français (�
 2. Maintenez le raccourci (par défaut **⌃ ⌥ Espace**), dites « Bonjour, ceci est un test », relâchez.
 3. Le texte apparaît. Deux sons signalent le début et la fin.
 
-## 6. Transcrire un fichier audio ou vidéo
+## 6. Changer le raccourci de dictée
+
+**Paramètres… → Général → Raccourci de dictée.**
+
+- La liste propose quatre raccourcis prêts à l'emploi : **⌃ ⌥ Espace**, **⌃ ⇧ Espace**, **⌃ ⌥ D**, **⌃ ⇧ D**.
+- Pour une autre combinaison, choisissez **Personnalisé…** dans la liste : un champ apparaît sous la liste. Cliquez dessus, puis appuyez sur la combinaison souhaitée et relâchez — le raccourci est enregistré. La touche **Échap** annule la capture.
+
+Certaines combinaisons sont refusées ; la raison s'affiche sous le champ :
+
+- une combinaison **sans touche de modification** (⌃ ⌥ ⇧ ⌘) : elle se déclencherait en pleine frappe ;
+- **Maj + une lettre, un chiffre ou une ponctuation** : vous ne pourriez plus taper les majuscules ;
+- la touche **Échap** : elle sert déjà à annuler une dictée en cours ;
+- les raccourcis **réservés par macOS** (⌘ Q, ⌘ Espace, ⌘ ⇧ 4, ⌘ virgule…) : le système les intercepte avant l'application.
+
+Quand un raccourci est refusé, **le raccourci précédent reste actif** : la dictée continue de fonctionner.
+
+Après un changement, faites un essai dans une application. Si rien ne se passe, la combinaison est interceptée par macOS avant l'application (raccourci personnalisé du système, gestionnaire de fenêtres) : choisissez-en une autre.
+
+Évitez aussi les raccourcis courants de vos logiciels (⌘ C, ⌘ V, ⌘ S…) : OCADE Dictée les intercepterait à leur place.
+
+## 7. Transcrire un fichier audio ou vidéo
 
 L'onglet **Fichier** transcrit aussi un fichier déjà enregistré, sans passer par le micro.
 
@@ -46,7 +66,7 @@ L'onglet **Fichier** transcrit aussi un fichier déjà enregistré, sans passer 
 3. Pour un premier fichier dans un format qu'elle ne lit pas directement (Opus/WhatsApp, 3GP, WMA, WebM…), l'application télécharge un outil de conversion (45 à 80 Mo ; une connexion Internet est nécessaire à ce moment-là). Ce téléchargement n'a lieu qu'une seule fois.
 4. Le texte obtenu peut être exporté au format Markdown.
 
-## 7. Au quotidien
+## 8. Au quotidien
 
 - L'application se lance à l'ouverture de session, masquée ; son icône se trouve dans la barre de menus (en haut à droite). **Paramètres…** affiche la fenêtre des paramètres.
 - Les mises à jour sont automatiques : au lancement, puis toutes les 24 heures, jamais pendant une dictée. Un écran « Mise à jour vers la version X » s'affiche, puis l'application redémarre seule.

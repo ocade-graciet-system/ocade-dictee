@@ -9,8 +9,10 @@
 //! The active implementation is determined by the `keyboard_implementation`
 //! setting and can be changed at runtime.
 
+pub mod binding_change;
 mod handler;
 pub mod handy_keys;
+pub mod rules;
 mod tauri_impl;
 
 use log::{error, info, warn};
@@ -26,6 +28,7 @@ use crate::settings::{
     OverlayPosition, OverlayStyle, PasteMethod, ShortcutBinding, SoundTheme, Theme, TypingTool,
     APPLE_INTELLIGENCE_PROVIDER_ID,
 };
+use crate::shortcut::binding_change::{apply_binding_change, BindingError, ShortcutRegistrar};
 use crate::tray;
 
 // Note: Commands are accessed via shortcut::handy_keys:: in lib.rs
@@ -106,7 +109,23 @@ pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<
 pub struct BindingResponse {
     success: bool,
     binding: Option<ShortcutBinding>,
-    error: Option<String>,
+    error: Option<BindingError>,
+}
+
+/// Registrar réel : délègue à l'implémentation clavier active (`handy_keys`
+/// partout sauf Linux, où c'est `tauri`).
+struct AppRegistrar<'a> {
+    app: &'a AppHandle,
+}
+
+impl ShortcutRegistrar for AppRegistrar<'_> {
+    fn register(&mut self, binding: &ShortcutBinding) -> Result<(), String> {
+        register_shortcut(self.app, binding.clone())
+    }
+
+    fn unregister(&mut self, binding: &ShortcutBinding) -> Result<(), String> {
+        unregister_shortcut(self.app, binding.clone())
+    }
 }
 
 #[tauri::command]
@@ -116,42 +135,37 @@ pub fn change_binding(
     id: String,
     binding: String,
 ) -> Result<BindingResponse, String> {
-    // Reject empty bindings — every shortcut should have a value
     if binding.trim().is_empty() {
         return Err("Binding cannot be empty".to_string());
     }
 
     let mut settings = settings::get_settings(&app);
 
-    // Get the binding to modify, or create it from defaults if it doesn't exist
+    // Binding à modifier, ou sa valeur par défaut si le store ne le connaît
+    // pas encore (profil hérité).
     let binding_to_modify = match settings.bindings.get(&id) {
-        Some(binding) => binding.clone(),
-        None => {
-            // Try to get the default binding for this id
-            let default_settings = settings::get_default_settings();
-            match default_settings.bindings.get(&id) {
-                Some(default_binding) => {
-                    warn!(
-                        "Binding '{}' not found in settings, creating from defaults",
-                        id
-                    );
-                    default_binding.clone()
-                }
-                None => {
-                    let error_msg = format!("Binding with id '{}' not found in defaults", id);
-                    warn!("change_binding error: {}", error_msg);
-                    return Ok(BindingResponse {
-                        success: false,
-                        binding: None,
-                        error: Some(error_msg),
-                    });
-                }
+        Some(existing) => existing.clone(),
+        None => match settings::get_default_settings().bindings.get(&id) {
+            Some(default_binding) => {
+                warn!(
+                    "Binding '{}' absent des réglages, créé depuis les défauts",
+                    id
+                );
+                default_binding.clone()
             }
-        }
+            None => {
+                warn!("change_binding: binding '{}' inconnu", id);
+                return Ok(BindingResponse {
+                    success: false,
+                    binding: None,
+                    error: Some(BindingError::unknown_binding(&id)),
+                });
+            }
+        },
     };
 
-    // If this is the cancel binding, just update the settings and return
-    // It's managed dynamically, so we don't register/unregister here
+    // L'annulation est enregistrée dynamiquement pendant la dictée : on se
+    // contente de persister la valeur (comportement inchangé).
     if id == "cancel" {
         if let Some(mut b) = settings.bindings.get(&id).cloned() {
             b.current_binding = binding;
@@ -159,52 +173,37 @@ pub fn change_binding(
             settings::write_settings(&app, settings);
             return Ok(BindingResponse {
                 success: true,
-                binding: Some(b.clone()),
+                binding: Some(b),
                 error: None,
             });
         }
     }
 
-    // Unregister the existing binding
-    if let Err(e) = unregister_shortcut(&app, binding_to_modify.clone()) {
-        let error_msg = format!("Failed to unregister shortcut: {}", e);
-        error!("change_binding error: {}", error_msg);
-    }
-
-    // Validate the new shortcut for the current keyboard implementation
-    if let Err(e) = validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
-    {
-        warn!("change_binding validation error: {}", e);
-        return Err(e);
-    }
-
-    // Create an updated binding
-    let mut updated_binding = binding_to_modify;
-    updated_binding.current_binding = binding;
-
-    // Register the new binding
-    if let Err(e) = register_shortcut(&app, updated_binding.clone()) {
-        let error_msg = format!("Failed to register shortcut: {}", e);
-        error!("change_binding error: {}", error_msg);
-        return Ok(BindingResponse {
+    let mut registrar = AppRegistrar { app: &app };
+    match apply_binding_change(
+        &binding_to_modify,
+        &binding,
+        rules::current_os(),
+        &mut registrar,
+    ) {
+        Ok(updated) => {
+            // Les réglages ne sont écrits qu'après succès.
+            settings.bindings.insert(id, updated.clone());
+            settings::write_settings(&app, settings);
+            Ok(BindingResponse {
+                success: true,
+                binding: Some(updated),
+                error: None,
+            })
+        }
+        // Échec : rien n'est persisté, l'ancien raccourci est toujours actif —
+        // on le renvoie pour que le champ de l'interface y revienne.
+        Err(error) => Ok(BindingResponse {
             success: false,
-            binding: None,
-            error: Some(error_msg),
-        });
+            binding: Some(binding_to_modify),
+            error: Some(error),
+        }),
     }
-
-    // Update the binding in the settings
-    settings.bindings.insert(id, updated_binding.clone());
-
-    // Save the settings
-    settings::write_settings(&app, settings);
-
-    // Return the updated binding
-    Ok(BindingResponse {
-        success: true,
-        binding: Some(updated_binding),
-        error: None,
-    })
 }
 
 #[tauri::command]
@@ -213,12 +212,11 @@ pub fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, Stri
     match settings::get_stored_binding(&app, &id) {
         Some(binding) => change_binding(app, id, binding.default_binding),
         None => {
-            let error_msg = format!("Binding with id '{}' not found in settings", id);
-            warn!("reset_binding error: {}", error_msg);
+            warn!("reset_binding: binding '{}' absent des réglages", id);
             Ok(BindingResponse {
                 success: false,
                 binding: None,
-                error: Some(error_msg),
+                error: Some(BindingError::unknown_binding(&id)),
             })
         }
     }
@@ -346,21 +344,6 @@ pub fn get_keyboard_implementation(app: AppHandle) -> String {
     match settings.keyboard_implementation {
         KeyboardImplementation::Tauri => "tauri".to_string(),
         KeyboardImplementation::HandyKeys => "handy_keys".to_string(),
-    }
-}
-
-// ============================================================================
-// Validation Helpers
-// ============================================================================
-
-/// Validate a shortcut for a specific implementation
-fn validate_shortcut_for_implementation(
-    raw: &str,
-    implementation: KeyboardImplementation,
-) -> Result<(), String> {
-    match implementation {
-        KeyboardImplementation::Tauri => tauri_impl::validate_shortcut(raw),
-        KeyboardImplementation::HandyKeys => handy_keys::validate_shortcut(raw),
     }
 }
 

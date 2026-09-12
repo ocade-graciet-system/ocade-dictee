@@ -1113,7 +1113,23 @@ overlay_style?: OverlayStyle }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
-export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
+/**
+ * Échec d'un changement de raccourci. `previous_binding` est le raccourci
+ * **resté actif** : le front y revient et le cite dans son message.
+ */
+export type BindingError = { code: BindingErrorCode; previousBinding: string; 
+/**
+ * Complément affichable : combinaison réservée, message du système,
+ * jeton non reconnu.
+ */
+detail: string | null }
+/**
+ * Code de refus envoyé au front, qui le traduit via
+ * `settings.general.shortcut.rejections.*`. Énumération **plate** : la spec
+ * range `registrationFailed` au même niveau que les raisons de refus.
+ */
+export type BindingErrorCode = "empty" | "unparseable" | "noKey" | "multipleKeys" | "noModifier" | "shiftOnlyWithPrintable" | "escapeKey" | "mouseButton" | "reservedBySystem" | "registrationFailed" | "unknownBinding"
+export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: BindingError | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CommMuteMode = "push_to_mute" | "toggle"
 export type CustomSounds = { start: boolean; stop: boolean }

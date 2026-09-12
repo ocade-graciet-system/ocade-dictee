@@ -12,3 +12,5 @@ export { AutostartToggle } from "./AutostartToggle";
 export { AppendTrailingSpace } from "./AppendTrailingSpace";
 export { ThemeSelector } from "./ThemeSelector";
 export { ShortcutPresetSelector } from "./ShortcutPresetSelector";
+export { CustomShortcutInput } from "./CustomShortcutInput";
+export { ShortcutRejectionMessage } from "./ShortcutRejectionMessage";

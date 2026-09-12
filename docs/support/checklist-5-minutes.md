@@ -9,6 +9,14 @@
 - [ ] macOS : Microphone et Accessibilité sont cochés pour OCADE Dictée dans Réglages Système (Préférences Système avant macOS 13 ; si Accessibilité semble cochée sans effet après une mise à jour, décochez/recochez ou retirez (−) et rajoutez (+))
 - [ ] Noter le modèle de machine, l'OS et la version dans la fiche client
 
+## Raccourci refusé, ou dictée sans réaction après un changement
+
+1. **Message « Ce raccourci n'est pas accepté : … »** sous le champ : la combinaison est interdite (sans touche de modification, Maj + un caractère, Échap, ou réservée par le système). Le raccourci précédent est resté actif, la dictée fonctionne toujours. Proposez au client une autre combinaison, ou l'un des quatre raccourcis de la liste.
+2. **Le raccourci est bien affiché mais la dictée ne démarre pas** : la combinaison est captée par le système avant OCADE Dictée (raccourci personnalisé du système, gestionnaire de fenêtres). Repassez sur le premier raccourci de la liste pour vérifier que la dictée répond, puis choisissez une autre combinaison personnalisée.
+3. **Un raccourci d'un autre logiciel ne fonctionne plus** (⌘ C, ⌘ S, Ctrl + C…) : sur macOS et Windows, OCADE Dictée capte son raccourci avant les autres logiciels ; si le client a choisi une combinaison courante, c'est OCADE Dictée qui la reçoit désormais. Proposez-lui une combinaison peu utilisée, ou l'un des quatre raccourcis de la liste.
+4. **Message « le système a refusé de l'enregistrer »** : rare. Sur macOS et Windows, l'enregistrement aboutit presque toujours ; ce message concerne surtout Linux, où l'environnement de bureau peut refuser une combinaison déjà prise. Choisissez une autre combinaison, ou l'un des quatre raccourcis de la liste.
+5. **Aucun raccourci ne fonctionne** : vérifiez l'autorisation Accessibilité (macOS, voir la case ci-dessus) puis relancez l'application.
+
 ## Mode débogage (diagnostic avancé)
 
 À utiliser si un problème résiste à la checklist ci-dessus.

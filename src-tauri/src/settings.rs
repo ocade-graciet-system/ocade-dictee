@@ -885,7 +885,18 @@ pub fn apply_v1_locks(settings: &mut AppSettings) -> bool {
     settings.bindings.remove("transcribe_with_post_process");
     if let Some(binding) = settings.bindings.get_mut("transcribe") {
         binding.default_binding = SHORTCUT_PRESETS[0].to_string();
-        if !SHORTCUT_PRESETS.contains(&binding.current_binding.as_str()) {
+        // 1.1.0 : le raccourci de dictée est personnalisable. On n'impose plus
+        // un préréglage, seulement le respect des règles d'acceptation — un
+        // store édité à la main ou un profil hérité ne peut donc pas installer
+        // un raccourci inutilisable.
+        if let Err(rejection) = crate::shortcut::rules::validate_custom_shortcut(
+            &binding.current_binding,
+            crate::shortcut::rules::current_os(),
+        ) {
+            warn!(
+                "Raccourci de dictée « {} » invalide ({:?}), repli sur « {} »",
+                binding.current_binding, rejection, SHORTCUT_PRESETS[0]
+            );
             binding.current_binding = SHORTCUT_PRESETS[0].to_string();
         }
     }
@@ -1604,6 +1615,7 @@ mod tests {
         s.selected_model = "whisper-large-v3-turbo".to_string();
         s.overlay_style = OverlayStyle::None;
         s.model_unload_timeout = ModelUnloadTimeout::Min5;
+        // Touche seule : refusée par `NoModifier` sur les 3 OS → repli préréglage n° 1.
         s.bindings.get_mut("transcribe").unwrap().current_binding = "f13".to_string();
         s.post_process_enabled = true;
         s.always_on_microphone = true;
@@ -1659,6 +1671,34 @@ mod tests {
         assert_eq!(
             s.bindings["transcribe"].current_binding,
             SHORTCUT_PRESETS[2]
+        );
+    }
+
+    #[test]
+    fn v1_locks_keep_a_valid_custom_binding() {
+        // 1.1.0 : un raccourci hors préréglages est conservé s'il passe les
+        // règles d'acceptation. `ctrl+shift+j` est valide sur les 3 OS.
+        let mut s = get_default_settings();
+        s.bindings.get_mut("transcribe").unwrap().current_binding = "ctrl+shift+j".to_string();
+        apply_v1_locks(&mut s);
+        assert_eq!(s.bindings["transcribe"].current_binding, "ctrl+shift+j");
+        assert_eq!(
+            s.bindings["transcribe"].default_binding,
+            SHORTCUT_PRESETS[0]
+        );
+    }
+
+    #[test]
+    fn v1_locks_replace_an_invalid_binding_with_the_first_preset() {
+        // `ctrl+option+escape` est refusé sur les 3 OS (touche Échap réservée
+        // à l'annulation) : le repli doit être le préréglage n° 1.
+        let mut s = get_default_settings();
+        s.bindings.get_mut("transcribe").unwrap().current_binding =
+            "ctrl+option+escape".to_string();
+        assert!(apply_v1_locks(&mut s));
+        assert_eq!(
+            s.bindings["transcribe"].current_binding,
+            SHORTCUT_PRESETS[0]
         );
     }
 

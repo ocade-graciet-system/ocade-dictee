@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   AppSettings as Settings,
   AudioDevice,
+  BindingError,
   TranscribeAcceleratorSetting,
   OrtAcceleratorSetting,
   CommMuteMode,
@@ -31,8 +32,8 @@ interface SettingsStore {
   refreshSettings: () => Promise<void>;
   refreshAudioDevices: () => Promise<void>;
   refreshOutputDevices: () => Promise<void>;
-  updateBinding: (id: string, binding: string) => Promise<void>;
-  resetBinding: (id: string) => Promise<void>;
+  updateBinding: (id: string, binding: string) => Promise<BindingError | null>;
+  resetBinding: (id: string) => Promise<BindingError | null>;
   getSetting: <K extends keyof Settings>(key: K) => Settings[K] | undefined;
   isUpdatingKey: (key: string) => boolean;
   playTestSound: (soundType: "start" | "stop") => Promise<void>;
@@ -328,16 +329,15 @@ export const useSettingsStore = create<SettingsStore>()(
       }
     },
 
-    // Update a specific binding
+    // Change un raccourci. Renvoie `null` en cas de succès, l'erreur
+    // structurée du backend sinon (l'appelant l'affiche ; l'ancien raccourci
+    // est resté actif côté système).
     updateBinding: async (id, binding) => {
       const { settings, setUpdating } = get();
       const updateKey = `binding_${id}`;
-      const originalBinding = settings?.bindings?.[id]?.current_binding;
+      const originalBinding = settings?.bindings?.[id]?.current_binding ?? "";
 
-      setUpdating(updateKey, true);
-
-      try {
-        // Optimistic update
+      const showBinding = (value: string) =>
         set((state) => ({
           settings: state.settings
             ? {
@@ -346,64 +346,94 @@ export const useSettingsStore = create<SettingsStore>()(
                   ...state.settings.bindings,
                   [id]: {
                     ...state.settings.bindings?.[id]!,
-                    current_binding: binding,
+                    current_binding: value,
                   },
                 },
               }
             : null,
         }));
 
+      const failure = (detail: string | null): BindingError => ({
+        code: "registrationFailed",
+        previousBinding: originalBinding,
+        detail,
+      });
+
+      setUpdating(updateKey, true);
+      try {
+        showBinding(binding); // mise à jour optimiste
+
         const result = await commands.changeBinding(id, binding);
 
-        // Check if the command executed successfully
         if (result.status === "error") {
-          throw new Error(result.error);
+          console.error(
+            `Échec du changement de raccourci ${id} :`,
+            result.error,
+          );
+          showBinding(originalBinding);
+          return failure(result.error);
         }
 
-        // Check if the binding change was successful
         if (!result.data.success) {
-          throw new Error(result.data.error || "Failed to update binding");
+          const error = result.data.error ?? failure(null);
+          showBinding(error.previousBinding || originalBinding);
+          return error;
         }
+
+        return null;
       } catch (error) {
-        console.error(`Failed to update binding ${id}:`, error);
-
-        // Rollback on error
-        if (originalBinding && get().settings) {
-          set((state) => ({
-            settings: state.settings
-              ? {
-                  ...state.settings,
-                  bindings: {
-                    ...state.settings.bindings,
-                    [id]: {
-                      ...state.settings.bindings?.[id]!,
-                      current_binding: originalBinding,
-                    },
-                  },
-                }
-              : null,
-          }));
-        }
-
-        // Re-throw to let the caller know it failed
-        throw error;
+        console.error(`Échec du changement de raccourci ${id} :`, error);
+        showBinding(originalBinding);
+        return failure(String(error));
       } finally {
         setUpdating(updateKey, false);
       }
     },
 
-    // Reset a specific binding
+    // Remet un raccourci à sa valeur par défaut. Contrairement à la 1.0.x, un
+    // échec n'est plus avalé silencieusement (issue #22) : il est renvoyé.
     resetBinding: async (id) => {
       const { setUpdating, refreshSettings } = get();
       const updateKey = `binding_${id}`;
 
       setUpdating(updateKey, true);
-
       try {
-        await commands.resetBinding(id);
+        const result = await commands.resetBinding(id);
+
+        if (result.status === "error") {
+          console.error(
+            `Échec de la réinitialisation du raccourci ${id} :`,
+            result.error,
+          );
+          return {
+            code: "registrationFailed",
+            previousBinding: "",
+            detail: result.error,
+          };
+        }
+
         await refreshSettings();
-      } catch (error) {
-        console.error(`Failed to reset binding ${id}:`, error);
+
+        if (!result.data.success) {
+          console.error(
+            `Réinitialisation du raccourci ${id} refusée :`,
+            result.data.error,
+          );
+          // Un refus sans erreur structurée reste un échec : comme
+          // `updateBinding`, ne jamais renvoyer `null` quand `success` est
+          // faux. Le store vient d'être rafraîchi : il porte le raccourci
+          // resté actif.
+          return (
+            result.data.error ?? {
+              code: "registrationFailed",
+              previousBinding:
+                get().settings?.bindings?.[id]?.current_binding ?? "",
+              detail: null,
+            }
+          );
+        }
+
+        return null;
       } finally {
         setUpdating(updateKey, false);
       }

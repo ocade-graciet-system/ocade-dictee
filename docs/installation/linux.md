@@ -25,7 +25,15 @@ Selon l'environnement (GNOME, KDE), une demande d'accès au micro peut apparaît
 2. Maintenez **Ctrl + Alt + Espace**, dites « Bonjour, ceci est un test », relâchez.
 3. Le texte apparaît, deux sons signalent début et fin.
 
-## 5. Transcrire un fichier audio ou vidéo
+## 5. Changer le raccourci de dictée
+
+**Paramètres… → Général → Raccourci de dictée.**
+
+Sous Linux, la liste propose quatre raccourcis prêts à l'emploi : **Ctrl + Alt + Espace**, **Ctrl + Maj + Espace**, **Ctrl + Alt + D**, **Ctrl + Maj + D** ; la capture d'une combinaison personnalisée n'est pas disponible sur Linux dans cette version (l'entrée **Personnalisé…** affiche alors « La capture d'un raccourci n'est pas disponible sur cet ordinateur »).
+
+Après un changement, faites un essai dans une application. Si rien ne se passe, la combinaison est déjà utilisée par votre environnement de bureau ou par un autre logiciel : choisissez-en une autre.
+
+## 6. Transcrire un fichier audio ou vidéo
 
 L'onglet **Fichier** transcrit aussi un fichier déjà enregistré, sans passer par le micro.
 
@@ -34,7 +42,7 @@ L'onglet **Fichier** transcrit aussi un fichier déjà enregistré, sans passer 
 3. Pour un premier fichier dans un format qu'elle ne lit pas directement (Opus/WhatsApp, 3GP, WMA, WebM…), l'application télécharge un outil de conversion (45 à 80 Mo ; une connexion Internet est nécessaire à ce moment-là). Ce téléchargement n'a lieu qu'une seule fois.
 4. Le texte obtenu peut être exporté au format Markdown.
 
-## 6. Au quotidien
+## 7. Au quotidien
 
 - Lancement automatique à l'ouverture de session (une entrée de démarrage automatique est créée dans `~/.config/autostart/`) ; icône dans la zone de notification (sur GNOME, installez l'extension GNOME Shell « AppIndicator » depuis les extensions GNOME).
 - Les mises à jour sont automatiques : au lancement, puis toutes les 24 heures, jamais pendant une dictée (l'AppImage se remplace lui-même, sur place). Un écran « Mise à jour vers la version X » s'affiche, puis l'application redémarre seule.

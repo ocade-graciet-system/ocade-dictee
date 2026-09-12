@@ -191,6 +191,29 @@
         "none": "Aucun raccourci configuré",
         "notFound": "Raccourci non trouvé",
         "pressKeys": "Appuyez sur les touches...",
+        "custom": {
+          "option": "Personnalisé…",
+          "label": "Raccourci personnalisé",
+          "description": "Cliquez sur le champ, puis appuyez sur la combinaison souhaitée. Échap annule la capture.",
+          "press": "Appuyez sur la combinaison…",
+          "saved": "Raccourci enregistré",
+          "rejected": "Ce raccourci n'est pas accepté : {{reason}}. Le raccourci précédent ({{previous}}) est conservé.",
+          "unavailable": "La capture d'un raccourci n'est pas disponible sur cet ordinateur ({{error}}). Choisissez un raccourci dans la liste."
+        },
+        "rejections": {
+          "empty": "combinaison non reconnue",
+          "unparseable": "combinaison non reconnue",
+          "noModifier": "il doit comporter au moins une touche de modification (⌃ ⌥ ⇧ ⌘) en plus d'une touche",
+          "noKey": "il doit comporter une touche en plus des modificateurs",
+          "multipleKeys": "une seule touche est possible en plus des modificateurs",
+          "shiftOnlyWithPrintable": "Maj + un caractère empêcherait de taper les majuscules",
+          "escapeKey": "la touche Échap sert à annuler la dictée",
+          "mouseButton": "un bouton de souris ne peut pas servir de raccourci",
+          "reservedBySystem": "{{combo}} est réservé par le système",
+          "registrationFailed": "le système a refusé de l'enregistrer ({{detail}})",
+          "registrationFailedNoDetail": "le système a refusé de l'enregistrer",
+          "unknownBinding": "ce raccourci est introuvable dans les réglages"
+        },
         "bindings": {
           "transcribe": {
             "name": "Raccourci de Transcription",
