@@ -42,6 +42,10 @@ pub enum ShortcutRejection {
     ShiftOnlyWithPrintable,
     /// Échap est réservée à l'annulation de la dictée.
     EscapeKey,
+    /// La « touche » est un bouton de souris (spec §3, règle 7 bis) :
+    /// handy-keys en émet un dès qu'un modificateur est enfoncé pendant un
+    /// clic, or un Maj-clic ou un ⌘-clic ne peut pas servir de raccourci.
+    MouseButton,
     /// La combinaison normalisée figure dans la liste noire de l'OS.
     ReservedBySystem { combo: String },
 }
@@ -279,7 +283,19 @@ fn is_printable(key: Key) -> bool {
     )
 }
 
-/// Applique les 8 contrôles de la spec §3, dans l'ordre : le premier refus
+/// Bouton de souris. handy-keys les expose comme des touches à part entière
+/// (`mouseleft`, `mouseright`, `mousemiddle`, `mousex1`, `mousex2`) et les
+/// émet dès qu'un modificateur est enfoncé pendant un clic : sans cette
+/// famille, un ⇧-clic passerait toutes les règles et deviendrait le raccourci
+/// de dictée.
+fn is_mouse_button(key: Key) -> bool {
+    matches!(
+        key,
+        Key::MouseLeft | Key::MouseRight | Key::MouseMiddle | Key::MouseX1 | Key::MouseX2
+    )
+}
+
+/// Applique les contrôles de la spec §3, dans l'ordre : le premier refus
 /// l'emporte.
 pub fn validate_custom_shortcut(raw: &str, os: TargetOs) -> Result<(), ShortcutRejection> {
     // 1. Chaîne vide.
@@ -295,6 +311,13 @@ pub fn validate_custom_shortcut(raw: &str, os: TargetOs) -> Result<(), ShortcutR
     let Some(key) = parsed.key else {
         return Err(ShortcutRejection::NoKey);
     };
+
+    // 3 bis. Bouton de souris (règle 7 bis de la spec, appliquée ici : elle
+    // passe avant `MultipleKeys` et `NoModifier` pour qu'un clic soit toujours
+    // refusé en tant que tel, y compris `mouseleft` sans modificateur).
+    if is_mouse_button(key) {
+        return Err(ShortcutRejection::MouseButton);
+    }
 
     // 4. Plusieurs touches.
     if parsed.key_count > 1 {
@@ -365,7 +388,7 @@ mod tests {
     fn one_case_per_rejection_variant() {
         // (raccourci, OS, refus attendu) — un cas au moins par variante,
         // dans l'ordre des contrôles de la spec §3.
-        let cases: [(&str, TargetOs, ShortcutRejection); 14] = [
+        let cases: [(&str, TargetOs, ShortcutRejection); 15] = [
             ("", TargetOs::MacOs, ShortcutRejection::Empty),
             ("   ", TargetOs::Linux, ShortcutRejection::Empty),
             ("ctrl+option", TargetOs::MacOs, ShortcutRejection::NoKey),
@@ -401,6 +424,11 @@ mod tests {
                 "ctrl+shift+escape",
                 TargetOs::Windows,
                 ShortcutRejection::EscapeKey,
+            ),
+            (
+                "shift+mouseleft",
+                TargetOs::MacOs,
+                ShortcutRejection::MouseButton,
             ),
             (
                 "cmd+q",
@@ -586,5 +614,31 @@ mod tests {
             validate_custom_shortcut("shift+f5", TargetOs::MacOs),
             Ok(())
         );
+    }
+
+    #[test]
+    fn mouse_buttons_are_never_a_shortcut() {
+        // handy-keys émet `mouseleft`… dès qu'un modificateur accompagne un
+        // clic : sans la règle 7 bis, un ⇧-clic ou un ⌘-clic deviendrait le
+        // raccourci de dictée, ensuite intercepté à chaque clic.
+        for os in ALL_OS {
+            for raw in [
+                "shift+mouseleft",
+                "cmd+mouseleft",
+                "ctrl+mouseright",
+                "option+mousemiddle",
+                "ctrl+shift+mousex1",
+                "ctrl+alt+mousex2",
+                // Sans modificateur : la règle passe avant `NoModifier`, le
+                // refus reste « bouton de souris ».
+                "mouseleft",
+            ] {
+                assert_eq!(
+                    validate_custom_shortcut(raw, os),
+                    Err(ShortcutRejection::MouseButton),
+                    "raccourci « {raw} » accepté sur {os:?}"
+                );
+            }
+        }
     }
 }

@@ -34,6 +34,7 @@ pub enum BindingErrorCode {
     NoModifier,
     ShiftOnlyWithPrintable,
     EscapeKey,
+    MouseButton,
     ReservedBySystem,
     RegistrationFailed,
     UnknownBinding,
@@ -66,6 +67,7 @@ impl BindingError {
                 (BindingErrorCode::ShiftOnlyWithPrintable, None)
             }
             ShortcutRejection::EscapeKey => (BindingErrorCode::EscapeKey, None),
+            ShortcutRejection::MouseButton => (BindingErrorCode::MouseButton, None),
             ShortcutRejection::ReservedBySystem { combo } => {
                 (BindingErrorCode::ReservedBySystem, Some(combo))
             }
@@ -378,6 +380,11 @@ mod tests {
             (
                 ShortcutRejection::EscapeKey,
                 BindingErrorCode::EscapeKey,
+                None,
+            ),
+            (
+                ShortcutRejection::MouseButton,
+                BindingErrorCode::MouseButton,
                 None,
             ),
             (

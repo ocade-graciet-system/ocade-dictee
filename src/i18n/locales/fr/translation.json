@@ -208,6 +208,7 @@
           "multipleKeys": "une seule touche est possible en plus des modificateurs",
           "shiftOnlyWithPrintable": "Maj + un caractère empêcherait de taper les majuscules",
           "escapeKey": "la touche Échap sert à annuler la dictée",
+          "mouseButton": "un bouton de souris ne peut pas servir de raccourci",
           "reservedBySystem": "{{combo}} est réservé par le système",
           "registrationFailed": "le système a refusé de l'enregistrer ({{detail}})",
           "registrationFailedNoDetail": "le système a refusé de l'enregistrer",

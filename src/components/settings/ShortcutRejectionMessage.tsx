@@ -46,6 +46,8 @@ export const ShortcutRejectionMessage: React.FC<
         return t("settings.general.shortcut.rejections.shiftOnlyWithPrintable");
       case "escapeKey":
         return t("settings.general.shortcut.rejections.escapeKey");
+      case "mouseButton":
+        return t("settings.general.shortcut.rejections.mouseButton");
       case "reservedBySystem":
         return t("settings.general.shortcut.rejections.reservedBySystem", {
           combo: formatShortcut(error.detail ?? "", os),

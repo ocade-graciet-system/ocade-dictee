@@ -1128,7 +1128,7 @@ detail: string | null }
  * `settings.general.shortcut.rejections.*`. Énumération **plate** : la spec
  * range `registrationFailed` au même niveau que les raisons de refus.
  */
-export type BindingErrorCode = "empty" | "unparseable" | "noKey" | "multipleKeys" | "noModifier" | "shiftOnlyWithPrintable" | "escapeKey" | "reservedBySystem" | "registrationFailed" | "unknownBinding"
+export type BindingErrorCode = "empty" | "unparseable" | "noKey" | "multipleKeys" | "noModifier" | "shiftOnlyWithPrintable" | "escapeKey" | "mouseButton" | "reservedBySystem" | "registrationFailed" | "unknownBinding"
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: BindingError | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CommMuteMode = "push_to_mute" | "toggle"

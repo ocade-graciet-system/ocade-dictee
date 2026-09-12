@@ -53,7 +53,9 @@ Certaines combinaisons sont refusées ; la raison s'affiche sous le champ :
 
 Quand un raccourci est refusé, **le raccourci précédent reste actif** : la dictée continue de fonctionner.
 
-Après un changement, faites un essai dans une application. Si rien ne se passe, la combinaison est déjà utilisée par macOS ou par un autre logiciel : choisissez-en une autre.
+Après un changement, faites un essai dans une application. Si rien ne se passe, la combinaison est interceptée par macOS avant l'application (raccourci personnalisé du système, gestionnaire de fenêtres) : choisissez-en une autre.
+
+Évitez aussi les raccourcis courants de vos logiciels (⌘ C, ⌘ V, ⌘ S…) : OCADE Dictée les intercepterait à leur place.
 
 ## 7. Transcrire un fichier audio ou vidéo
 

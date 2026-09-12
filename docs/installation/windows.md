@@ -43,7 +43,9 @@ Certaines combinaisons sont refusées ; la raison s'affiche sous le champ :
 
 Quand un raccourci est refusé, **le raccourci précédent reste actif** : la dictée continue de fonctionner.
 
-Après un changement, faites un essai dans une application. Si rien ne se passe, la combinaison est déjà utilisée par Windows ou par un autre logiciel : choisissez-en une autre.
+Après un changement, faites un essai dans une application. Si rien ne se passe, la combinaison est interceptée par Windows avant l'application : choisissez-en une autre.
+
+Évitez aussi les raccourcis courants de vos logiciels (Ctrl + C, Ctrl + V, Ctrl + S…) : OCADE Dictée les intercepterait à leur place.
 
 ## 6. Transcrire un fichier audio ou vidéo
 
