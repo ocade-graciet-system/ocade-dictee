@@ -25,7 +25,27 @@ Selon l'environnement (GNOME, KDE), une demande d'accès au micro peut apparaît
 2. Maintenez **Ctrl + Alt + Espace**, dites « Bonjour, ceci est un test », relâchez.
 3. Le texte apparaît, deux sons signalent début et fin.
 
-## 5. Transcrire un fichier audio ou vidéo
+## 5. Changer le raccourci de dictée
+
+**Paramètres… → Général → Raccourci de dictée.**
+
+- La liste propose quatre raccourcis prêts à l'emploi : **Ctrl + Alt + Espace**, **Ctrl + Maj + Espace**, **Ctrl + Alt + D**, **Ctrl + Maj + D**.
+- Pour une autre combinaison, choisissez **Personnalisé…** dans la liste : un champ apparaît sous la liste. Cliquez dessus, puis appuyez sur la combinaison souhaitée et relâchez — le raccourci est enregistré. La touche **Échap** annule la capture.
+
+Certaines combinaisons sont refusées ; la raison s'affiche sous le champ :
+
+- une combinaison **sans touche de modification** (Ctrl, Alt, Maj, Super) : elle se déclencherait en pleine frappe ;
+- **Maj + une lettre, un chiffre ou une ponctuation** : vous ne pourriez plus taper les majuscules ;
+- la touche **Échap** : elle sert déjà à annuler une dictée en cours ;
+- les raccourcis **réservés par le bureau** (Ctrl + Alt + T, Ctrl + Alt + Retour arrière, Alt + Tab, Alt + F4, Super + L) : ils sont interceptés avant l'application.
+
+Quand un raccourci est refusé, **le raccourci précédent reste actif** : la dictée continue de fonctionner.
+
+Après un changement, faites un essai dans une application. Si rien ne se passe, la combinaison est déjà utilisée par votre environnement de bureau ou par un autre logiciel : choisissez-en une autre.
+
+> Si le message « La capture d'un raccourci n'est pas disponible sur cet ordinateur » s'affiche, restez sur l'un des quatre raccourcis proposés dans la liste.
+
+## 6. Transcrire un fichier audio ou vidéo
 
 L'onglet **Fichier** transcrit aussi un fichier déjà enregistré, sans passer par le micro.
 
@@ -34,7 +54,7 @@ L'onglet **Fichier** transcrit aussi un fichier déjà enregistré, sans passer 
 3. Pour un premier fichier dans un format qu'elle ne lit pas directement (Opus/WhatsApp, 3GP, WMA, WebM…), l'application télécharge un outil de conversion (45 à 80 Mo ; une connexion Internet est nécessaire à ce moment-là). Ce téléchargement n'a lieu qu'une seule fois.
 4. Le texte obtenu peut être exporté au format Markdown.
 
-## 6. Au quotidien
+## 7. Au quotidien
 
 - Lancement automatique à l'ouverture de session (une entrée de démarrage automatique est créée dans `~/.config/autostart/`) ; icône dans la zone de notification (sur GNOME, installez l'extension GNOME Shell « AppIndicator » depuis les extensions GNOME).
 - Les mises à jour sont automatiques : au lancement, puis toutes les 24 heures, jamais pendant une dictée (l'AppImage se remplace lui-même, sur place). Un écran « Mise à jour vers la version X » s'affiche, puis l'application redémarre seule.

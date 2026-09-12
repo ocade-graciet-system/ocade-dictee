@@ -9,6 +9,13 @@
 - [ ] macOS : Microphone et Accessibilité sont cochés pour OCADE Dictée dans Réglages Système (Préférences Système avant macOS 13 ; si Accessibilité semble cochée sans effet après une mise à jour, décochez/recochez ou retirez (−) et rajoutez (+))
 - [ ] Noter le modèle de machine, l'OS et la version dans la fiche client
 
+## Raccourci refusé, ou dictée sans réaction après un changement
+
+1. **Message « Ce raccourci n'est pas accepté : … »** sous le champ : la combinaison est interdite (sans touche de modification, Maj + un caractère, Échap, ou réservée par le système). Le raccourci précédent est resté actif, la dictée fonctionne toujours. Proposez au client une autre combinaison, ou l'un des quatre raccourcis de la liste.
+2. **Le raccourci est bien affiché mais la dictée ne démarre pas** : la combinaison est captée par le système ou par un autre logiciel avant OCADE Dictée (raccourci personnalisé du système, logiciel de visioconférence, gestionnaire de fenêtres). Repassez sur le premier raccourci de la liste pour vérifier que la dictée répond, puis choisissez une autre combinaison personnalisée.
+3. **Message « le système a refusé de l'enregistrer »** : la combinaison est déjà prise par une autre application lancée. Fermez-la, ou choisissez une autre combinaison.
+4. **Aucun raccourci ne fonctionne** : vérifiez l'autorisation Accessibilité (macOS, voir la case ci-dessus) puis relancez l'application.
+
 ## Mode débogage (diagnostic avancé)
 
 À utiliser si un problème résiste à la checklist ci-dessus.
