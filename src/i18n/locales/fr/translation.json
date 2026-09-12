@@ -119,7 +119,9 @@
       },
       "accessibility": {
         "title": "Accès à l'accessibilité",
-        "description": "Nécessaire pour taper le texte transcrit dans vos applications."
+        "description": "Nécessaire pour taper le texte transcrit dans vos applications.",
+        "help": "Dans Réglages Système → Confidentialité et sécurité → Accessibilité, activez OCADE Dictée. Si l'interrupteur est déjà activé (après une mise à jour), désactivez-le puis réactivez-le, ou retirez l'application avec « − » puis rajoutez-la avec « + ». L'écran continue automatiquement.",
+        "openSettings": "Ouvrir les réglages d'accessibilité"
       },
       "grant": "Accorder l'autorisation",
       "granted": "Accordé",

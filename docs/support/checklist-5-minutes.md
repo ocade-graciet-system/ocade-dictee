@@ -6,7 +6,7 @@
 - [ ] Les deux sons (début/fin) sont audibles sur le périphérique de sortie utilisé
 - [ ] Session fermée puis rouverte : l'app est relancée automatiquement, masquée
 - [ ] À propos : la version affichée est la dernière release
-- [ ] macOS : Microphone et Accessibilité sont cochés pour OCADE Dictée dans Réglages Système (Préférences Système avant macOS 13)
+- [ ] macOS : Microphone et Accessibilité sont cochés pour OCADE Dictée dans Réglages Système (Préférences Système avant macOS 13 ; si Accessibilité semble cochée sans effet après une mise à jour, décochez/recochez ou retirez (−) et rajoutez (+))
 - [ ] Noter le modèle de machine, l'OS et la version dans la fiche client
 
 ## Mode débogage (diagnostic avancé)
