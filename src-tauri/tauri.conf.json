@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OCADE Dictée",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "identifier": "com.ocade.handy",
   "build": {
     "beforeDevCommand": "bun scripts/fetch-yt-dlp.ts && bun run dev",
@@ -38,7 +38,9 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "files": {},
+      "files": {
+        "Resources/fr.lproj/InfoPlist.strings": "lproj/fr.lproj/InfoPlist.strings"
+      },
       "hardenedRuntime": true,
       "minimumSystemVersion": "10.15",
       "signingIdentity": "-",
