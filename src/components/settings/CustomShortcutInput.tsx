@@ -45,6 +45,9 @@ export const CustomShortcutInput: React.FC = () => {
   // d'une fermeture périmée.
   const capturedRef = useRef("");
   const unlistenRef = useRef<(() => void) | null>(null);
+  // Démarrage en cours : deux clics rapprochés tombent dans le même rendu et
+  // lisent donc le même `isRecording`.
+  const startingRef = useRef(false);
 
   const commit = useCallback(
     async (rawCombination: string) => {
@@ -77,12 +80,20 @@ export const CustomShortcutInput: React.FC = () => {
           }
 
           if (is_key_down && hotkey_string) {
-            capturedRef.current = hotkey_string;
+            // Le champ suit la frappe en direct, modificateurs seuls compris.
             setCaptured(hotkey_string);
+            // Mais seule une combinaison portant une touche est mémorisée :
+            // un modificateur seul émet `key: null`, et son relâchement (y
+            // compris un relâchement synthétique sous Windows/Linux) ne doit
+            // pas valider une combinaison sans touche.
+            if (key !== null) {
+              capturedRef.current = hotkey_string;
+            }
             return;
           }
 
-          // Relâchement : on retient la combinaison du dernier appui.
+          // Relâchement : la capture ne se termine que si une combinaison
+          // complète a été mémorisée.
           if (!is_key_down && capturedRef.current) {
             const combination = capturedRef.current;
             capturedRef.current = "";
@@ -115,7 +126,11 @@ export const CustomShortcutInput: React.FC = () => {
   }, [isRecording, commit]);
 
   const startRecording = async () => {
-    if (isRecording || busy) return;
+    // `isRecording` ne sépare pas deux clics du même tick : sans la ref, le
+    // second démarrage reçoit « Already recording », affiché à tort comme
+    // « capture indisponible ».
+    if (isRecording || busy || startingRef.current) return;
+    startingRef.current = true;
 
     setRejection(null);
     setSaved(false);
@@ -133,6 +148,8 @@ export const CustomShortcutInput: React.FC = () => {
     } catch (error) {
       setUnavailable(String(error));
       return;
+    } finally {
+      startingRef.current = false;
     }
     setIsRecording(true);
   };

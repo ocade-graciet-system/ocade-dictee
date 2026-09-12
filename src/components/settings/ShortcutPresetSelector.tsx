@@ -27,6 +27,9 @@ export const ShortcutPresetSelector: React.FC<ShortcutPresetSelectorProps> = ({
   const { settings, updateBinding, isUpdating } = useSettings();
   const [presets, setPresets] = useState<string[]>([]);
   const [customSelected, setCustomSelected] = useState(false);
+  // Raccourci en place au moment où « Personnalisé… » a été choisi : sert à
+  // reconnaître la mise à jour effective qui met fin à cette sélection.
+  const [customSelectedAt, setCustomSelectedAt] = useState<string | null>(null);
   const [rejection, setRejection] = useState<BindingError | null>(null);
 
   useEffect(() => {
@@ -37,12 +40,20 @@ export const ShortcutPresetSelector: React.FC<ShortcutPresetSelectorProps> = ({
   }, []);
 
   const current = settings?.bindings?.transcribe?.current_binding ?? null;
+  const updating = isUpdating("binding_transcribe");
 
-  // Le champ de capture apparaît si l'utilisateur choisit « Personnalisé… »
-  // ou si le raccourci enregistré ne fait pas partie des préréglages.
+  // Valeur affichée : le préréglage courant quand le raccourci en fait partie,
+  // « Personnalisé… » sinon — une capture qui tombe pile sur un préréglage
+  // ramène donc la liste sur ce préréglage. La sélection « Personnalisé… »
+  // sans capture aboutie ne tient que jusqu'à la prochaine mise à jour
+  // effective du raccourci ; pendant une tentative, `current` est provisoire
+  // (mise à jour optimiste, ramenée à sa valeur d'origine en cas de refus), on
+  // attend donc son issue.
   const isPreset = current !== null && presets.includes(current);
+  const customPending =
+    customSelected && (updating || current === customSelectedAt);
   const showCustom =
-    customSelected || (current !== null && presets.length > 0 && !isPreset);
+    customPending || (current !== null && presets.length > 0 && !isPreset);
 
   const options = [
     ...presets.map((preset) => ({
@@ -58,6 +69,7 @@ export const ShortcutPresetSelector: React.FC<ShortcutPresetSelectorProps> = ({
   const handleSelect = async (value: string) => {
     setRejection(null);
     if (value === CUSTOM_VALUE) {
+      setCustomSelectedAt(current);
       setCustomSelected(true);
       return;
     }
@@ -80,7 +92,7 @@ export const ShortcutPresetSelector: React.FC<ShortcutPresetSelectorProps> = ({
           options={options}
           selectedValue={showCustom ? CUSTOM_VALUE : current}
           onSelect={handleSelect}
-          disabled={presets.length === 0 || isUpdating("binding_transcribe")}
+          disabled={presets.length === 0 || updating}
         />
       </SettingContainer>
       {(rejection || showCustom) && (
