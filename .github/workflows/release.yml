@@ -150,21 +150,21 @@ jobs:
             }
             lines.push(
               "Au premier lancement, Windows peut afficher **« Windows a protégé votre ordinateur »** (application non signée). C'est attendu :",
-              "1. Clique sur le petit lien **« Informations complémentaires »**",
+              "1. Cliquez sur le petit lien **« Informations complémentaires »**",
               "2. Puis sur **« Exécuter quand même »**",
               "",
               "## 🍎 Mac — installer OCADE Dictée",
               "",
-              "| Ton Mac | Fichier |",
+              "| Votre Mac | Fichier |",
               "| --- | --- |",
             );
             if (dmgArm) lines.push(`| Apple Silicon (M1, M2, M3, M4…) | [Télécharger le .dmg](${dl(dmgArm)}) |`);
             if (dmgIntel) lines.push(`| Intel (modèles ≈ avant 2020) | [Télécharger le .dmg](${dl(dmgIntel)}) |`);
             lines.push(
               "",
-              "Ouvre le fichier .dmg, glisse **OCADE Dictée** dans **Applications**, puis lance-la depuis Applications. Si macOS bloque avec « Apple n'a pas pu confirmer… » :",
-              "1. **Réglages Système → Confidentialité et sécurité**, descends tout en bas → **« Ouvrir quand même »**, puis relance l'app ;",
-              "2. Si cette option n'apparaît pas, ouvre le **Terminal** (Cmd+Espace, tape « Terminal »), colle la commande ci-dessous, valide avec Entrée, puis relance l'app :",
+              "Ouvrez le fichier .dmg, glissez **OCADE Dictée** dans **Applications**, puis lancez-la depuis Applications. Si macOS bloque avec « Apple n'a pas pu confirmer… » :",
+              "1. **Réglages Système → Confidentialité et sécurité**, descendez tout en bas → **« Ouvrir quand même »**, puis relancez l'app ;",
+              "2. Si cette option n'apparaît pas, ouvrez le **Terminal** (Cmd+Espace, tapez « Terminal »), collez la commande ci-dessous, validez avec Entrée, puis relancez l'app :",
               "```",
               'xattr -dr com.apple.quarantine "/Applications/OCADE Dictée.app"',
               "```",
@@ -177,15 +177,15 @@ jobs:
                 "",
                 `### ➡️ [Télécharger l'AppImage (toutes distributions, x64)](${dl(appImage)})`,
                 "",
-                "1. Rends le fichier exécutable : clic droit → Propriétés → « Autoriser l'exécution », ou `chmod +x OCADE*.AppImage`",
-                "2. Double-clique dessus — rien à installer.",
+                "1. Rendez le fichier exécutable : clic droit → Propriétés → « Autoriser l'exécution », ou `chmod +x OCADE*.AppImage`",
+                "2. Double-cliquez dessus — rien à installer.",
                 "",
-                "> ⚠️ Support Wayland limité : en cas de souci (raccourcis, overlay), ouvre ta session en **X11/Xorg**.",
+                "> ⚠️ Support Wayland limité : en cas de souci (raccourcis, overlay), ouvrez votre session en **X11/Xorg**.",
               );
             }
             lines.push(
               "",
-              "> ℹ️ Si l'installation Windows échoue en toute fin avec une erreur WebView2 (PC hors ligne très ancien), installe d'abord [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) puis relance l'installeur.",
+              "> ℹ️ Si l'installation Windows échoue en toute fin avec une erreur WebView2 (PC hors ligne très ancien), installez d'abord [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) puis relancez l'installeur.",
               "",
               "---",
               "",
