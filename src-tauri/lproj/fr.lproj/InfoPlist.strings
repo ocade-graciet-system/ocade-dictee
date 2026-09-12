@@ -1,0 +1,4 @@
+/* Localisation française du bundle : AppKit affiche ses éléments automatiques (menu Édition, dialogues) dans la langue des lproj présents. */
+CFBundleName = "OCADE Dictée";
+CFBundleDisplayName = "OCADE Dictée";
+NSMicrophoneUsageDescription = "OCADE Dictée a besoin du microphone pour transcrire votre voix, localement sur cet ordinateur.";
