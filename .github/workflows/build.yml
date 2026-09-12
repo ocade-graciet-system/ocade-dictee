@@ -234,6 +234,7 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           echo $APPLE_CERTIFICATE | base64 --decode > certificate.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
@@ -245,7 +246,8 @@ jobs:
           # par défaut (find-identity ne le liste pas tant qu'il n'est pas marqué
           # de confiance) : on extrait son PEM du p12 et on l'ajoute au trousseau
           # système. Le runner GitHub dispose de sudo sans mot de passe.
-          openssl pkcs12 -in certificate.p12 -clcerts -nokeys -passin "pass:$APPLE_CERTIFICATE_PASSWORD" -out certificate.pem
+          # PEM extrait du trousseau (pas d'openssl : le p12 hérité n'est pas lisible par OpenSSL 3 sans -legacy)
+          security find-certificate -c "$APPLE_SIGNING_IDENTITY" -p build.keychain > certificate.pem
           sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain certificate.pem
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           security find-identity -v -p codesigning build.keychain
