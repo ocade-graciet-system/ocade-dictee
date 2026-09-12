@@ -135,6 +135,10 @@ pub fn change_binding(
     id: String,
     binding: String,
 ) -> Result<BindingResponse, String> {
+    if binding.trim().is_empty() {
+        return Err("Binding cannot be empty".to_string());
+    }
+
     let mut settings = settings::get_settings(&app);
 
     // Binding à modifier, ou sa valeur par défaut si le store ne le connaît
