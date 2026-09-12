@@ -11,6 +11,7 @@
 
 mod handler;
 pub mod handy_keys;
+pub mod rules;
 mod tauri_impl;
 
 use log::{error, info, warn};
