@@ -66,9 +66,12 @@ const MACOS_RESERVED: [&str; 16] = [
     "cmd+comma",
 ];
 
-/// Idem sous Windows.
-const WINDOWS_RESERVED: [&str; 9] = [
+/// Idem sous Windows. `delete` et `forwarddelete` sont deux touches distinctes
+/// pour handy-keys (retour arrière vs Suppr) : Ctrl+Alt+Suppr n'est couvert que
+/// si les deux graphies figurent dans la liste.
+const WINDOWS_RESERVED: [&str; 10] = [
     "ctrl+alt+delete",
+    "ctrl+alt+forwarddelete",
     "win+l",
     "alt+tab",
     "alt+f4",
@@ -195,9 +198,10 @@ fn canonical_of(raw: &str) -> String {
     }
 }
 
-/// Touche produisant un caractère à l'écran : lettre, chiffre ou ponctuation
-/// (spec §3, règle 6). Les touches de fonction, de navigation, du pavé
-/// numérique et Espace n'en font pas partie.
+/// Touche produisant un caractère à l'écran : lettre, chiffre, ponctuation,
+/// Espace, et les touches imprimables du pavé numérique (spec §3, règle 6).
+/// Les touches de fonction, de navigation et d'action (Entrée, Suppr, Clear…)
+/// n'en font pas partie.
 fn is_printable(key: Key) -> bool {
     matches!(
         key,
@@ -251,6 +255,24 @@ fn is_printable(key: Key) -> bool {
             | Key::Section
             | Key::JisYen
             | Key::JisUnderscore
+            | Key::Space
+            | Key::Keypad0
+            | Key::Keypad1
+            | Key::Keypad2
+            | Key::Keypad3
+            | Key::Keypad4
+            | Key::Keypad5
+            | Key::Keypad6
+            | Key::Keypad7
+            | Key::Keypad8
+            | Key::Keypad9
+            | Key::KeypadDecimal
+            | Key::KeypadComma
+            | Key::KeypadPlus
+            | Key::KeypadMinus
+            | Key::KeypadMultiply
+            | Key::KeypadDivide
+            | Key::KeypadEquals
     )
 }
 
@@ -517,5 +539,49 @@ mod tests {
             TargetOs::Linux
         };
         assert_eq!(current_os(), expected);
+    }
+    #[test]
+    fn windows_reserves_ctrl_alt_suppr_whatever_its_spelling() {
+        // handy-keys mappe « delete »/« backspace » sur Key::Delete (retour
+        // arrière) et « del »/« forwarddelete » sur Key::ForwardDelete (Suppr) :
+        // la liste noire doit couvrir les deux graphies, sinon Ctrl+Alt+Suppr
+        // passe sous le nom « ctrl+alt+del ».
+        for (raw, combo) in [
+            ("ctrl+alt+del", "ctrl+alt+forwarddelete"),
+            ("ctrl+alt+forwarddelete", "ctrl+alt+forwarddelete"),
+            ("ctrl+alt+delete", "ctrl+alt+delete"),
+        ] {
+            assert_eq!(
+                validate_custom_shortcut(raw, TargetOs::Windows),
+                Err(ShortcutRejection::ReservedBySystem {
+                    combo: combo.to_string()
+                }),
+                "raccourci « {raw} » accepté sous Windows"
+            );
+        }
+    }
+
+    #[test]
+    fn shift_only_also_covers_space_and_the_keypad() {
+        // Espace et le pavé numérique produisent un caractère : Maj seul + ces
+        // touches capturerait une frappe courante (règle 6).
+        for raw in ["shift+space", "shift+keypad1"] {
+            assert_eq!(
+                validate_custom_shortcut(raw, TargetOs::MacOs),
+                Err(ShortcutRejection::ShiftOnlyWithPrintable),
+                "raccourci « {raw} » accepté"
+            );
+        }
+
+        // Maj accompagné d'un autre modificateur reste valable (préréglage),
+        // et une touche de fonction n'est pas imprimable.
+        assert_eq!(
+            validate_custom_shortcut("ctrl+shift+space", TargetOs::MacOs),
+            Ok(())
+        );
+        assert_eq!(
+            validate_custom_shortcut("shift+f5", TargetOs::MacOs),
+            Ok(())
+        );
     }
 }
