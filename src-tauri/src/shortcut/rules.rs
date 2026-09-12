@@ -91,14 +91,17 @@ const LINUX_RESERVED: [&str; 5] = [
     "super+l",
 ];
 
-/// OS de la machine courante.
+/// OS de la machine courante. `cfg!` plutôt que trois `#[cfg]` : les branches
+/// mortes restent compilées, donc les trois variantes comptent comme
+/// construites et l'analyse de code mort se tait sur chaque plateforme.
 pub fn current_os() -> TargetOs {
-    #[cfg(target_os = "macos")]
-    return TargetOs::MacOs;
-    #[cfg(target_os = "windows")]
-    return TargetOs::Windows;
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    return TargetOs::Linux;
+    if cfg!(target_os = "macos") {
+        TargetOs::MacOs
+    } else if cfg!(target_os = "windows") {
+        TargetOs::Windows
+    } else {
+        TargetOs::Linux
+    }
 }
 
 /// Liste noire de l'OS visé.

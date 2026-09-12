@@ -136,15 +136,26 @@ pub fn apply_binding_change(
             "Enregistrement de « {} » refusé par le système : {e}",
             updated.current_binding
         );
-        if let Err(restore) = registrar.register(previous) {
-            error!(
-                "Ré-enregistrement de « {} » impossible : {restore}",
-                previous.current_binding
-            );
-        }
+        // Double échec : le nouveau est refusé **et** l'ancien n'a pas pu être
+        // remis, donc plus aucun raccourci n'est actif. `previous_binding`
+        // continue d'annoncer l'ancien (le front y revient) : c'est `detail`
+        // qui porte l'avertissement.
+        let detail = match registrar.register(previous) {
+            Ok(()) => e,
+            Err(restore) => {
+                error!(
+                    "Ré-enregistrement de « {} » impossible : {restore}",
+                    previous.current_binding
+                );
+                format!(
+                    "{e} ; « {} » n'a pas pu être réactivé non plus : {restore}",
+                    previous.current_binding
+                )
+            }
+        };
         return Err(BindingError::registration_failed(
             &previous.current_binding,
-            e,
+            detail,
         ));
     }
 
@@ -165,13 +176,17 @@ mod tests {
         fail_register_for: Option<String>,
         /// Fait échouer tous les désenregistrements.
         fail_unregister: bool,
+        /// Fait échouer tous les enregistrements, quel que soit le raccourci.
+        fail_every_register: bool,
     }
 
     impl ShortcutRegistrar for FakeRegistrar {
         fn register(&mut self, binding: &ShortcutBinding) -> Result<(), String> {
             self.calls
                 .push(format!("register:{}", binding.current_binding));
-            if self.fail_register_for.as_deref() == Some(binding.current_binding.as_str()) {
+            if self.fail_every_register
+                || self.fail_register_for.as_deref() == Some(binding.current_binding.as_str())
+            {
                 return Err("le système a refusé".to_string());
             }
             Ok(())
@@ -237,6 +252,28 @@ mod tests {
                 "register:ctrl+option+j",
                 "register:ctrl+shift+space",
             ]
+        );
+    }
+
+    #[test]
+    fn a_failed_restoration_is_reported_in_the_detail() {
+        let previous = binding("ctrl+shift+space");
+        let mut registrar = FakeRegistrar {
+            fail_every_register: true,
+            ..FakeRegistrar::default()
+        };
+
+        let error =
+            apply_binding_change(&previous, "ctrl+option+j", TargetOs::MacOs, &mut registrar)
+                .unwrap_err();
+
+        assert_eq!(error.code, BindingErrorCode::RegistrationFailed);
+        assert_eq!(error.previous_binding, "ctrl+shift+space");
+        assert_eq!(
+            error.detail.as_deref(),
+            Some(
+                "le système a refusé ; « ctrl+shift+space » n'a pas pu être réactivé non plus : le système a refusé"
+            )
         );
     }
 
