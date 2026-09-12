@@ -41,6 +41,10 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
     accessibility: "checking",
     microphone: "checking",
   });
+  // OCADE — Guidage affiché quand l'octroi de l'accessibilité traîne (ex. entrée
+  // périmée dans Réglages Système après une mise à jour) : indépendant du sondage,
+  // pour ne jamais laisser l'utilisateur bloqué même si celui-ci s'arrête en silence.
+  const [showAccessibilityHelp, setShowAccessibilityHelp] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const errorCountRef = useRef<number>(0);
@@ -235,6 +239,18 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
     }, 1000);
   }, [completeOnboarding, hasWindowsMicrophoneAccess, permissionPlatform, t]);
 
+  // OCADE — Affiche le texte d'aide après 4 s sans succès ; se réinitialise dès
+  // que l'état quitte "waiting" (autorisation accordée ou nouvelle tentative).
+  useEffect(() => {
+    if (!isMacOS || permissions.accessibility !== "waiting") {
+      setShowAccessibilityHelp(false);
+      return;
+    }
+
+    const timeout = setTimeout(() => setShowAccessibilityHelp(true), 4000);
+    return () => clearTimeout(timeout);
+  }, [isMacOS, permissions.accessibility]);
+
   // Cleanup polling and timeouts on unmount
   useEffect(() => {
     return () => {
@@ -254,6 +270,15 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
       startPolling();
     } catch (error) {
       console.error("Failed to request accessibility permission:", error);
+      toast.error(t("onboarding.permissions.errors.requestFailed"));
+    }
+  };
+
+  const handleOpenAccessibilitySettings = async () => {
+    try {
+      await commands.openAccessibilityPrivacySettings();
+    } catch (error) {
+      console.error("Failed to open accessibility privacy settings:", error);
       toast.error(t("onboarding.permissions.errors.requestFailed"));
     }
   };
@@ -380,9 +405,32 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                     {t("onboarding.permissions.granted")}
                   </div>
                 ) : permissions.accessibility === "waiting" ? (
-                  <div className="flex items-center gap-2 text-text/50 text-sm">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    {t("onboarding.permissions.waiting")}
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center gap-2 text-text/50 text-sm">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      {t("onboarding.permissions.waiting")}
+                    </div>
+                    {showAccessibilityHelp && (
+                      <div className="flex flex-col gap-2">
+                        <p className="text-sm text-text/60">
+                          {t("onboarding.permissions.accessibility.help")}
+                        </p>
+                        <button
+                          onClick={handleOpenAccessibilitySettings}
+                          className="px-4 py-2 rounded-lg bg-logo-primary hover:bg-logo-primary/90 text-white text-sm font-medium transition-colors"
+                        >
+                          {t(
+                            "onboarding.permissions.accessibility.openSettings",
+                          )}
+                        </button>
+                        <button
+                          onClick={handleGrantAccessibility}
+                          className="px-4 py-2 rounded-lg bg-logo-primary hover:bg-logo-primary/90 text-white text-sm font-medium transition-colors"
+                        >
+                          {t("onboarding.permissions.grant")}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <button

@@ -152,6 +152,25 @@ pub fn open_microphone_privacy_settings() -> Result<(), String> {
 
 #[tauri::command]
 #[specta::specta]
+pub fn open_accessibility_privacy_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            .spawn()
+            .map_err(|e| format!("Failed to open macOS accessibility privacy settings: {}", e))?;
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Opening accessibility privacy settings is only supported on macOS".to_string())
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn update_microphone_mode(app: AppHandle, always_on: bool) -> Result<(), String> {
     // Update settings
     let mut settings = get_settings(&app);
