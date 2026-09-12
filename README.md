@@ -19,6 +19,10 @@ Les procédures détaillées par système (permissions, avertissements de sécur
 
 Au premier lancement, l'application télécharge le modèle de reconnaissance français (≈ 512 Mo) puis est prête. Les mises à jour sont automatiques.
 
+## Installation chez le client
+
+Procédures pas à pas pour accompagner l'installation sur le poste d'un client (avertissements de sécurité, permissions, désinstallation) et checklist de vérification après installation : [`docs/installation/README.md`](docs/installation/README.md).
+
 ## Utilisation
 
 1. Choisissez votre raccourci dans **Général** (4 propositions, identiques sur les 3 systèmes).
