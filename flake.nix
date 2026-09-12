@@ -1,5 +1,5 @@
 {
-  description = "Handy - A free, open source, and extensible speech-to-text application that works completely offline";
+  description = "OCADE Dictée — dictée vocale locale (fork de Handy)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -181,8 +181,8 @@
             '';
 
             meta = {
-              description = "A free, open source, and extensible speech-to-text application that works completely offline";
-              homepage = "https://github.com/cjpais/Handy";
+              description = "OCADE Dictée — dictée vocale locale (fork de Handy)";
+              homepage = "https://github.com/ocade-graciet-system/ocade-dictee";
               license = lib.licenses.mit;
               mainProgram = "handy";
               platforms = supportedSystems;

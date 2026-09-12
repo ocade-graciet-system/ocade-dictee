@@ -7,7 +7,7 @@
 #
 # Usage in your flake:
 #
-#   inputs.handy.url = "github:cjpais/Handy";
+#   inputs.handy.url = "github:ocade-graciet-system/ocade-dictee";
 #
 #   nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
 #     modules = [
@@ -31,7 +31,7 @@ in
     package = lib.mkOption {
       type = lib.types.package;
       defaultText = lib.literalExpression "handy.packages.\${system}.handy";
-      description = "The Handy package to use.";
+      description = "Le paquet OCADE Dictée à utiliser.";
     };
   };
 

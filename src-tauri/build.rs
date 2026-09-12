@@ -228,7 +228,7 @@ fn stage_transcribe_runtime_libs() {
 /// Generate tray menu translations from frontend locale files.
 ///
 /// Source of truth: src/i18n/locales/*/translation.json
-/// The English "tray" section defines the struct fields.
+/// The French "tray" section defines the struct fields.
 fn generate_tray_translations() {
     use std::collections::BTreeMap;
     use std::fs;
@@ -261,9 +261,13 @@ fn generate_tray_translations() {
         }
     }
 
-    // English defines the schema
-    let english = translations.get("en").unwrap().as_object().unwrap();
-    let fields: Vec<_> = english
+    // Le français définit le schéma (seule locale embarquée — issue #11)
+    let reference = translations
+        .get("fr")
+        .expect("src/i18n/locales/fr/translation.json doit contenir une section \"tray\"")
+        .as_object()
+        .unwrap();
+    let fields: Vec<_> = reference
         .keys()
         .map(|k| (camel_to_snake(k), k.clone()))
         .collect();
@@ -274,7 +278,12 @@ fn generate_tray_translations() {
     );
 
     // Struct
-    out.push_str("#[derive(Debug, Clone)]\npub struct TrayStrings {\n");
+    //
+    // `#[allow(dead_code)]` : la v1 clé en main (issue #12) n'affiche plus que
+    // 3 des 7 champs du schéma JSON dans le menu (settings/quit/cancel) ; les
+    // autres restent générés pour ne pas complexifier ce build script, mais
+    // ne sont plus lus.
+    out.push_str("#[derive(Debug, Clone)]\n#[allow(dead_code)]\npub struct TrayStrings {\n");
     for (rust_field, _) in &fields {
         out.push_str(&format!("    pub {rust_field}: String,\n"));
     }

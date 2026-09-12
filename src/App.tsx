@@ -11,9 +11,13 @@ import { ModelStateEvent, RecordingErrorEvent } from "./lib/types/events";
 import "./App.css";
 import AccessibilityPermissions from "./components/AccessibilityPermissions";
 import Footer from "./components/footer";
-import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
+import {
+  AccessibilityOnboarding,
+  DEFAULT_FR_MODEL_ID,
+  FirstLaunchModelSetup,
+} from "./components/onboarding";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
-import { WhatsNewGate } from "./components/whats-new";
+import { ForcedUpdater } from "./components/update-checker";
 import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
@@ -32,12 +36,16 @@ function App() {
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep | null>(
     null,
   );
-  // Track if this is a returning user who just needs to grant permissions
-  // (vs a new user who needs full onboarding including model selection)
-  const [isReturningUser, setIsReturningUser] = useState(false);
   const [currentSection, setCurrentSection] =
     useState<SidebarSection>("general");
-  const { settings, updateSetting } = useSettings();
+  // `onboarding_completed` au démarrage : seul un utilisateur connu se voit
+  // proposer d'entrer dans l'application malgré un échec d'activation.
+  const [isReturningUser, setIsReturningUser] = useState(false);
+  // `settings` n'est pas consommé ici : seul l'effet de bord du hook compte
+  // (déclenche store.initialize(), qui charge store.settings). Nécessaire dès
+  // le montage car l'onboarding s'appuie déjà sur le store des réglages
+  // (AccessibilityOnboarding), avant que Sidebar ne monte.
+  useSettings();
   const direction = getLanguageDirection(i18n.language);
   const refreshAudioDevices = useSettingsStore(
     (state) => state.refreshAudioDevices,
@@ -70,31 +78,6 @@ function App() {
       refreshOutputDevices();
     }
   }, [onboardingStep, refreshAudioDevices, refreshOutputDevices]);
-
-  // Handle keyboard shortcuts for debug mode toggle
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      // Check for Ctrl+Shift+D (Windows/Linux) or Cmd+Shift+D (macOS)
-      const isDebugShortcut =
-        event.shiftKey &&
-        event.key.toLowerCase() === "d" &&
-        (event.ctrlKey || event.metaKey);
-
-      if (isDebugShortcut) {
-        event.preventDefault();
-        const currentDebugMode = settings?.debug_mode ?? false;
-        updateSetting("debug_mode", !currentDebugMode);
-      }
-    };
-
-    // Add event listener when component mounts
-    document.addEventListener("keydown", handleKeyDown);
-
-    // Cleanup event listener when component unmounts
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [settings?.debug_mode, updateSetting]);
 
   // Listen for recording errors from the backend and show a toast
   useEffect(() => {
@@ -132,7 +115,7 @@ function App() {
       toast.error(t("errors.pasteFailedTitle"), {
         description: t("errors.pasteFailedClipboard", {
           defaultValue:
-            "Le collage automatique a échoué, mais le texte a été copié dans le presse-papiers : colle-le avec Cmd+V.",
+            "Le collage automatique a échoué, mais le texte a été copié dans le presse-papiers : collez-le avec Ctrl+V (⌘V sur Mac).",
         }),
       });
     });
@@ -163,7 +146,7 @@ function App() {
         {
           description: t("errors.transcriptionEmpty", {
             defaultValue:
-              "Aucune parole détectée. Parle un peu plus fort, rapproche-toi du micro, puis réessaie.",
+              "Aucune parole détectée. Parlez un peu plus fort, rapprochez-vous du micro, puis réessayez.",
           }),
         },
       );
@@ -208,11 +191,10 @@ function App() {
         settingsResult.status === "ok" &&
         settingsResult.data.onboarding_completed === true;
       const currentPlatform = platform();
+      setIsReturningUser(hasCompletedOnboarding);
 
       if (hasCompletedOnboarding) {
         // Returning user - check if they need to grant permissions first
-        setIsReturningUser(true);
-
         if (currentPlatform === "macos") {
           try {
             const [hasAccessibility, hasMicrophone] = await Promise.all([
@@ -248,10 +230,27 @@ function App() {
           }
         }
 
+        // Le modèle unique doit être sur le disque : sinon on repasse par
+        // l'écran de premier lancement (fichier supprimé, disque nettoyé…).
+        try {
+          const info = await commands.getModelInfo(DEFAULT_FR_MODEL_ID);
+          if (info.status === "error") {
+            // Symétrique du `catch` ci-dessous : sans trace, une commande en
+            // échec laisse croire que le modèle est bien là.
+            console.warn("Failed to check model presence:", info.error);
+          } else if (info.data === null || !info.data.is_downloaded) {
+            await revealMainWindowForPermissions();
+            setOnboardingStep("model");
+            return;
+          }
+        } catch (e) {
+          console.warn("Failed to check model presence:", e);
+        }
+
         setOnboardingStep("done");
       } else {
         // New user - start full onboarding
-        setIsReturningUser(false);
+        await revealMainWindowForPermissions();
         setOnboardingStep("accessibility");
       }
     } catch (error) {
@@ -261,13 +260,13 @@ function App() {
   };
 
   const handleAccessibilityComplete = () => {
-    // Returning users already have models, skip to main app
-    // New users need to select a model
-    setOnboardingStep(isReturningUser ? "done" : "model");
+    // Toujours l'étape modèle : si le fichier est déjà là, l'écran de premier
+    // lancement l'active et enchaîne tout seul, sans rien demander.
+    setOnboardingStep("model");
   };
 
   const handleModelSelected = () => {
-    // Transition to main app - user has started a download
+    // Modèle téléchargé puis activé : on passe à l'application.
     setOnboardingStep("done");
   };
 
@@ -305,14 +304,18 @@ function App() {
       <AccessibilityOnboarding onComplete={handleAccessibilityComplete} />
     );
   } else if (onboardingStep === "model") {
-    content = <Onboarding onModelSelected={handleModelSelected} />;
+    content = (
+      <FirstLaunchModelSetup
+        onReady={handleModelSelected}
+        isReturningUser={isReturningUser}
+      />
+    );
   } else {
     content = (
       <div
         dir={direction}
         className="h-screen flex flex-col select-none cursor-default"
       >
-        <WhatsNewGate />
         {/* Main content area that takes remaining space */}
         <div className="flex-1 flex overflow-hidden">
           <Sidebar
@@ -338,6 +341,7 @@ function App() {
   return (
     <>
       {toaster}
+      <ForcedUpdater />
       {content}
     </>
   );

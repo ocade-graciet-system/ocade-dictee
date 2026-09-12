@@ -2,6 +2,7 @@ use crate::audio_feedback;
 use crate::audio_toolkit::audio::{list_input_devices, list_output_devices};
 use crate::managers::audio::{AudioRecordingManager, MicrophoneMode};
 use crate::settings::{get_settings, write_settings};
+use crate::TranscriptionCoordinator;
 use log::warn;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -309,4 +310,15 @@ pub fn get_clamshell_microphone(app: AppHandle) -> Result<String, String> {
 pub fn is_recording(app: AppHandle) -> bool {
     let audio_manager = app.state::<Arc<AudioRecordingManager>>();
     audio_manager.is_recording()
+}
+
+/// Second half of the dictation pipeline: `is_recording` goes back to idle as
+/// soon as the samples are handed over, leaving the transcription and the
+/// paste uncovered. `try_state` because the coordinator is only managed during
+/// setup — before that, nothing is being transcribed.
+#[tauri::command]
+#[specta::specta]
+pub fn is_transcribing(app: AppHandle) -> bool {
+    app.try_state::<TranscriptionCoordinator>()
+        .is_some_and(|coordinator| coordinator.is_transcribing())
 }

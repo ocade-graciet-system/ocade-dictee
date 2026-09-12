@@ -1,7 +1,6 @@
 use super::model_capabilities::{
     CapabilityProbe, CapabilityProber, Compatibility, GgufHeaderProber,
 };
-use crate::settings::{get_settings, write_settings};
 use anyhow::Result;
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
@@ -84,10 +83,50 @@ const CHINESE_LANGUAGE_CODE: &str = "zh";
 
 /// Identifiant du modèle Whisper français distillé du fork OCADE (variant dec2,
 /// 2 couches de décodeur — le plus rapide). C'est le modèle par défaut (voir
-/// `settings::default_model`) et la cible de l'auto-provisionnement silencieux au
-/// premier lancement (voir `lib.rs`). Doit rester synchronisé avec l'entrée
-/// injectée dans le catalogue plus bas.
+/// `settings::default_model`) et le modèle téléchargé au premier lancement par
+/// l'écran dédié du front (`FirstLaunchModelSetup`). Doit rester synchronisé avec
+/// l'entrée injectée dans le catalogue plus bas.
 pub const DEFAULT_FR_MODEL_ID: &str = "whisper-distil-fr-dec2-q5_0";
+
+/// Taille exacte du fichier `whisper-distil-fr-dec2-q5_0.bin` (sha256 e41b30e8…).
+pub const DEFAULT_FR_MODEL_SIZE_BYTES: u64 = 537_819_875;
+
+/// Adopte un fichier importé à la main sous son nom Hugging Face d'origine
+/// (`ggml-model-q5_0.bin`) comme le modèle FR du catalogue : renommage sur
+/// place, sans re-télécharger 512 Mo sur les installations de test (issue #2).
+/// Ne touche à rien si la taille ne correspond pas (autre modèle homonyme).
+///
+/// Si le modèle de catalogue est *déjà* en place et que les deux fichiers font
+/// la taille attendue, l'ancien est un pur doublon de 512 Mo — que le scan des
+/// modèles locaux redécouvrirait qui plus est comme un modèle « custom »
+/// invisible dans l'interface v1. Il est alors supprimé, et la fonction renvoie
+/// `Ok(false)` : rien n'a été adopté.
+///
+/// Renvoie `Ok(true)` uniquement quand un renommage a bien eu lieu.
+pub fn adopt_legacy_fr_model_file(models_dir: &Path, expected_len: u64) -> std::io::Result<bool> {
+    let legacy = models_dir.join("ggml-model-q5_0.bin");
+    let target = models_dir.join("whisper-distil-fr-dec2-q5_0.bin");
+    if !legacy.exists() {
+        return Ok(false);
+    }
+    if legacy.metadata()?.len() != expected_len {
+        return Ok(false);
+    }
+    if target.exists() {
+        // Doublon avéré seulement si le fichier déjà en place fait lui aussi la
+        // taille attendue ; sinon on ne sait pas ce qu'on supprimerait.
+        if target.metadata()?.len() == expected_len {
+            std::fs::remove_file(&legacy)?;
+            info!(
+                "Doublon du modèle FR hérité supprimé : le modèle de catalogue était déjà en place"
+            );
+        }
+        return Ok(false);
+    }
+    std::fs::rename(&legacy, &target)?;
+    info!("Modèle FR importé à la main adopté sous son nom de catalogue");
+    Ok(true)
+}
 
 fn recognition_language(language: &str) -> &str {
     match language {
@@ -329,18 +368,6 @@ fn local_caps(probe: &CapabilityProbe) -> LocalCaps {
     }
 }
 
-/// Validate a candidate filename for [`ModelManager::import_model_file`].
-/// Error codes are stable strings the frontend maps to localized messages.
-fn validate_import_filename(filename: &str, reserved: &HashSet<String>) -> Result<()> {
-    if filename.starts_with('.') || !(filename.ends_with(".bin") || filename.ends_with(".gguf")) {
-        return Err(anyhow::anyhow!("invalid_extension"));
-    }
-    if reserved.contains(filename) {
-        return Err(anyhow::anyhow!("reserved_filename"));
-    }
-    Ok(())
-}
-
 /// Bridges hf-hub's async download progress to Handy's `model-download-progress`
 /// event. hf-hub clones the reporter, so shared state lives behind an `Arc`.
 #[derive(Clone)]
@@ -482,6 +509,10 @@ impl ModelManager {
 
         if !models_dir.exists() {
             fs::create_dir_all(&models_dir)?;
+        }
+
+        if let Err(e) = adopt_legacy_fr_model_file(&models_dir, DEFAULT_FR_MODEL_SIZE_BYTES) {
+            warn!("Adoption du modèle FR hérité impossible: {}", e);
         }
 
         let mut available_models = HashMap::new();
@@ -667,7 +698,7 @@ impl ModelManager {
         // decoder layers — the fastest distil). Hosted on Hugging Face
         // (bofenghuang), not blob.handy.computer; sha256 verified against the
         // file actually served by the LFS CDN. This is the default FR model (see
-        // `DEFAULT_FR_MODEL_ID`) and the auto-provision target on first launch.
+        // `DEFAULT_FR_MODEL_ID`), downloaded by the first-launch screen.
         //
         // `supported_languages` is French despite the file carrying the
         // multilingual large-v3 vocab (n_vocab 51866): the distillation was
@@ -1176,16 +1207,18 @@ impl ModelManager {
         // Check which models are already downloaded
         manager.update_download_status()?;
 
-        // Auto-select a model if none is currently selected
-        manager.auto_select_model_if_needed()?;
-
         Ok(manager)
     }
 
     pub fn get_available_models(&self) -> Vec<ModelInfo> {
+        // v1 clé en main (issue #2) : un seul modèle existe pour l'utilisateur.
         let mut list: Vec<ModelInfo> = {
             let models = self.available_models.lock().unwrap();
-            models.values().cloned().collect()
+            models
+                .values()
+                .filter(|m| m.id == DEFAULT_FR_MODEL_ID)
+                .cloned()
+                .collect()
         };
         // Stable, reasonable order: catalog editorial rank first (lower = higher
         // priority), then any other recommended model, then by accuracy, speed,
@@ -1234,55 +1267,6 @@ impl ModelManager {
         }
     }
 
-    /// Import a user-picked Whisper-family model file (.bin / .gguf) into the
-    /// managed models directory, then rescan local sources so it shows up
-    /// immediately. Returns the imported model's id (the filename stem).
-    ///
-    /// The copy goes through an `.import-partial` staging name — the custom
-    /// scanner only picks up `.bin`/`.gguf` files, so an interrupted copy can
-    /// never be mistaken for a complete model — then an atomic same-volume
-    /// rename publishes it.
-    pub fn import_model_file(&self, source: &Path) -> Result<String> {
-        let filename = source
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(str::to_string)
-            .ok_or_else(|| anyhow::anyhow!("invalid_extension"))?;
-
-        // Filenames of built-in file-based models are reserved: importing over
-        // one would let an unverified file impersonate a catalog download
-        // (is_downloaded is a bare existence check).
-        let reserved: HashSet<String> = {
-            let models = self.available_models.lock().unwrap();
-            models
-                .values()
-                .filter(|m| !m.is_custom && !m.is_directory)
-                .map(|m| m.filename.clone())
-                .collect()
-        };
-        validate_import_filename(&filename, &reserved)?;
-
-        let dest = self.models_dir.join(&filename);
-        if dest.exists() {
-            return Err(anyhow::anyhow!("file_exists"));
-        }
-
-        let staging = self.models_dir.join(format!("{filename}.import-partial"));
-        let copied = fs::copy(source, &staging).and_then(|_| fs::rename(&staging, &dest));
-        if let Err(e) = copied {
-            let _ = fs::remove_file(&staging);
-            return Err(anyhow::anyhow!("copy failed: {e}"));
-        }
-
-        self.rescan_local_models()?;
-
-        Ok(filename
-            .strip_suffix(".bin")
-            .or_else(|| filename.strip_suffix(".gguf"))
-            .unwrap_or(&filename)
-            .to_string())
-    }
-
     /// Re-run the local discovery scans (custom models dir + shared HF cache) so
     /// models dropped in or downloaded outside Handy show up without a restart.
     /// The merge is additive: only new ids are inserted, so existing entries keep
@@ -1327,7 +1311,6 @@ impl ModelManager {
         }
 
         self.update_download_status()?;
-        self.auto_select_model_if_needed()?;
         if added > 0 {
             info!("Model rescan discovered {} new model(s)", added);
         }
@@ -1500,59 +1483,6 @@ impl ModelManager {
                 } else {
                     model.partial_size = 0;
                 }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn auto_select_model_if_needed(&self) -> Result<()> {
-        let mut settings = get_settings(&self.app_handle);
-
-        // Clear stale selection: selected model is set but doesn't exist
-        // in available_models (e.g. deleted custom model file)
-        if !settings.selected_model.is_empty() {
-            let models = self.available_models.lock().unwrap();
-            let exists = models.contains_key(&settings.selected_model);
-            drop(models);
-
-            if !exists {
-                info!(
-                    "Selected model '{}' not found in available models, clearing selection",
-                    settings.selected_model
-                );
-                settings.selected_model = String::new();
-                write_settings(&self.app_handle, settings.clone());
-            }
-        }
-
-        // If onboarding is still pending, do not auto-select just because a
-        // compatible model exists on disk or in the shared HF cache. The
-        // onboarding model step should present that choice explicitly.
-        if !settings.onboarding_completed {
-            debug!("Skipping model auto-selection until onboarding is complete");
-            return Ok(());
-        }
-
-        // If no model is selected, pick the first downloaded one using the same
-        // ranked order the UI receives.
-        if settings.selected_model.is_empty() {
-            if let Some(available_model) = self
-                .get_available_models()
-                .into_iter()
-                .find(|model| model.is_downloaded)
-            {
-                info!(
-                    "Auto-selecting model: {} ({})",
-                    available_model.id, available_model.name
-                );
-
-                // Update settings with the selected model
-                let mut updated_settings = settings;
-                updated_settings.selected_model = available_model.id.clone();
-                write_settings(&self.app_handle, updated_settings);
-
-                info!("Successfully auto-selected model: {}", available_model.id);
             }
         }
 
@@ -1969,6 +1899,24 @@ impl ModelManager {
         Ok(())
     }
 
+    /// URL primaire du modèle FR : asset de la pré-release `models-v1` de ce
+    /// dépôt, servi par le CDN GitHub via une redirection 302 (issue #2).
+    /// L'URL Hugging Face du catalogue reste le repli.
+    pub const DEFAULT_FR_MODEL_PRIMARY_URL: &str =
+        "https://github.com/ocade-graciet-system/ocade-dictee/releases/download/models-v1/whisper-distil-fr-dec2-q5_0.bin";
+
+    /// Sources à essayer dans l'ordre pour `model_id` : miroir GitHub d'abord
+    /// pour le modèle FR par défaut, URL du catalogue ensuite. Les deux servent
+    /// le même fichier (même taille, même SHA-256), donc une reprise entamée
+    /// sur l'une peut se terminer sur l'autre.
+    fn download_candidates(model_id: &str, catalog_url: String) -> Vec<String> {
+        if model_id == DEFAULT_FR_MODEL_ID {
+            vec![Self::DEFAULT_FR_MODEL_PRIMARY_URL.to_string(), catalog_url]
+        } else {
+            vec![catalog_url]
+        }
+    }
+
     pub async fn download_model(&self, model_id: &str) -> Result<()> {
         let model_info = {
             let models = self.available_models.lock().unwrap();
@@ -1989,6 +1937,66 @@ impl ModelManager {
                 return Err(anyhow::anyhow!("No download source for model"));
             }
         };
+
+        let candidates = Self::download_candidates(model_id, url);
+
+        // Un seul jeton d'annulation pour toute la série de miroirs : il permet
+        // de distinguer « le miroir a échoué » de « l'utilisateur a annulé »
+        // même quand l'annulation remonte sous la forme d'une erreur réseau.
+        let cancel_token = CancellationToken::new();
+
+        let mut last_error: Option<anyhow::Error> = None;
+        for (index, candidate) in candidates.iter().enumerate() {
+            match self
+                .download_from_url(
+                    model_id,
+                    &model_info,
+                    candidate,
+                    expected_sha256.clone(),
+                    &cancel_token,
+                )
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    // Une annulation par l'utilisateur ne doit pas relancer le
+                    // téléchargement sur le miroir suivant. Vue dans la boucle
+                    // de streaming elle renvoie déjà Ok(()) ; ici on rattrape la
+                    // course où l'erreur réseau remonte avant le jeton.
+                    if cancel_token.is_cancelled() {
+                        info!(
+                            "Téléchargement de {} annulé, pas de bascule sur le miroir suivant ({})",
+                            model_id, e
+                        );
+                        return Ok(());
+                    }
+                    if index + 1 < candidates.len() {
+                        warn!(
+                            "Téléchargement depuis {} échoué ({}), essai du miroir suivant",
+                            candidate, e
+                        );
+                    }
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No download source for model")))
+    }
+
+    /// Télécharge le modèle depuis une source précise. Le jeton d'annulation est
+    /// partagé par tous les miroirs d'un même téléchargement, et le fichier
+    /// `.partial` est commun : la reprise est indifférente à la source, seul le
+    /// SHA-256 final fait foi.
+    async fn download_from_url(
+        &self,
+        model_id: &str,
+        model_info: &ModelInfo,
+        url: &str,
+        expected_sha256: Option<String>,
+        cancel_token: &CancellationToken,
+    ) -> Result<()> {
+        let url = url.to_string();
         let model_path = self.models_dir.join(&model_info.filename);
         let partial_path = self
             .models_dir
@@ -2022,8 +2030,8 @@ impl ModelManager {
             }
         }
 
-        // Create cancellation token for this download
-        let cancel_token = CancellationToken::new();
+        // Register the cancellation token shared by every mirror attempt so
+        // `cancel_download` aborts whichever attempt is in flight.
         {
             let mut flags = self.cancel_flags.lock().unwrap();
             flags.insert(model_id.to_string(), cancel_token.clone());
@@ -2038,8 +2046,18 @@ impl ModelManager {
             disarmed: false,
         };
 
-        // Create HTTP client with range request for resuming
-        let client = reqwest::Client::new();
+        // Create HTTP client with range request for resuming.
+        // Délais explicites (issue #2) : sans eux, un miroir qui accepte la
+        // connexion puis se tait bloque la boucle de lecture indéfiniment —
+        // ni repli sur l'autre source, ni bouton « Réessayer » atteignable.
+        // `read_timeout` est une inactivité *par lecture* (le compteur repart à
+        // chaque paquet reçu) : un débit faible mais continu passe. Un `timeout`
+        // global est au contraire proscrit ici, il couperait un téléchargement
+        // de 512 Mo légitimement lent.
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(30))
+            .read_timeout(Duration::from_secs(60))
+            .build()?;
         let mut request = client.get(&url);
 
         if resume_from > 0 {
@@ -2063,6 +2081,29 @@ impl ModelManager {
             resume_from = 0;
 
             // Restart download without range header
+            response = client.get(&url).send().await?;
+        }
+
+        // Reprise refusée par le serveur (416 Range Not Satisfiable) : le
+        // `.partial` est plus grand que la ressource — fichier remplacé côté
+        // miroir, ou reliquat d'un autre modèle. Sans ce traitement l'échec est
+        // définitif : les deux miroirs renvoient le même 416 et chaque
+        // « Réessayer » le rejoue à l'identique. On repart donc de zéro, comme
+        // pour un serveur qui ignore `Range` (cas 200 juste au-dessus). Une
+        // seule relance : `resume_from` vaut 0 ensuite, plus aucun en-tête
+        // `Range` n'est envoyé.
+        if resume_from > 0 && response.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+            warn!(
+                "Reprise refusée (HTTP 416) pour le modèle {}, suppression du fichier partiel et téléchargement complet",
+                model_id
+            );
+            drop(response);
+            let _ = fs::remove_file(&partial_path);
+
+            // Plus rien à reprendre : on repart de l'octet 0.
+            resume_from = 0;
+
+            // Rejeu de la requête sans en-tête `Range`.
             response = client.get(&url).send().await?;
         }
 
@@ -2188,7 +2229,7 @@ impl ModelManager {
         let _ = self.app_handle.emit("model-verification-started", model_id);
         info!("Verifying SHA256 for model {}...", model_id);
         let verify_path = partial_path.clone();
-        let verify_expected = expected_sha256.clone();
+        let verify_expected = expected_sha256;
         let verify_model_id = model_id.to_string();
         let verify_result = tokio::task::spawn_blocking(move || {
             Self::verify_sha256(&verify_path, verify_expected.as_deref(), &verify_model_id)
@@ -2313,102 +2354,6 @@ impl ModelManager {
             "Successfully downloaded model {} to {:?}",
             model_id, model_path
         );
-
-        Ok(())
-    }
-
-    pub fn delete_model(&self, model_id: &str) -> Result<()> {
-        debug!("ModelManager: delete_model called for: {}", model_id);
-
-        let model_info = {
-            let models = self.available_models.lock().unwrap();
-            models.get(model_id).cloned()
-        };
-
-        let model_info =
-            model_info.ok_or_else(|| anyhow::anyhow!("Model not found: {}", model_id))?;
-
-        debug!("ModelManager: Found model info: {:?}", model_info);
-
-        if let ModelSource::HuggingFace { repo_id, revision } = &model_info.source {
-            // Cached at <cache>/models--org--name/snapshots/<rev>/<file>; remove
-            // the whole repo dir (blobs + refs + snapshots). Per product decision,
-            // delete hard-removes from the shared HF cache.
-            let mut deleted = false;
-            if let Some(file) = hf_cached_path(repo_id, revision, &model_info.filename) {
-                if let Some(repo_dir) = file.ancestors().nth(3) {
-                    if repo_dir
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.starts_with("models--"))
-                    {
-                        info!("Deleting HF cache repo at: {:?}", repo_dir);
-                        fs::remove_dir_all(repo_dir)?;
-                        deleted = true;
-                    }
-                }
-            }
-            if !deleted {
-                return Err(anyhow::anyhow!("No model files found to delete"));
-            }
-            self.update_download_status()?;
-            let _ = self.app_handle.emit("model-deleted", model_id);
-            return Ok(());
-        }
-
-        let model_path = self.models_dir.join(&model_info.filename);
-        let partial_path = self
-            .models_dir
-            .join(format!("{}.partial", &model_info.filename));
-        debug!("ModelManager: Model path: {:?}", model_path);
-        debug!("ModelManager: Partial path: {:?}", partial_path);
-
-        let mut deleted_something = false;
-
-        if model_info.is_directory {
-            // Delete complete model directory if it exists
-            if model_path.exists() && model_path.is_dir() {
-                info!("Deleting model directory at: {:?}", model_path);
-                fs::remove_dir_all(&model_path)?;
-                info!("Model directory deleted successfully");
-                deleted_something = true;
-            }
-        } else {
-            // Delete complete model file if it exists
-            if model_path.exists() {
-                info!("Deleting model file at: {:?}", model_path);
-                fs::remove_file(&model_path)?;
-                info!("Model file deleted successfully");
-                deleted_something = true;
-            }
-        }
-
-        // Delete partial file if it exists (same for both types)
-        if partial_path.exists() {
-            info!("Deleting partial file at: {:?}", partial_path);
-            fs::remove_file(&partial_path)?;
-            info!("Partial file deleted successfully");
-            deleted_something = true;
-        }
-
-        if !deleted_something {
-            return Err(anyhow::anyhow!("No model files found to delete"));
-        }
-
-        // Custom models should be removed from the list entirely since they
-        // have no download URL and can't be re-downloaded
-        if model_info.is_custom {
-            let mut models = self.available_models.lock().unwrap();
-            models.remove(model_id);
-            debug!("ModelManager: removed custom model from available models");
-        } else {
-            // Update download status (marks predefined models as not downloaded)
-            self.update_download_status()?;
-            debug!("ModelManager: download status updated");
-        }
-
-        // Emit event to notify UI
-        let _ = self.app_handle.emit("model-deleted", model_id);
 
         Ok(())
     }
@@ -2772,6 +2717,56 @@ mod tests {
         assert!(result.is_err(), "missing file must return an error");
     }
 
+    #[test]
+    fn test_download_candidates_puts_github_mirror_before_catalog_for_default_fr_model() {
+        let catalog_url = "https://huggingface.co/bofenghuang/whisper-large-v3-french-distil-dec2/resolve/main/ggml-model-q5_0.bin";
+
+        let candidates =
+            ModelManager::download_candidates(DEFAULT_FR_MODEL_ID, catalog_url.to_string());
+
+        assert_eq!(
+            candidates,
+            vec![
+                ModelManager::DEFAULT_FR_MODEL_PRIMARY_URL.to_string(),
+                catalog_url.to_string(),
+            ],
+            "le modèle FR par défaut doit tenter la release GitHub puis Hugging Face"
+        );
+    }
+
+    #[test]
+    fn test_download_candidates_keeps_catalog_url_alone_for_other_models() {
+        let catalog_url = "https://example.invalid/some-other-model.bin";
+
+        let candidates =
+            ModelManager::download_candidates("some-other-model", catalog_url.to_string());
+
+        assert_eq!(
+            candidates,
+            vec![catalog_url.to_string()],
+            "les autres modèles gardent la seule URL du catalogue"
+        );
+    }
+
+    #[test]
+    fn test_default_fr_model_primary_url_targets_the_models_v1_release_asset() {
+        // Garde-fou de forme : l'URL primaire doit rester l'asset `models-v1` du
+        // dépôt du fork. Une faute de frappe sur le tag ou le nom de fichier ne
+        // se voit qu'au premier lancement d'une installation neuve, en 404.
+        let url = ModelManager::DEFAULT_FR_MODEL_PRIMARY_URL;
+
+        assert!(
+            url.starts_with(
+                "https://github.com/ocade-graciet-system/ocade-dictee/releases/download/models-v1/"
+            ),
+            "URL primaire inattendue : {url}"
+        );
+        assert!(
+            url.ends_with("whisper-distil-fr-dec2-q5_0.bin"),
+            "URL primaire inattendue : {url}"
+        );
+    }
+
     fn push_gguf_str(out: &mut Vec<u8>, val: &str) {
         out.extend_from_slice(&(val.len() as u64).to_le_bytes());
         out.extend_from_slice(val.as_bytes());
@@ -2849,23 +2844,76 @@ mod tests {
     }
 
     #[test]
-    fn test_import_filename_validation() {
-        let reserved: HashSet<String> = ["ggml-small.bin".to_string()].into_iter().collect();
-        let err = |name: &str| {
-            validate_import_filename(name, &reserved)
-                .unwrap_err()
-                .to_string()
-        };
-
-        assert!(validate_import_filename("my-model.bin", &reserved).is_ok());
-        assert!(validate_import_filename("my-model.gguf", &reserved).is_ok());
-        assert_eq!(err("model.zip"), "invalid_extension");
-        assert_eq!(err(".hidden.bin"), "invalid_extension");
-        assert_eq!(err("model.bin.import-partial"), "invalid_extension");
-        assert_eq!(
-            err("ggml-small.bin"),
-            "reserved_filename",
-            "built-in filenames must not be shadowed by imports"
+    fn adopts_legacy_file_when_size_matches() {
+        let dir = std::env::temp_dir().join(format!("ocade-adopt-ok-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("ggml-model-q5_0.bin"), b"12345").unwrap();
+        assert!(adopt_legacy_fr_model_file(&dir, 5).unwrap());
+        assert!(dir.join("whisper-distil-fr-dec2-q5_0.bin").exists());
+        assert!(!dir.join("ggml-model-q5_0.bin").exists());
+        assert!(
+            !adopt_legacy_fr_model_file(&dir, 5).unwrap(),
+            "déjà adopté : no-op"
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn ignores_legacy_file_with_wrong_size() {
+        let dir = std::env::temp_dir().join(format!("ocade-adopt-ko-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("ggml-model-q5_0.bin"), b"12345").unwrap();
+        assert!(!adopt_legacy_fr_model_file(&dir, 99).unwrap());
+        assert!(dir.join("ggml-model-q5_0.bin").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn removes_legacy_duplicate_when_target_present() {
+        // Le modèle de catalogue est déjà là et l'ancien fichier lui est
+        // identique en taille : c'est un doublon de 512 Mo que le scan local
+        // redécouvrirait comme un modèle « custom » invisible dans l'interface.
+        let dir = TempDir::new().unwrap();
+        let legacy = dir.path().join("ggml-model-q5_0.bin");
+        let target = dir.path().join("whisper-distil-fr-dec2-q5_0.bin");
+        std::fs::write(&legacy, b"12345").unwrap();
+        std::fs::write(&target, b"12345").unwrap();
+
+        assert!(
+            !adopt_legacy_fr_model_file(dir.path(), 5).unwrap(),
+            "rien n'est adopté : le modèle de catalogue était déjà en place"
+        );
+        assert!(!legacy.exists(), "le doublon hérité doit être supprimé");
+        assert!(target.exists(), "le modèle de catalogue doit être conservé");
+    }
+
+    #[test]
+    fn keeps_legacy_file_beside_target_when_sizes_differ() {
+        // Une taille qui ne colle pas, d'un côté ou de l'autre, veut dire qu'on
+        // n'a pas affaire au modèle FR : aucun des deux fichiers n'est touché.
+        let dir = TempDir::new().unwrap();
+        let legacy = dir.path().join("ggml-model-q5_0.bin");
+        let target = dir.path().join("whisper-distil-fr-dec2-q5_0.bin");
+
+        // 1. L'ancien fichier est un autre modèle homonyme.
+        std::fs::write(&legacy, b"123456789").unwrap();
+        std::fs::write(&target, b"12345").unwrap();
+        assert!(!adopt_legacy_fr_model_file(dir.path(), 5).unwrap());
+        assert!(
+            legacy.exists(),
+            "un modèle homonyme ne doit pas être supprimé"
+        );
+        assert!(target.exists());
+
+        // 2. C'est le fichier en place qui n'a pas la taille attendue
+        // (téléchargement tronqué) : l'ancien reste la seule copie plausible.
+        std::fs::write(&legacy, b"12345").unwrap();
+        std::fs::write(&target, b"123456789").unwrap();
+        assert!(!adopt_legacy_fr_model_file(dir.path(), 5).unwrap());
+        assert!(
+            legacy.exists(),
+            "sans certitude sur le fichier en place, on ne supprime rien"
+        );
+        assert!(target.exists());
     }
 }

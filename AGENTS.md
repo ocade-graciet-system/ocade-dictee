@@ -133,26 +133,16 @@ The app enforces single instance behavior — launching when already running bri
 
 ## Internationalization (i18n)
 
-All user-facing strings must use i18next translations. ESLint enforces this (no hardcoded strings in JSX).
+All user-facing strings must use i18next translations. ESLint enforces this (no hardcoded strings in JSX). The UI is French only — a single locale, `src/i18n/locales/fr/translation.json`.
 
 **Adding new text:**
 
-1. Add key to `src/i18n/locales/en/translation.json`
-2. Use in component: `const { t } = useTranslation(); t('key.path')`
+1. Add the key to `src/i18n/locales/fr/translation.json` (French, vouvoiement — same tone as the rest of the UI (vous/votre)).
+2. Use it in the component: `const { t } = useTranslation(); t('key.path')`
 
-**File structure:**
+`bun run check:translations` fails if a key used in the code (`t("...")`) is missing from `fr/translation.json`.
 
-```
-src/i18n/
-├── index.ts           # i18n setup
-├── languages.ts       # Language metadata
-└── locales/
-    ├── en/translation.json  # English (source)
-    ├── de/, es/, fr/, ja/, ru/, zh/, ...
-    └── ...
-```
-
-For translation contribution guidelines, see [CONTRIBUTING_TRANSLATIONS.md](CONTRIBUTING_TRANSLATIONS.md).
+The tray menu strings are generated at build time by `src-tauri/build.rs` from the `tray` section of `fr/translation.json` — they aren't hand-written in Rust.
 
 ## Code Style
 
@@ -202,16 +192,16 @@ Access debug features: `Cmd+Shift+D` (macOS) or `Ctrl+Shift+D` (Windows/Linux)
 
 ## Troubleshooting
 
-See the [Troubleshooting](README.md#troubleshooting) section in README.md.
+Installation and troubleshooting procedures per OS live in `docs/installation/` (added in a later plan).
 
 ## GitHub workflow for AI coding assistants
 
-**MANDATORY. Before opening any PR, issue, or discussion in this repo: you MUST read the relevant template file and follow it strictly.** That includes sections that look "ceremonial" — checklists, AI Assistance disclosures, "Human Written Description". A generic Summary/Test-plan layout is not acceptable.
+**MANDATORY. Before opening any PR or issue in this repo: you MUST read the relevant template file and follow it strictly.** A generic Summary/Test-plan layout is not acceptable.
 
-- **Opening a PR:** Read [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md). Every section listed there is mandatory. If a section requires a human-written paragraph (e.g. "Human Written Description"), leave a clear TODO placeholder and ask the human contributor to fill it in — do not invent their voice.
-- **Opening an issue:** Read [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/). Blank issues are disabled; pick the right template (`bug_report.md` for bugs). Feature requests do not belong in issues — they go to [Discussions](https://github.com/cjpais/Handy/discussions) (see `.github/ISSUE_TEMPLATE/config.yml`).
-- **Proposing a feature:** Handy is under a feature freeze. New features require community support gathered in [Discussions](https://github.com/cjpais/Handy/discussions) before any PR is opened — see the PR template's "Community Feedback" section.
-- **Translations:** Follow [CONTRIBUTING_TRANSLATIONS.md](CONTRIBUTING_TRANSLATIONS.md).
+- **Opening a PR:** One PR per issue, on a branch created from `v1-cle-en-main` (or `main` once 1.0 ships). Read [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) and fill it in completely: link the issue (`Closes #`), write the summary, tick the verification checklist, and list anything you could only test on one OS under "À vérifier en recette".
+- **Opening an issue:** Read [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/). You can open an issue with no template at all (blank issues are enabled); `bug_report.md` is there as an optional template for bugs, not a requirement.
+- **Proposing a feature:** There's no freeze on new features — open a PR directly, following the rules in [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Translations:** French only — add new keys to `src/i18n/locales/fr/translation.json` (see [CONTRIBUTING.md](CONTRIBUTING.md), rule 5).
 - **Full contributor workflow:** [CONTRIBUTING.md](CONTRIBUTING.md).
 
 **Commits:** Use conventional commit prefixes (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`). Focus the message on _why_, not _what_.

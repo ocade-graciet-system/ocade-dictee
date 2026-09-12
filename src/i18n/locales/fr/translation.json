@@ -19,6 +19,17 @@
     "about": "À propos"
   },
   "onboarding": {
+    "firstLaunch": {
+      "title": "Préparation d'OCADE Dictée",
+      "subtitle": "Le modèle de reconnaissance vocale française (512 Mo) se télécharge une seule fois. Ensuite, tout fonctionne hors ligne.",
+      "downloading": "Téléchargement… {{percentage}} % ({{speed}} Mo/s)",
+      "verifying": "Vérification du fichier…",
+      "activating": "Activation du modèle…",
+      "failed": "Le téléchargement a échoué. Vérifiez la connexion Internet puis réessayez.",
+      "selectFailed": "Le modèle n'a pas pu être activé.",
+      "retry": "Réessayer",
+      "continueAnyway": "Continuer sans réactiver le modèle"
+    },
     "subtitle": "Pour commencer, choisissez un modèle de transcription",
     "existingModelsTitle": "Compatible Models",
     "downloadModelsTitle": "Available to Download",
@@ -101,7 +112,7 @@
     },
     "permissions": {
       "title": "Autorisations requises",
-      "description": "Handy a besoin de quelques autorisations pour fonctionner correctement.",
+      "description": "OCADE Dictée a besoin de quelques autorisations pour fonctionner correctement.",
       "microphone": {
         "title": "Accès au microphone",
         "description": "Nécessaire pour entendre votre voix pour la transcription."
@@ -114,6 +125,7 @@
       "granted": "Accordé",
       "waiting": "En attente...",
       "allGranted": "Tout est prêt !",
+      "continueWithout": "Continuer sans autoriser — accéder à la transcription de fichier",
       "errors": {
         "checkFailed": "Échec de la vérification des autorisations. Veuillez réessayer.",
         "requestFailed": "Échec de la demande d'autorisation. Veuillez réessayer."
@@ -154,14 +166,24 @@
       "streaming": "Affiche la transcription en direct pendant que vous parlez"
     }
   },
+  "progressBar": {
+    "downloading": "Téléchargement…",
+    "downloadingCount": "{{count}} téléchargements en cours…",
+    "downloadingCount_one": "{{count}} téléchargement en cours…",
+    "downloadingCount_other": "{{count}} téléchargements en cours…"
+  },
   "settings": {
     "modelSettings": {
       "title": "Paramètres de {{model}}"
     },
     "general": {
       "title": "Général",
+      "shortcutPreset": {
+        "title": "Raccourci de dictée",
+        "description": "Maintenez ce raccourci pour dicter, relâchez pour coller le texte."
+      },
       "shortcut": {
-        "title": "Raccourcis Handy",
+        "title": "Raccourcis",
         "description": "Configurer les raccourcis clavier pour déclencher l'enregistrement de la reconnaissance vocale",
         "loading": "Chargement des raccourcis...",
         "none": "Aucun raccourci configuré",
@@ -213,7 +235,7 @@
       },
       "rescan": {
         "label": "Réanalyser",
-        "tooltip": "Réanalyser pour détecter les modèles ajoutés au dossier des modèles ou au cache Hugging Face en dehors de Handy"
+        "tooltip": "Réanalyser pour détecter les modèles ajoutés au dossier des modèles ou au cache Hugging Face en dehors d'OCADE Dictée"
       },
       "import": {
         "label": "Importer",
@@ -254,7 +276,7 @@
       },
       "muteMicInOtherApps": {
         "title": "Couper mon micro dans les autres apps pendant la dictée",
-        "description": "Envoie un raccourci de mute à ton app d'appel active (ex. Discord) pour que les autres n'entendent pas ta dictée. Définis le MÊME raccourci comme mute GLOBAL dans cette app.",
+        "description": "Envoyez un raccourci de mute à votre app d'appel active (ex. Discord) pour que les autres n'entendent pas votre dictée. Définissez le MÊME raccourci comme mute GLOBAL dans cette app.",
         "shortcutLabel": "Raccourci de mute à envoyer",
         "shortcutPlaceholder": "ctrl+alt+shift+m",
         "modeLabel": "Mode",
@@ -297,16 +319,15 @@
       },
       "autostart": {
         "label": "Lancer au démarrage",
-        "description": "Démarrer automatiquement Handy lorsque vous vous connectez à votre ordinateur."
+        "description": "Démarrer automatiquement OCADE Dictée lorsque vous vous connectez à votre ordinateur."
       },
       "showTrayIcon": {
         "label": "Afficher l'icône de la barre",
-        "description": "Afficher l'icône de Handy dans la barre système."
+        "description": "Afficher l'icône d'OCADE Dictée dans la barre système."
       },
       "overlay": {
         "style": {
           "title": "Overlay",
-          "description": "Choose the recording overlay: None hides it, Minimal shows a compact pill, Live shows transcription in real time as you speak (streaming-capable models only — look for the Streaming badge in the model picker). On Linux 'None' is recommended.",
           "options": {
             "none": "Aucune",
             "minimal": "Minimal",
@@ -465,13 +486,14 @@
       "title": "Transcription de fichier",
       "description": "Transcrivez un fichier audio ou vidéo déjà existant en document texte.",
       "dropzoneTitle": "Déposez un fichier audio ou vidéo ici",
-      "dropzoneHint": "Formats pris en charge : MP3, MP4, M4A, WAV, AAC, FLAC, OGG",
+      "dropzoneHint": "Formats pris en charge : MP3, MP4, M4A, MOV, WAV, AAC, FLAC, OGG, OGA, OPUS, AIFF, AIF, CAF, MKV, WEBM, 3GP, AMR, WMA, WMV, AVI",
       "browse": "Parcourir...",
       "cancel": "Annuler",
       "newFile": "Transcrire un autre fichier",
       "selectedFile": "Fichier sélectionné : {{name}}",
       "phase": {
         "download": "Téléchargement de l'audio... {{current}} %",
+        "preparetool": "Préparation de l'outil de conversion (téléchargement unique)…",
         "decode": "Décodage du fichier audio...",
         "transcribe": "Transcription en cours (tronçon {{current}}/{{total}})",
         "assemble": "Assemblage du document...",
@@ -513,8 +535,6 @@
       "format": {
         "button": "Mettre en forme",
         "loading": "Mise en forme en cours...",
-        "notConfiguredTitle": "Aucun modèle de mise en forme configuré",
-        "notConfiguredDescription": "Configurez un fournisseur de post-traitement (Ollama en local ou une API cloud) et un modèle dans les réglages Avancé pour activer la mise en forme.",
         "notConfiguredLink": "Ouvrir les réglages Avancé",
         "rawTitle": "Texte brut",
         "formattedTitle": "Texte mis en forme",
@@ -541,10 +561,6 @@
         "copied": "Copié",
         "lineCount": "{{count}} lignes",
         "empty": "En attente de journaux… Les entrées apparaîtront ici au fur et à mesure que l'application les émet."
-      },
-      "updateChecks": {
-        "label": "Vérifier les mises à jour",
-        "description": "Vérifier automatiquement les nouvelles versions de Handy"
       },
       "whatsNewPreview": {
         "title": "Aperçu des nouveautés",
@@ -593,8 +609,8 @@
         "description": "Couper le son du système pendant l'enregistrement"
       },
       "appendTrailingSpace": {
-        "label": "Ajouter une espace final",
-        "description": "Ajouter une espace après la transcription collée"
+        "label": "Ajouter un espace final",
+        "description": "Ajouter un espace après la transcription collée"
       },
       "keyboardImplementation": {
         "title": "Gestion du clavier",
@@ -623,51 +639,40 @@
       "title": "À propos",
       "version": {
         "title": "Version",
-        "description": "Version actuelle de Handy"
+        "description": "Version actuelle d'OCADE Dictée"
       },
       "whatsNewUpdates": {
         "label": "Afficher les nouveautés",
-        "description": "Afficher les notes de version après les mises à jour de Handy"
+        "description": "Afficher les notes de version après les mises à jour d'OCADE Dictée"
       },
       "appDataDirectory": {
         "title": "Emplacement des données de l'application",
-        "description": "Emplacement où Handy stocke ses données"
+        "description": "Emplacement où OCADE Dictée stocke ses données"
       },
       "sourceCode": {
         "title": "Code source",
         "description": "Voir le code source et contribuer",
         "button": "Voir sur GitHub"
       },
-      "supportDevelopment": {
-        "title": "Soutenir le développement",
-        "description": "Aidez-nous à continuer à construire Handy",
-        "button": "Faire un don"
-      },
       "acknowledgments": {
         "title": "Remerciements",
         "ggml": {
           "title": "ggml",
           "description": "Inférence haute performance du modèle de reconnaissance vocale automatique Whisper d'OpenAI",
-          "details": "Handy utilise ggml pour un traitement rapide et local de la parole en texte. Merci au travail incroyable de Georgi Gerganov et des contributeurs."
+          "details": "OCADE Dictée utilise ggml pour un traitement rapide et local de la parole en texte. Merci au travail incroyable de Georgi Gerganov et des contributeurs."
         }
       }
     }
   },
-  "footer": {
-    "checkingUpdates": "Recherche de mises à jour...",
-    "updateAvailableShort": "Mise à jour disponible",
-    "upToDate": "À jour",
-    "updateCheckingDisabled": "Vérification des mises à jour désactivée",
-    "downloading": "Téléchargement... {{progress}}%",
-    "installing": "Installation...",
-    "preparing": "Préparation...",
-    "checkForUpdates": "Rechercher des mises à jour",
-    "portableUpdateTitle": "Mise à jour manuelle requise",
-    "portableUpdateMessage": "Les installations portables ne peuvent pas être mises à jour automatiquement. Pour mettre à jour : téléchargez le dernier installateur NSIS depuis GitHub Releases, installez-le dans le même dossier, puis copiez votre dossier Data/ (paramètres, modèles, enregistrements) de l’ancienne version vers la nouvelle.",
-    "portableUpdateButton": "Ouvrir GitHub Releases"
+  "updater": {
+    "title": "Mise à jour vers la version {{version}}",
+    "description": "OCADE Dictée s'installe et redémarre automatiquement. Ne fermez pas l'application.",
+    "downloading": "Téléchargement… {{progress}} %",
+    "downloadingBytes": "Téléchargement… {{megabytes}} Mo",
+    "installing": "Installation…"
   },
   "whatsNew": {
-    "title": "Nouveautés de Handy v{{version}}"
+    "title": "Nouveautés d'OCADE Dictée v{{version}}"
   },
   "common": {
     "loading": "Chargement...",
@@ -679,7 +684,7 @@
     "noOptionsFound": "Aucune option trouvée"
   },
   "accessibility": {
-    "permissionsDescription": "Handy a besoin des autorisations d'accessibilité pour taper le texte transcrit.",
+    "permissionsDescription": "OCADE Dictée a besoin des autorisations d'accessibilité pour taper le texte transcrit.",
     "openSettings": "Ouvrir les Préférences Système"
   },
   "errors": {
@@ -698,15 +703,18 @@
     "modelLoadFailedUnknown": "modèle inconnu",
     "pasteFailedTitle": "Échec du collage du texte",
     "pasteFailed": "Le texte n'a pas pu être collé dans l'application active.",
-    "transcriptionFailedTitle": "Échec de la transcription"
+    "pasteFailedClipboard": "Le collage automatique a échoué, mais le texte a été copié dans le presse-papiers : collez-le avec Ctrl+V (⌘V sur Mac).",
+    "transcriptionFailedTitle": "Échec de la transcription",
+    "transcriptionEmptyTitle": "Rien entendu",
+    "transcriptionEmpty": "Aucune parole détectée. Parlez un peu plus fort, rapprochez-vous du micro, puis réessayez."
   },
   "appLanguage": {
     "title": "Langue de l'application",
-    "description": "Changer la langue de l'interface de Handy"
+    "description": "Changer la langue de l'interface d'OCADE Dictée"
   },
   "theme": {
     "title": "Thème de l'application",
-    "description": "Choisissez si Handy suit le thème du système ou reste clair ou sombre",
+    "description": "Choisissez si OCADE Dictée suit le thème du système ou reste clair ou sombre",
     "options": {
       "system": "Système",
       "light": "Clair",

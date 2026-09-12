@@ -21,6 +21,12 @@ async resetBinding(id: string) : Promise<Result<BindingResponse, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Liste des raccourcis de dictée proposés (issue #3), dans l'ordre d'affichage.
+ */
+async getShortcutPresets() : Promise<string[]> {
+    return await TAURI_INVOKE("get_shortcut_presets");
+},
 async changePttSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_ptt_setting", { enabled }) };
@@ -634,14 +640,6 @@ async downloadModel(modelId: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async deleteModel(modelId: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_model", { modelId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async cancelDownload(modelId: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cancel_download", { modelId }) };
@@ -689,20 +687,6 @@ async isModelLoading() : Promise<Result<boolean, string>> {
 async rescanLocalModels() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("rescan_local_models") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Copy a user-picked model file (.bin / .gguf) into the managed models
- * directory so it can be used without touching the filesystem by hand.
- * Returns the imported model's id. The copy runs off the async runtime —
- * model files are hundreds of MB.
- */
-async importCustomModel(sourcePath: string) : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("import_custom_model", { sourcePath }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -807,6 +791,15 @@ async getClamshellMicrophone() : Promise<Result<string, string>> {
 },
 async isRecording() : Promise<boolean> {
     return await TAURI_INVOKE("is_recording");
+},
+/**
+ * Second half of the dictation pipeline: `is_recording` goes back to idle as
+ * soon as the samples are handed over, leaving the transcription and the
+ * paste uncovered. `try_state` because the coordinator is only managed during
+ * setup — before that, nothing is being transcribed.
+ */
+async isTranscribing() : Promise<boolean> {
+    return await TAURI_INVOKE("is_transcribing");
 },
 async setModelUnloadTimeout(timeout: ModelUnloadTimeout) : Promise<void> {
     await TAURI_INVOKE("set_model_unload_timeout", { timeout });
@@ -1170,7 +1163,15 @@ export type FileTranscriptionPhase =
  * Téléchargement du média distant (transcription par URL uniquement) ;
  * `current` transporte le pourcentage (0-100).
  */
-"download" | "decode" | "transcribe" | "assemble" | "done"
+"download" | 
+/**
+ * Préparation de l'outil de conversion (repli ffmpeg, issue #10) :
+ * téléchargement unique et non interruptible d'ffmpeg dans les données
+ * de l'app quand le décodage natif a échoué et qu'aucun ffmpeg n'est
+ * encore disponible (vague de correction n°2, item H3). Pas de suivi en
+ * pourcentage (hors périmètre, voir issue #22).
+ */
+"preparetool" | "decode" | "transcribe" | "assemble" | "done"
 /**
  * Progression du pipeline de transcription de fichier, émise à chaque étape
  * (décodage, chaque tronçon transcrit, assemblage, puis fin).

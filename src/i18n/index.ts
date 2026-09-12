@@ -71,12 +71,12 @@ const getSupportedLanguage = (
   return supported ? supported.code : null;
 };
 
-// Initialize i18n with English as default
+// L'interface est en français uniquement (décision v1, issue #11).
 // Language will be synced from settings after init
 i18n.use(initReactI18next).init({
   resources,
-  lng: "en",
-  fallbackLng: "en",
+  lng: "fr",
+  fallbackLng: "fr",
   interpolation: {
     escapeValue: false, // React already escapes values
   },

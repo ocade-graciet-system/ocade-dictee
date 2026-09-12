@@ -1,37 +1,26 @@
 ---
-name: Bug Report
-about: Create a report to help us improve Handy
+name: Bug
+about: Signaler un problème dans OCADE Dictée
 title: "[BUG] "
 labels: ["bug"]
 assignees: ""
 ---
 
-## Before You Submit
+## Ce qui se passe
 
-**Please search [existing issues](https://github.com/cjpais/Handy/issues) to avoid duplicates.** Your bug may already be reported! Right now it's just me maintaining this project so many issues can be overwhelming! Help me out by checking first.
+## Ce qui devrait se passer
 
-## Bug Description
+## Pour reproduire
 
-A clear and concise description of what the bug is.
+1.
+2.
 
-## System Information
+## Environnement
 
-**App Version:**
+- OS et version :
+- Version d'OCADE Dictée (À propos) :
+- Application dans laquelle le texte est dicté :
 
-<!-- You can find this in the app settings or about section -->
+## Journaux
 
-**Operating System:**
-
-<!-- e.g., macOS 14.1, Windows 11, Ubuntu 22.04 -->
-
-**CPU:**
-
-<!-- e.g., Apple M2, Intel i7-12700K, AMD Ryzen 7 5800X -->
-
-**GPU:**
-
-<!-- e.g., Apple M2 GPU, NVIDIA RTX 4080, AMD RX 6800 XT, Intel UHD Graphics -->
-
-## Logs
-
-<!-- Please attach relevant logs to help us diagnose the issue. You can find the log directory by going to Settings > About in the app. -->
+Lancer l'app avec `--debug` et joindre le journal si possible.

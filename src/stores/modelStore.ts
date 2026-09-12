@@ -3,7 +3,6 @@ import { subscribeWithSelector } from "zustand/middleware";
 import { produce } from "immer";
 import { listen } from "@tauri-apps/api/event";
 import { commands, type ModelInfo } from "@/bindings";
-import { toast } from "sonner";
 
 interface DownloadProgress {
   model_id: string;
@@ -32,20 +31,15 @@ interface ModelsStore {
   error: string | null;
   initialized: boolean;
   isRescanning: boolean;
-  isImporting: boolean;
 
   // Actions
   initialize: () => Promise<void>;
   loadModels: () => Promise<void>;
   loadCurrentModel: () => Promise<void>;
   rescanLocalModels: () => Promise<void>;
-  importModel: (
-    sourcePath: string,
-  ) => Promise<{ ok: true } | { ok: false; error: string }>;
   selectModel: (modelId: string) => Promise<boolean>;
   downloadModel: (modelId: string) => Promise<boolean>;
   cancelDownload: (modelId: string) => Promise<boolean>;
-  deleteModel: (modelId: string) => Promise<boolean>;
   getModelInfo: (modelId: string) => ModelInfo | undefined;
   isModelDownloading: (modelId: string) => boolean;
   isModelVerifying: (modelId: string) => boolean;
@@ -72,7 +66,6 @@ export const useModelStore = create<ModelsStore>()(
     error: null,
     initialized: false,
     isRescanning: false,
-    isImporting: false,
 
     // Internal setters
     setModels: (models) => set({ models }),
@@ -144,23 +137,6 @@ export const useModelStore = create<ModelsStore>()(
         set({ error: `Failed to rescan models: ${err}` });
       } finally {
         set({ isRescanning: false });
-      }
-    },
-
-    importModel: async (sourcePath: string) => {
-      set({ isImporting: true });
-      try {
-        const result = await commands.importCustomModel(sourcePath);
-        if (result.status !== "ok") {
-          return { ok: false as const, error: result.error };
-        }
-        // On success the backend rescan emits `models-updated`, which reloads
-        // the list via the listener registered in initialize().
-        return { ok: true as const };
-      } catch (err) {
-        return { ok: false as const, error: String(err) };
-      } finally {
-        set({ isImporting: false });
       }
     },
 
@@ -245,24 +221,6 @@ export const useModelStore = create<ModelsStore>()(
         }
       } catch (err) {
         set({ error: `Failed to cancel download: ${err}` });
-        return false;
-      }
-    },
-
-    deleteModel: async (modelId: string) => {
-      try {
-        set({ error: null });
-        const result = await commands.deleteModel(modelId);
-        if (result.status === "ok") {
-          await get().loadModels();
-          await get().loadCurrentModel();
-          return true;
-        } else {
-          set({ error: `Failed to delete model: ${result.error}` });
-          return false;
-        }
-      } catch (err) {
-        set({ error: `Failed to delete model: ${err}` });
         return false;
       }
     },
@@ -364,10 +322,12 @@ export const useModelStore = create<ModelsStore>()(
               delete state.verifyingModels[modelId];
               delete state.downloadProgress[modelId];
               delete state.downloadStats[modelId];
+              // Chaîne technique de reqwest/anyhow, en anglais : conservée dans
+              // l'état pour être affichée en petit sous le message français de
+              // l'écran de premier lancement, mais plus en toast par-dessus lui.
               state.error = error;
             }),
           );
-          toast.error(error);
         },
       );
 
@@ -431,11 +391,6 @@ export const useModelStore = create<ModelsStore>()(
             delete state.downloadStats[modelId];
           }),
         );
-      });
-
-      listen<string>("model-deleted", () => {
-        get().loadModels();
-        get().loadCurrentModel();
       });
 
       listen("model-state-changed", () => {
