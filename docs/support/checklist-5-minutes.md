@@ -1,12 +1,12 @@
 # Checklist support — 5 minutes après installation
 
 - [ ] L'app est lancée : icône visible (barre de menus macOS / zone de notification Windows-Linux)
-- [ ] Réglages → Général : le raccourci choisi est affiché ; le bon micro est sélectionné
+- [ ] Paramètres… → Général : le raccourci choisi est affiché ; le bon micro est sélectionné
 - [ ] Dictée dans l'application métier du client (pas seulement le Bloc-notes) : texte collé, presse-papier de l'utilisateur intact (copier un mot avant la dictée, le recoller après : il est toujours là)
 - [ ] Les deux sons (début/fin) sont audibles sur le périphérique de sortie utilisé
 - [ ] Session fermée puis rouverte : l'app est relancée automatiquement, masquée
 - [ ] À propos : la version affichée est la dernière release
-- [ ] macOS : Microphone et Accessibilité sont cochés pour OCADE Dictée dans Réglages Système
+- [ ] macOS : Microphone et Accessibilité sont cochés pour OCADE Dictée dans Réglages Système (Préférences Système avant macOS 13)
 - [ ] Noter le modèle de machine, l'OS et la version dans la fiche client
 
 ## Mode débogage (diagnostic avancé)
