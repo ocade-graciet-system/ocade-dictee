@@ -32,6 +32,13 @@ on:
         required: false
         type: boolean
         default: false
+      # Signature macOS séparée (identité stable, Developer ID ou auto-signée)
+      # afin que l'autorisation Accessibilité (TCC) survive aux mises à jour ;
+      # n'impacte pas sign-binaries (Windows/Azure, inchangé).
+      sign-macos:
+        required: false
+        type: boolean
+        default: false
       repository:
         required: false
         type: string
@@ -217,8 +224,12 @@ jobs:
         if: ${{ inputs.target != '' && !contains(inputs.target, 'x86_64-unknown-linux-gnu') && !contains(inputs.target, 'aarch64-unknown-linux-gnu') && !contains(inputs.target, 'x86_64-pc-windows-msvc') }}
         run: rustup target add ${{ inputs.target }}
 
+      # Signature macOS : identité stable (Developer ID ou certificat auto-signé
+      # des secrets) plutôt qu'ad hoc, pour que l'autorisation Accessibilité
+      # (TCC) accordée par l'utilisateur survive aux mises à jour. Sans
+      # notarisation (cf. commentaire dans l'étape "Build with Tauri" plus bas).
       - name: import Apple Developer Certificate
-        if: contains(inputs.platform, 'macos') && inputs.sign-binaries
+        if: contains(inputs.platform, 'macos') && inputs.sign-macos
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -230,16 +241,34 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
           security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          # Un certificat auto-signé n'est pas approuvé pour la signature de code
+          # par défaut (find-identity ne le liste pas tant qu'il n'est pas marqué
+          # de confiance) : on extrait son PEM du p12 et on l'ajoute au trousseau
+          # système. Le runner GitHub dispose de sudo sans mot de passe.
+          openssl pkcs12 -in certificate.p12 -clcerts -nokeys -passin "pass:$APPLE_CERTIFICATE_PASSWORD" -out certificate.pem
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain certificate.pem
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           security find-identity -v -p codesigning build.keychain
 
       - name: verify certificate
-        if: contains(inputs.platform, 'macos') && inputs.sign-binaries
+        if: contains(inputs.platform, 'macos') && inputs.sign-macos
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application")
+          IDENTITIES=$(security find-identity -v -p codesigning build.keychain | grep '"')
+          # On préfère l'identité déclarée par le secret ; à défaut (nom
+          # différent), repli sur la première identité valide du trousseau.
+          CERT_INFO=$(echo "$IDENTITIES" | grep -F "$APPLE_SIGNING_IDENTITY" | head -n1)
+          if [ -z "$CERT_INFO" ]; then
+            CERT_INFO=$(echo "$IDENTITIES" | head -n1)
+          fi
           CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')
+          if [ -z "$CERT_ID" ]; then
+            echo "Aucune identité de signature de code valide dans le trousseau." >&2
+            exit 1
+          fi
           echo "CERT_ID=$CERT_ID" >> $GITHUB_ENV
-          echo "Certificate imported."
+          echo "Certificate imported: $CERT_ID"
 
       - name: Patch asset name pattern
         id: patch-release-name
@@ -513,8 +542,10 @@ jobs:
           # le cert dans le keychain et APPLE_SIGNING_IDENTITY le sélectionne.
           # Passer APPLE_CERTIFICATE ici, même vide (non-signé), fait tenter à
           # tauri un `security import` invalide qui casse le build.
-          # En non-signé : signature ad-hoc ("-"), requise sur Apple Silicon.
-          APPLE_SIGNING_IDENTITY: ${{ inputs.sign-binaries && env.CERT_ID || '-' }}
+          # Identité stable (Developer ID ou auto-signée) si sign-macos, pour que
+          # TCC (Accessibilité) survive aux mises à jour ; sinon signature ad-hoc
+          # ("-"), requise sur Apple Silicon.
+          APPLE_SIGNING_IDENTITY: ${{ inputs.sign-macos && env.CERT_ID || '-' }}
           AZURE_CLIENT_ID: ${{ inputs.sign-binaries && secrets.AZURE_CLIENT_ID || '' }}
           AZURE_CLIENT_SECRET: ${{ inputs.sign-binaries && secrets.AZURE_CLIENT_SECRET || '' }}
           AZURE_TENANT_ID: ${{ inputs.sign-binaries && secrets.AZURE_TENANT_ID || '' }}
