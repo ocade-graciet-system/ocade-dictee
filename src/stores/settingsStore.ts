@@ -419,7 +419,18 @@ export const useSettingsStore = create<SettingsStore>()(
             `Réinitialisation du raccourci ${id} refusée :`,
             result.data.error,
           );
-          return result.data.error;
+          // Un refus sans erreur structurée reste un échec : comme
+          // `updateBinding`, ne jamais renvoyer `null` quand `success` est
+          // faux. Le store vient d'être rafraîchi : il porte le raccourci
+          // resté actif.
+          return (
+            result.data.error ?? {
+              code: "registrationFailed",
+              previousBinding:
+                get().settings?.bindings?.[id]?.current_binding ?? "",
+              detail: null,
+            }
+          );
         }
 
         return null;

@@ -29,6 +29,16 @@ test.describe("formatShortcut", () => {
     );
   });
 
+  test("met en forme les jetons réellement émis par handy-keys", () => {
+    // handy-keys écrit « command »/« super » et « return » (jamais « cmd »
+    // ni « enter ») : ce sont ces graphies qui atteignent l'interface.
+    expect(formatShortcut("command+comma", "macos")).toBe("⌘ ,");
+    expect(formatShortcut("ctrl+alt+return", "windows")).toBe(
+      "Ctrl + Alt + Entrée",
+    );
+    expect(formatShortcut("super+l", "linux")).toBe("Win + L");
+  });
+
   test("ignore les suffixes de latéralité à l'affichage", () => {
     expect(formatShortcut("ctrl_left+option_right+d", "macos")).toBe("⌃ ⌥ D");
   });
