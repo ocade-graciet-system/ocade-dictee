@@ -48,9 +48,12 @@ jobs:
       target: ${{ matrix.target }}
       build-args: ${{ matrix.args }}
       upload-artifacts: true
-      # Signature Apple/Azure pilotée par la variable de dépôt SIGN_BINARIES
-      # (Settings → Secrets and variables → Actions → Variables). Absente ou
-      # différente de "true" : build non signé (signature ad-hoc macOS "-").
-      # Avec "true", les secrets APPLE_* / AZURE_* / KEYCHAIN_PASSWORD doivent exister.
+      # Signature Azure (Windows) pilotée par la variable de dépôt SIGN_BINARIES,
+      # signature macOS (identité stable) par SIGN_MACOS — indépendantes
+      # (Settings → Secrets and variables → Actions → Variables). Absentes ou
+      # différentes de "true" : build non signé (signature ad-hoc macOS "-").
+      # Avec "true", les secrets AZURE_* (Windows) / APPLE_* + KEYCHAIN_PASSWORD
+      # (macOS) correspondants doivent exister.
       sign-binaries: ${{ vars.SIGN_BINARIES == 'true' }}
+      sign-macos: ${{ vars.SIGN_MACOS == 'true' }}
     secrets: inherit

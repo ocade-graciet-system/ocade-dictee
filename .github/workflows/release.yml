@@ -103,6 +103,7 @@ jobs:
       target: ${{ matrix.target }}
       build-args: ${{ matrix.args }}
       sign-binaries: ${{ vars.SIGN_BINARIES == 'true' }}
+      sign-macos: ${{ vars.SIGN_MACOS == 'true' }}
       asset-prefix: "handy"
       upload-artifacts: false
       release-id: ${{ needs.create-release.outputs.release-id }}
