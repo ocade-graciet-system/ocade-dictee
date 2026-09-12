@@ -1,6 +1,10 @@
 import { useEffect } from "react";
 import { useSettingsStore } from "../stores/settingsStore";
-import type { AppSettings as Settings, AudioDevice } from "@/bindings";
+import type {
+  AppSettings as Settings,
+  AudioDevice,
+  BindingError,
+} from "@/bindings";
 
 interface UseSettingsReturn {
   // State
@@ -23,8 +27,8 @@ interface UseSettingsReturn {
   refreshOutputDevices: () => Promise<void>;
 
   // Binding-specific actions
-  updateBinding: (id: string, binding: string) => Promise<void>;
-  resetBinding: (id: string) => Promise<void>;
+  updateBinding: (id: string, binding: string) => Promise<BindingError | null>;
+  resetBinding: (id: string) => Promise<BindingError | null>;
 
   // Convenience getters
   getSetting: <K extends keyof Settings>(key: K) => Settings[K] | undefined;
