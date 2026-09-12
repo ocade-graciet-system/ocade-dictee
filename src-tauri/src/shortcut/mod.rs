@@ -9,6 +9,7 @@
 //! The active implementation is determined by the `keyboard_implementation`
 //! setting and can be changed at runtime.
 
+pub mod binding_change;
 mod handler;
 pub mod handy_keys;
 pub mod rules;
