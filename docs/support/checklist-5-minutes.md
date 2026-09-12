@@ -20,3 +20,13 @@
    - Linux : `./OCADE*.AppImage --debug`
 3. Un onglet **Débogage** apparaît dans l'application, avec l'emplacement des journaux.
 4. `--debug` n'a aucun effet si une instance de l'application tourne déjà : vérifiez à l'étape 1 qu'elle est bien fermée avant de relancer.
+
+## macOS — si « Ouvrir quand même » n'apparaît jamais (support uniquement)
+
+Réservé au support, jamais demandé au client. Dans le **Terminal** de la machine concernée, exécutez la ligne suivante puis relancez l'application :
+
+```
+xattr -dr com.apple.quarantine "/Applications/OCADE Dictée.app"
+```
+
+Elle retire l'attribut de quarantaine posé par le navigateur au téléchargement ; les mises à jour automatiques n'en posent pas.

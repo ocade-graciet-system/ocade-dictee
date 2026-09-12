@@ -13,10 +13,7 @@
 1. Ouvrez **Applications** et double-cliquez sur **OCADE Dictée**.
 2. macOS affiche « Apple n'a pas pu confirmer… ». Cliquez sur **OK** (l'application ne démarre pas encore).
 3. Ouvrez **Réglages Système → Confidentialité et sécurité** (sur macOS 10.15 à 12 : **Préférences Système → Sécurité et confidentialité**), descendez tout en bas : à côté du message concernant OCADE Dictée, cliquez sur **Ouvrir quand même**, puis sur **Ouvrir** dans la confirmation.
-4. Si le bouton n'apparaît pas (macOS 15 et suivants) : ouvrez le **Terminal** (Cmd + Espace, tapez « Terminal »), collez la ligne ci-dessous, validez avec Entrée, puis relancez l'application :
-   ```
-   xattr -dr com.apple.quarantine "/Applications/OCADE Dictée.app"
-   ```
+4. Si le bouton n'apparaît pas : relancez l'application depuis **Applications** (le bouton apparaît après une première tentative d'ouverture). En dernier recours, le support dispose d'une manipulation dédiée (voir la fiche support).
 
 ![Ouvrir quand même](captures/macos-ouvrir-quand-meme.png)
 
