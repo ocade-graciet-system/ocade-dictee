@@ -7,6 +7,7 @@ mod catalog;
 pub mod cli;
 mod clipboard;
 mod commands;
+pub mod download;
 mod helpers;
 mod input;
 mod llm_client;
