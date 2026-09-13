@@ -3,7 +3,9 @@
 //! `llama-server --version`.
 
 use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use flate2::read::GzDecoder;
 use tokio_util::sync::CancellationToken;
@@ -55,6 +57,14 @@ impl SummaryPaths {
 /// Indicateur Windows : pas de fenêtre console pour les processus enfants.
 #[cfg(windows)]
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Échéance du contrôle `llama-server --version` : le binaire n'affiche que
+/// deux lignes ; au-delà il est tenu pour bloqué (bibliothèque sur un volume
+/// réseau injoignable, pilote qui ne rend pas la main…).
+const VERSION_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Intervalle de scrutation du processus pendant l'attente du contrôle.
+const VERSION_CHECK_POLL: Duration = Duration::from_millis(100);
 
 impl From<DownloadError> for SummaryError {
     fn from(e: DownloadError) -> Self {
@@ -166,8 +176,26 @@ fn extract_tar_gz(file: File, temp_dir: &Path) -> Result<(), String> {
             entry.unpack_in(temp_dir).map_err(fail)?;
         }
     }
+    // Ordre décroissant des chemins, comme `tar::Archive::unpack` : un parent
+    // aux droits restrictifs (`0400`) doit être servi après son contenu, sinon
+    // celui-ci n'est plus atteignable pour y poser quoi que ce soit.
+    directories.sort_by(|a, b| b.path_bytes().cmp(&a.path_bytes()));
     for mut dir in directories {
         dir.unpack_in(temp_dir).map_err(fail)?;
+    }
+    Ok(())
+}
+
+/// Refuse un nom brut d'entrée zip qui serait absolu ou porterait un préfixe
+/// de volume Windows : `enclosed_name()` ne les rejette pas, il les reloge
+/// silencieusement sous la cible (`/etc/x` → `etc/x`, `C:\x` → `x`), alors que
+/// la règle d'extraction est de refuser une telle archive.
+fn check_zip_entry_name(name: &str) -> Result<(), String> {
+    let bytes = name.as_bytes();
+    let rooted = matches!(bytes.first(), Some(b'/' | b'\\'));
+    let volume = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    if rooted || volume {
+        return Err(format!("entrée d'archive refusée: {name}"));
     }
     Ok(())
 }
@@ -179,6 +207,7 @@ fn extract_zip(file: File, temp_dir: &Path) -> Result<(), String> {
         let entry = zip
             .by_index(index)
             .map_err(|e| format!("extraction zip: {e}"))?;
+        check_zip_entry_name(entry.name())?;
         match entry.enclosed_name() {
             Some(name) => check_archive_path(&name)?,
             None => return Err(format!("entrée d'archive refusée: {}", entry.name())),
@@ -202,14 +231,53 @@ pub fn set_executable(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Pourquoi un contrôle `--version` n'a pas abouti.
+#[derive(Debug)]
+enum VersionCheckFailure {
+    /// Lancement impossible, ou code de sortie non nul.
+    Detail(String),
+    /// Échéance dépassée : le processus a été tué.
+    TimedOut,
+    /// Annulation demandée pendant l'attente : le processus a été tué.
+    Cancelled,
+}
+
+impl VersionCheckFailure {
+    fn detail(self) -> String {
+        match self {
+            Self::Detail(detail) => detail,
+            Self::TimedOut => "llama-server --version : délai dépassé".to_string(),
+            Self::Cancelled => "llama-server --version : annulé".to_string(),
+        }
+    }
+}
+
 /// Contrôle final : `llama-server --version` doit renvoyer 0 (bibliothèques
-/// trouvées, binaire exécutable, pas de quarantaine).
+/// trouvées, binaire exécutable, pas de quarantaine). Borné à
+/// `VERSION_CHECK_TIMEOUT` : un binaire qui ne rend pas la main est tué et le
+/// contrôle échoue, il ne bloque pas l'appelant.
 pub fn run_version_check(exe: &Path) -> Result<(), String> {
+    run_version_check_with_timeout(exe, VERSION_CHECK_TIMEOUT, None)
+        .map_err(VersionCheckFailure::detail)
+}
+
+/// Corps du contrôle : l'échéance est un paramètre (tests) et `cancel`, s'il
+/// est fourni, interrompt l'attente. Dans les deux cas le processus est tué,
+/// jamais laissé derrière. Bloquant : à lancer dans `spawn_blocking` depuis un
+/// contexte async (voir `check_engine_version`).
+fn run_version_check_with_timeout(
+    exe: &Path,
+    timeout: Duration,
+    cancel: Option<&CancellationToken>,
+) -> Result<(), VersionCheckFailure> {
     let mut command = std::process::Command::new(exe);
+    // Sorties capturées (jamais sur la console de l'app) et lues après la fin
+    // du processus : `--version` n'écrit que deux lignes, et un binaire qui
+    // noierait ses tuyaux serait de toute façon arrêté par l'échéance.
     command
         .arg("--version")
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     // Le dossier du binaire est le dossier de travail (DLL voisines sur
     // Windows) ; un parent vide (`exe` sans dossier) n'en est pas un.
@@ -221,17 +289,74 @@ pub fn run_version_check(exe: &Path) -> Result<(), String> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(CREATE_NO_WINDOW);
     }
-    let output = command
-        .output()
-        .map_err(|e| format!("lancement de {}: {e}", exe.display()))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "`llama-server --version` a renvoyé {:?}: {}",
-            output.status.code(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
+    let mut child = command
+        .spawn()
+        .map_err(|e| VersionCheckFailure::Detail(format!("lancement de {}: {e}", exe.display())))?;
+
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(e) => {
+                kill_child(&mut child);
+                return Err(VersionCheckFailure::Detail(format!(
+                    "attente de {}: {e}",
+                    exe.display()
+                )));
+            }
+        }
+        if cancel.is_some_and(|cancel| cancel.is_cancelled()) {
+            kill_child(&mut child);
+            return Err(VersionCheckFailure::Cancelled);
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            kill_child(&mut child);
+            return Err(VersionCheckFailure::TimedOut);
+        }
+        std::thread::sleep(left.min(VERSION_CHECK_POLL));
+    };
+    if status.success() {
+        return Ok(());
+    }
+    let mut stderr = String::new();
+    if let Some(mut piped) = child.stderr.take() {
+        let _ = piped.read_to_string(&mut stderr);
+    }
+    Err(VersionCheckFailure::Detail(format!(
+        "`llama-server --version` a renvoyé {:?}: {}",
+        status.code(),
+        stderr.trim()
+    )))
+}
+
+/// Tue le processus et le récolte : pas de zombie derrière une échéance ou une
+/// annulation.
+fn kill_child(child: &mut std::process::Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Contrôle `--version` depuis un contexte async : hors de la boucle
+/// d'exécution (`spawn_blocking`), borné par `VERSION_CHECK_TIMEOUT` et
+/// interrompu par `cancel`.
+async fn check_engine_version(exe: &Path, cancel: &CancellationToken) -> Result<(), SummaryError> {
+    let exe = exe.to_path_buf();
+    let cancel = cancel.clone();
+    let checked = tokio::task::spawn_blocking(move || {
+        run_version_check_with_timeout(&exe, VERSION_CHECK_TIMEOUT, Some(&cancel))
+    })
+    .await;
+    match checked {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(VersionCheckFailure::Cancelled)) => Err(SummaryError::Cancelled),
+        Ok(Err(failure)) => Err(SummaryError::EngineStartFailed {
+            detail: failure.detail(),
+        }),
+        Err(e) => Err(SummaryError::EngineStartFailed {
+            detail: format!("contrôle --version interrompu: {e}"),
+        }),
     }
 }
 
@@ -245,6 +370,21 @@ fn engine_asset_or_unsupported() -> Result<&'static EngineAsset, SummaryError> {
     })
 }
 
+/// Supprime une installation inutilisable pour qu'un lancement suivant la
+/// retélécharge : sans cela le court-circuit `exe.is_file()` la reprendrait
+/// telle quelle, sans jamais repasser le contrôle `--version`. Un échec de
+/// suppression est journalisé, jamais bloquant.
+fn discard_engine_dir(engine_dir: &Path) {
+    match std::fs::remove_dir_all(engine_dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => log::warn!(
+            "Moteur inutilisable, suppression de {} impossible: {e}",
+            engine_dir.display()
+        ),
+    }
+}
+
 fn ensure_disk_space(dir: &Path) -> Result<(), SummaryError> {
     if let Some(free) = free_disk_bytes(dir) {
         check_disk_space(free)?;
@@ -253,6 +393,9 @@ fn ensure_disk_space(dir: &Path) -> Result<(), SummaryError> {
 }
 
 /// Installe le moteur si besoin et renvoie le chemin de `llama-server`.
+/// Une installation qui ne passe pas le contrôle `--version` est supprimée :
+/// le moteur présent sur le disque est donc toujours un moteur vérifié, et un
+/// moteur cassé est retéléchargé au lancement suivant.
 pub async fn ensure_engine(
     paths: &SummaryPaths,
     client: &reqwest::Client,
@@ -271,7 +414,8 @@ pub async fn ensure_engine_from(
     cancel: &CancellationToken,
     mut on_progress: impl FnMut(u32),
 ) -> Result<PathBuf, SummaryError> {
-    let exe = paths.engine_dir().join(asset.exe_name);
+    let engine_dir = paths.engine_dir();
+    let exe = engine_dir.join(asset.exe_name);
     if exe.is_file() {
         return Ok(exe);
     }
@@ -306,7 +450,11 @@ pub async fn ensure_engine_from(
             }
             Err(e) => return Err(e.into()),
         }
-        match extract_engine_archive(&part, asset.kind, &paths.engine_dir()) {
+        // Le `.part` est conservé : une reprise le revalidera par son empreinte.
+        if cancel.is_cancelled() {
+            return Err(SummaryError::Cancelled);
+        }
+        match extract_engine_archive(&part, asset.kind, &engine_dir) {
             Ok(()) => break,
             Err(detail) if attempts < 2 => {
                 log::warn!("Extraction du moteur impossible ({detail}), nouvelle tentative");
@@ -319,16 +467,30 @@ pub async fn ensure_engine_from(
             }
         }
     }
+    // Un dossier moteur présent doit avoir passé `--version` : une annulation
+    // ici laisserait sinon une installation jamais contrôlée, que le
+    // court-circuit `exe.is_file()` reprendrait au lancement suivant.
+    if cancel.is_cancelled() {
+        discard_engine_dir(&engine_dir);
+        return Err(SummaryError::Cancelled);
+    }
     let _ = std::fs::remove_file(&part);
     if !exe.is_file() {
+        discard_engine_dir(&engine_dir);
         return Err(SummaryError::EngineStartFailed {
             detail: format!("{} absent de l'archive", asset.exe_name),
         });
     }
-    set_executable(&exe).map_err(|e| SummaryError::EngineStartFailed {
-        detail: e.to_string(),
-    })?;
-    run_version_check(&exe).map_err(|detail| SummaryError::EngineStartFailed { detail })?;
+    if let Err(e) = set_executable(&exe) {
+        discard_engine_dir(&engine_dir);
+        return Err(SummaryError::EngineStartFailed {
+            detail: e.to_string(),
+        });
+    }
+    if let Err(e) = check_engine_version(&exe, cancel).await {
+        discard_engine_dir(&engine_dir);
+        return Err(e);
+    }
     on_progress(100);
     Ok(exe)
 }
@@ -431,6 +593,7 @@ pub(crate) mod test_archives {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::time::Instant;
 
     use super::test_archives::*;
     use super::*;
@@ -523,6 +686,76 @@ mod tests {
         assert!(!target.join("llama-b10930.extracting").exists());
     }
 
+    /// `zip` reloge silencieusement un nom absolu sous la cible (`/etc/x` →
+    /// `etc/x`, `C:\x` → `x`) : le nom brut doit donc être refusé à part.
+    #[test]
+    fn zip_entries_with_absolute_names_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let final_dir = dir.path().join("llama-b10930");
+        for name in ["/etc/x", r"C:\x", r"\\serveur\partage\x"] {
+            let archive = dir.path().join("evil.zip");
+            write_zip(&archive, &[(name, b"pwned")]);
+            let err =
+                extract_engine_archive(&archive, ArchiveKind::Zip, &final_dir).expect_err(name);
+            // Le nom brut, pas sa version relogée, doit figurer dans le refus.
+            assert!(err.contains("refus") && err.contains(name), "{name}: {err}");
+        }
+        assert!(!final_dir.exists());
+        assert!(!dir.path().join("llama-b10930.extracting").exists());
+    }
+
+    /// tar.gz avec des dossiers explicites (le brief n'en fabrique que des
+    /// fichiers) : de quoi reproduire un parent aux droits restrictifs.
+    fn write_tar_gz_with_dirs(path: &Path, dirs: &[(&str, u32)], files: &[(&str, &[u8], u32)]) {
+        let file = File::create(path).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        for (name, mode) in dirs {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Directory);
+            header.set_size(0);
+            header.set_mode(*mode);
+            builder
+                .append_data(&mut header, format!("{name}/"), std::io::empty())
+                .unwrap();
+        }
+        for (name, data, mode) in files {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(*mode);
+            builder.append_data(&mut header, *name, *data).unwrap();
+        }
+        builder.into_inner().unwrap().finish().unwrap();
+    }
+
+    /// Les dossiers sont appliqués par chemin décroissant (comme
+    /// `tar::Archive::unpack`) : les droits d'un parent sans bit `x` ne
+    /// doivent pas empêcher de poser ceux de son contenu.
+    #[cfg(unix)]
+    #[test]
+    fn restrictive_parent_directories_are_applied_last() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("perms.tar.gz");
+        write_tar_gz_with_dirs(
+            &archive,
+            &[
+                ("llama-b10930", 0o755),
+                ("llama-b10930/sous", 0o400),
+                ("llama-b10930/sous/profond", 0o755),
+            ],
+            &[("llama-b10930/sous/profond/llama-server", FAKE_SERVER, 0o755)],
+        );
+        let final_dir = dir.path().join("llama-b10930");
+        extract_engine_archive(&archive, ArchiveKind::TarGz, &final_dir).unwrap();
+        // Rendre le dossier traversable pour l'inspection puis le nettoyage.
+        set_executable(&final_dir.join("sous")).unwrap();
+        assert!(final_dir
+            .join("sous")
+            .join("profond")
+            .join("llama-server")
+            .is_file());
+    }
+
     /// Une extraction qui échoue ne touche pas à l'installation en place :
     /// `final_dir` n'est remplacé qu'au renommage final.
     #[test]
@@ -558,6 +791,50 @@ mod tests {
         set_executable(&failing).unwrap();
         let err = run_version_check(&failing).unwrap_err();
         assert!(err.contains("134") && err.contains("missing lib"), "{err}");
+    }
+
+    /// Un moteur qui ne rend jamais la main est abandonné à l'échéance, et le
+    /// processus est tué (échéance injectée ici ; 30 s en production).
+    #[cfg(unix)]
+    #[test]
+    fn version_check_gives_up_and_kills_a_hanging_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("llama-server");
+        // Le marqueur n'est écrit qu'au bout du sommeil : s'il apparaît, le
+        // processus a survécu à l'échéance.
+        std::fs::write(&exe, b"#!/bin/sh\nsleep 2\ntouch marqueur\n").unwrap();
+        set_executable(&exe).unwrap();
+        let started = Instant::now();
+        let err =
+            run_version_check_with_timeout(&exe, Duration::from_millis(200), None).unwrap_err();
+        assert!(matches!(err, VersionCheckFailure::TimedOut), "{err:?}");
+        let waited = started.elapsed();
+        assert!(waited < Duration::from_millis(1500), "{waited:?}");
+        assert!(err.detail().contains("délai dépassé"));
+        std::thread::sleep(Duration::from_millis(2200));
+        assert!(!dir.path().join("marqueur").exists(), "processus non tué");
+    }
+
+    /// L'annulation interrompt l'attente sans attendre la fin du processus.
+    #[cfg(unix)]
+    #[test]
+    fn version_check_stops_on_cancellation() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("llama-server");
+        std::fs::write(&exe, b"#!/bin/sh\nsleep 5\n").unwrap();
+        set_executable(&exe).unwrap();
+        let cancel = CancellationToken::new();
+        let trigger = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            trigger.cancel();
+        });
+        let started = Instant::now();
+        let err =
+            run_version_check_with_timeout(&exe, VERSION_CHECK_TIMEOUT, Some(&cancel)).unwrap_err();
+        assert!(matches!(err, VersionCheckFailure::Cancelled), "{err:?}");
+        let waited = started.elapsed();
+        assert!(waited < Duration::from_millis(1500), "{waited:?}");
     }
 
     /// Serveur HTTP local qui sert `body` en entier (une requête par connexion).
@@ -752,6 +1029,94 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
+
+    /// Un moteur qui échoue au contrôle `--version` est désinstallé : sans
+    /// cela le court-circuit `exe.is_file()` le reprendrait tel quel à chaque
+    /// lancement, sans jamais le retélécharger.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_failing_version_check_removes_the_engine_and_reinstalls_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("src.tar.gz");
+        write_tar_gz(
+            &archive,
+            "llama-b10930",
+            &[("llama-server", b"#!/bin/sh\nexit 1\n", 0o755)],
+        );
+        let bytes = std::fs::read(&archive).unwrap();
+        let sha = crate::download::compute_sha256(&archive).unwrap();
+        let (url, requests) = serve_counting(bytes);
+        let asset = EngineAsset {
+            file_name: "llama-b10930-bin-test.tar.gz",
+            url: leak(url),
+            sha256: leak(sha),
+            size_bytes: 0,
+            kind: ArchiveKind::TarGz,
+            exe_name: "llama-server",
+        };
+        let paths = SummaryPaths::new(&dir.path().join("data"));
+        let client = crate::download::build_client().unwrap();
+        let err = ensure_engine_from(&asset, &paths, &client, &CancellationToken::new(), |_| {})
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, SummaryError::EngineStartFailed { .. }),
+            "{err:?}"
+        );
+        assert!(
+            !paths.engine_dir().exists(),
+            "moteur inutilisable laissé en place"
+        );
+        // Second lancement : plus rien sur le disque, le moteur est retéléchargé.
+        let err = ensure_engine_from(&asset, &paths, &client, &CancellationToken::new(), |_| {})
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, SummaryError::EngineStartFailed { .. }),
+            "{err:?}"
+        );
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            2,
+            "le moteur n'a pas été retéléchargé"
+        );
+    }
+
+    /// Annulation entre deux phases : l'archive déjà sur le disque est validée
+    /// par son empreinte (sans la moindre requête), mais l'installation
+    /// s'arrête avant l'extraction, sans jeter le téléchargement.
+    #[tokio::test]
+    async fn ensure_engine_stops_when_cancelled_after_the_download() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("src.tar.gz");
+        write_tar_gz(
+            &archive,
+            "llama-b10930",
+            &[("llama-server", FAKE_SERVER, 0o755)],
+        );
+        let sha = crate::download::compute_sha256(&archive).unwrap();
+        let asset = EngineAsset {
+            file_name: "llama-b10930-bin-test.tar.gz",
+            url: "http://127.0.0.1:1/asset",
+            sha256: leak(sha),
+            size_bytes: 0,
+            kind: ArchiveKind::TarGz,
+            exe_name: "llama-server",
+        };
+        let paths = SummaryPaths::new(&dir.path().join("data"));
+        std::fs::create_dir_all(&paths.bin_dir).unwrap();
+        let part = paths.bin_dir.join("llama-b10930-bin-test.tar.gz.part");
+        std::fs::copy(&archive, &part).unwrap();
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let client = crate::download::build_client().unwrap();
+        let err = ensure_engine_from(&asset, &paths, &client, &cancel, |_| {})
+            .await
+            .unwrap_err();
+        assert_eq!(err, SummaryError::Cancelled);
+        assert!(!paths.engine_dir().exists());
+        assert!(part.is_file(), "téléchargement conservé pour la reprise");
     }
 
     #[tokio::test]
