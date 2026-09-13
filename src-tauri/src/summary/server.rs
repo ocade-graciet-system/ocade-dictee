@@ -768,7 +768,7 @@ mod tests {
     /// Démarrage réel, sauté tant que `OCADE_LLAMA_SERVER_EXE` et
     /// `OCADE_LLAMA_MODEL` ne désignent pas un vrai moteur et un vrai modèle
     /// (la suite ordinaire ne lance aucun binaire externe). Exécution manuelle :
-    /// `OCADE_LLAMA_SERVER_EXE=<chemin> OCADE_LLAMA_MODEL=<chemin> cargo test summary::server::real_engine -- --ignored --nocapture`.
+    /// `OCADE_LLAMA_SERVER_EXE=<chemin> OCADE_LLAMA_MODEL=<chemin> cargo test --lib summary::server::tests::real_engine -- --ignored --nocapture`.
     #[tokio::test]
     #[ignore = "moteur et modèle réels (OCADE_LLAMA_SERVER_EXE / OCADE_LLAMA_MODEL) : exécution manuelle"]
     async fn real_engine_starts_serves_health_and_stops() {

@@ -10,7 +10,7 @@
 //! forme. Ce qui reste refusé relève du fond : plusieurs comptes-rendus
 //! collés, une section inconnue, une section obligatoire absente.
 
-pub const SYSTEM_PROMPT: &str = "Tu es un assistant de rédaction professionnel. Tu écris uniquement en français, dans un style clair et neutre. Tu reformules et organises le contenu fourni sans rien inventer : aucune information absente de la transcription, aucun commentaire, aucune introduction ni conclusion hors du gabarit demandé.";
+pub const SYSTEM_PROMPT: &str = "Tu es un assistant de rédaction professionnel. Tu écris uniquement en français, dans un style clair et neutre. Tu reformules et organises le contenu fourni sans rien inventer : aucune information absente de la transcription, aucun commentaire, aucune introduction ni conclusion hors du gabarit demandé. N'indique une date, un chiffre, un nom ou un montant que s'il figure explicitement dans la transcription ; en cas de doute, omets-le.";
 
 /// Structure imposée du compte-rendu, commune au prompt direct et au prompt
 /// final. Les contraintes « un seul compte-rendu », « un seul titre », « pas de
@@ -18,14 +18,20 @@ pub const SYSTEM_PROMPT: &str = "Tu es un assistant de rédaction professionnel.
 /// modèle rendait sinon plusieurs comptes-rendus, un par partie, collés par une
 /// ligne de séparation. La dernière phrase (titres exacts, sans gras ni
 /// deux-points) vient de la passe réelle sur Ministral.
-pub const TEMPLATE_INSTRUCTIONS: &str = "Rédige un seul compte-rendu global en Markdown, de 250 à 450 mots, en respectant exactement cette structure : une seule ligne `# ` suivie d'un titre court ; `## Résumé` : 3 à 6 phrases ; `## Points clés` : liste à puces des informations importantes (faits, chiffres, noms, dates) ; `## Décisions et actions` : liste à puces « qui, quoi, quand » — s'il n'y a ni décision ni action, n'écris ni la section ni une mention de son absence. N'ajoute aucune autre section, ne reproduis pas les parties une par une, n'écris aucune ligne de séparation `---` et n'utilise aucun bloc de code (pas de ```). Les titres de section s'écrivent exactement `## Résumé`, `## Points clés`, `## Décisions et actions`, sans gras, sans deux-points, sans ligne de séparation.";
+pub const TEMPLATE_INSTRUCTIONS: &str = "Rédige un seul compte-rendu global en Markdown, d'au plus 450 mots (moins si l'enregistrement est court), en respectant exactement cette structure : une seule ligne `# ` suivie d'un titre court ; `## Résumé` : 3 à 6 phrases ; `## Points clés` : liste à puces des informations importantes (faits, chiffres, noms, dates) ; `## Décisions et actions` : liste à puces « qui, quoi, quand » — s'il n'y a ni décision ni action, n'écris ni la section ni une mention de son absence. N'ajoute aucune autre section, ne reproduis pas les parties une par une, n'écris aucune ligne de séparation `---` et n'utilise aucun bloc de code (pas de ```). Les titres de section s'écrivent exactement `## Résumé`, `## Points clés`, `## Décisions et actions`, sans gras, sans deux-points, sans ligne de séparation.";
 
 /// Rappel ajouté au prompt lors de l'unique relance après un gabarit incomplet.
 pub const STRICT_REMINDER: &str = "RAPPEL STRICT : la réponse précédente ne respectait pas la structure demandée. Réponds uniquement avec le compte-rendu, exactement dans cette structure et sans aucune autre section ni commentaire : une seule ligne `# ` avec un titre court, puis `## Résumé`, puis `## Points clés`, puis (seulement s'il y a des décisions ou des actions) `## Décisions et actions`. Les titres de section s'écrivent exactement `## Résumé`, `## Points clés`, `## Décisions et actions`, sans gras, sans deux-points, sans ligne de séparation. N'écris aucune ligne de séparation `---` et n'utilise aucun bloc de code.";
 
 /// Rappel ajouté au prompt lorsque la réponse précédente a été tronquée faute
 /// de place (sortie coupée au budget de tokens).
-pub const CONCISE_REMINDER: &str = "La réponse précédente a été coupée car trop longue. Réponds avec le même gabarit, en 250 à 450 mots au maximum, sans rien ajouter d'autre.";
+pub const CONCISE_REMINDER: &str = "La réponse précédente a été coupée car trop longue. Réponds avec le même gabarit, en 450 mots au maximum, sans rien ajouter d'autre.";
+
+/// Rappel du gabarit refermant le prompt, après la transcription ou les notes.
+/// Les instructions étaient sinon uniquement en tête d'un prompt de plusieurs
+/// milliers de tokens, que le modèle perd de vue à la fin d'une longue
+/// transcription.
+pub const TEMPLATE_REMINDER: &str = "Rappel : réponds uniquement avec le compte-rendu, en français, dans la structure demandée (une ligne `# ` avec un titre court, `## Résumé`, `## Points clés`, et `## Décisions et actions` seulement s'il y en a), sans rien inventer, sans ligne de séparation et sans bloc de code.";
 
 pub const SECTION_SUMMARY: &str = "## Résumé";
 pub const SECTION_KEY_POINTS: &str = "## Points clés";
@@ -38,11 +44,12 @@ pub struct ChatMessages {
     pub user: String,
 }
 
-/// Compte-rendu direct : la transcription tient en une tranche.
+/// Compte-rendu direct : la transcription tient en une tranche. Le gabarit
+/// encadre la transcription — instructions avant, rappel après.
 pub fn build_direct_messages(text: &str) -> ChatMessages {
     ChatMessages {
         system: SYSTEM_PROMPT.to_string(),
-        user: format!("{TEMPLATE_INSTRUCTIONS} Transcription : {text}"),
+        user: format!("{TEMPLATE_INSTRUCTIONS} Transcription : {text}\n\n{TEMPLATE_REMINDER}"),
     }
 }
 
@@ -68,7 +75,7 @@ pub fn build_final_messages(notes: &[String]) -> ChatMessages {
     ChatMessages {
         system: SYSTEM_PROMPT.to_string(),
         user: format!(
-            "Voici les notes prises sur les {} parties d'un enregistrement. À partir de ces notes uniquement, {} Écris un seul compte-rendu global qui synthétise l'ensemble des parties, et non un compte-rendu ou une section par partie. Notes : {}",
+            "Voici les notes prises sur les {} parties d'un enregistrement. À partir de ces notes uniquement, {} Écris un seul compte-rendu global qui synthétise l'ensemble des parties, et non un compte-rendu ou une section par partie. Notes : {}\n\n{TEMPLATE_REMINDER}",
             notes.len(),
             lowercase_first(TEMPLATE_INSTRUCTIONS),
             joined
@@ -229,12 +236,38 @@ fn normalize_heading(line: &str) -> Option<String> {
     Some(format!("{} {text}", "#".repeat(level)))
 }
 
-/// Passe ligne à ligne : titres normalisés, lignes de séparation retirées où
-/// qu'elles soient, espaces de fin et lignes vides en trop repliés.
+/// Ligne d'ouverture ou de clôture d'un bloc de code (` ``` `, ` ```markdown `).
+/// Le gabarit en interdit : partout où il en reste une, c'est que le modèle a
+/// enveloppé son compte-rendu, en entier ou par morceaux.
+fn is_code_fence(line: &str) -> bool {
+    line.trim().starts_with("```")
+}
+
+/// Titre de compte-rendu (`# ` suivi d'un texte), au sens de `check_template`.
+fn is_title(line: &str) -> bool {
+    line.trim()
+        .strip_prefix("# ")
+        .is_some_and(|title| !title.trim().is_empty())
+}
+
+/// Retire le préambule (« Voici le compte-rendu : ») : tout ce qui précède la
+/// première ligne de titre. Sans ligne de titre, le texte est rendu tel quel —
+/// `check_template` signalera le titre manquant plutôt que de voir le
+/// compte-rendu disparaître.
+fn drop_preamble(text: &str) -> String {
+    match text.lines().position(is_title) {
+        Some(0) | None => text.to_string(),
+        Some(index) => text.lines().skip(index).collect::<Vec<_>>().join("\n"),
+    }
+}
+
+/// Passe ligne à ligne : titres normalisés, lignes de séparation et de bloc de
+/// code retirées où qu'elles soient, espaces de fin et lignes vides en trop
+/// repliés.
 fn normalize_lines(text: &str) -> String {
     let mut lines: Vec<String> = Vec::new();
     for line in text.lines() {
-        if is_separator(line) {
+        if is_separator(line) || is_code_fence(line) {
             continue;
         }
         let line = normalize_heading(line).unwrap_or_else(|| line.trim_end().to_string());
@@ -298,8 +331,9 @@ pub fn check_template(markdown: &str) -> Result<(), TemplateIssue> {
 }
 
 /// Nettoyage et normalisation de la sortie brute du modèle : bloc de réflexion
-/// `<think>…</think>` éventuel, clôture Markdown (accents graves), titres
-/// ramenés à leur forme canonique, lignes de séparation retirées, espaces.
+/// `<think>…</think>` éventuel, lignes de bloc de code (accents graves) où
+/// qu'elles soient, titres ramenés à leur forme canonique, lignes de
+/// séparation retirées, préambule avant le titre supprimé, espaces repliés.
 /// Idempotent : nettoyer une sortie déjà nettoyée ne change rien.
 pub fn clean_output(raw: &str) -> String {
     let mut text = raw.to_string();
@@ -309,20 +343,13 @@ pub fn clean_output(raw: &str) -> String {
             None => text.truncate(start),
         }
     }
-    let mut text = text.trim().to_string();
-    if text.starts_with("```") {
-        if let Some(newline) = text.find('\n') {
-            text = text[newline + 1..].to_string();
-        } else {
-            text.clear();
-        }
-    }
-    text = normalize_lines(&text);
-    // Clôture finale, éventuellement démasquée par le retrait d'un séparateur.
+    let mut text = normalize_lines(text.trim());
+    // Clôture collée à la fin de la dernière ligne, que le filtrage ligne à
+    // ligne ne voit pas.
     while let Some(stripped) = text.trim_end().strip_suffix("```") {
         text = normalize_lines(stripped);
     }
-    text
+    drop_preamble(&text)
 }
 
 #[cfg(test)]
@@ -339,7 +366,10 @@ mod tests {
         assert!(direct
             .user
             .starts_with("Rédige un seul compte-rendu global en Markdown"));
-        assert!(direct.user.ends_with("Transcription : Bonjour."));
+        assert!(direct.user.contains("Transcription : Bonjour."));
+        // Le rappel ferme le prompt : les instructions ne sont plus seulement
+        // en tête d'un texte de plusieurs milliers de tokens.
+        assert!(direct.user.ends_with(TEMPLATE_REMINDER));
 
         let notes = build_notes_messages("texte", 2, 3);
         assert_eq!(notes.system, SYSTEM_PROMPT);
@@ -356,13 +386,24 @@ mod tests {
             .starts_with("Voici les notes prises sur les 2 parties d'un enregistrement."));
         assert!(final_.user.contains("rédige un seul compte-rendu global"));
         assert!(final_.user.contains("Partie 1 :\n- a\n\nPartie 2 :\n- b"));
+        assert!(final_.user.ends_with(TEMPLATE_REMINDER));
+    }
+
+    /// Fidélité : le modèle n'a le droit d'écrire un chiffre, une date, un nom
+    /// ou un montant que s'il figure dans la transcription.
+    #[test]
+    fn the_system_prompt_forbids_invented_facts() {
+        assert!(SYSTEM_PROMPT.contains(
+            "N'indique une date, un chiffre, un nom ou un montant que s'il figure explicitement dans la transcription ; en cas de doute, omets-le."
+        ));
+        assert!(TEMPLATE_REMINDER.contains("sans rien inventer"));
     }
 
     #[test]
     fn prompts_forbid_several_reports_separators_and_fences() {
         for constraint in [
             "un seul compte-rendu global",
-            "250 à 450 mots",
+            "d'au plus 450 mots (moins si l'enregistrement est court)",
             "une seule ligne `# `",
             "ne reproduis pas les parties une par une",
             "`---`",
@@ -382,7 +423,8 @@ mod tests {
         assert!(STRICT_REMINDER.contains("une seule ligne `# `"));
         assert!(STRICT_REMINDER.contains("`---`"));
         assert!(CONCISE_REMINDER.contains("coupée car trop longue"));
-        assert!(CONCISE_REMINDER.contains("250 à 450 mots"));
+        assert!(CONCISE_REMINDER.contains("en 450 mots au maximum"));
+        assert!(!CONCISE_REMINDER.contains("250"));
 
         let notes = build_notes_messages("texte", 1, 4);
         assert!(notes.user.contains("25 puces maximum, une ligne par puce"));
@@ -507,6 +549,34 @@ mod tests {
         );
         assert_eq!(check_template(&cleaned), Ok(()));
         assert_eq!(clean_output(&cleaned), cleaned, "nettoyage idempotent");
+    }
+
+    /// Le modèle préface parfois son compte-rendu (« Voici le compte-rendu : »)
+    /// et l'enveloppe dans un bloc de code : les deux partent, où qu'ils soient.
+    #[test]
+    fn output_cleaning_drops_a_preamble_and_fences_anywhere() {
+        let raw = "Voici le compte-rendu :\n\n```markdown\n# Titre\n\n## Résumé\nx\n\n## Points clés\n- y\n```\n";
+        let cleaned = clean_output(raw);
+        assert!(cleaned.starts_with("# Titre"), "{cleaned}");
+        assert!(!cleaned.contains("```"), "{cleaned}");
+        assert!(!cleaned.contains("Voici le compte-rendu"), "{cleaned}");
+        assert_eq!(check_template(&cleaned), Ok(()));
+        assert_eq!(clean_output(&cleaned), cleaned, "nettoyage idempotent");
+
+        // Un bloc de code au milieu du compte-rendu part aussi.
+        assert_eq!(
+            clean_output("# T\n## Résumé\nx\n```\n## Points clés\n- y\n```"),
+            "# T\n## Résumé\nx\n## Points clés\n- y"
+        );
+        // Une sortie déjà propre est rendue telle quelle.
+        assert_eq!(clean_output(GOOD), GOOD.trim());
+        // Sans ligne `# `, rien n'est retiré : `check_template` dira qu'il
+        // manque un titre plutôt que de laisser disparaître le texte.
+        assert_eq!(clean_output("Un texte sans titre."), "Un texte sans titre.");
+        assert_eq!(
+            check_template(&clean_output("Un texte sans titre.")),
+            Err(TemplateIssue::MissingTitle)
+        );
     }
 
     #[test]

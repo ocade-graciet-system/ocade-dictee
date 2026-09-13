@@ -235,6 +235,8 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
+    use super::super::prompt::TEMPLATE_REMINDER;
+
     const GOOD: &str = "# Titre\n\n## Résumé\nPhrase.\n\n## Points clés\n- point\n";
     const BAD: &str = "Voici un résumé sans structure.";
 
@@ -329,7 +331,8 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert!(calls[0]
             .0
-            .ends_with("Transcription : Bonjour à tous. Merci."));
+            .contains("Transcription : Bonjour à tous. Merci."));
+        assert!(calls[0].0.ends_with(TEMPLATE_REMINDER));
         assert_eq!(calls[0].1, MAX_TOKENS_SUMMARY);
     }
 

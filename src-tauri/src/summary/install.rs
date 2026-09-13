@@ -1207,7 +1207,7 @@ mod tests {
 
     /// Avec la vraie archive de la plateforme, extrait et exécute réellement
     /// `llama-server --version`. Exécution manuelle :
-    /// `OCADE_LLAMA_ARCHIVE=<chemin de l'archive> cargo test summary::install::real_archive -- --ignored --nocapture`.
+    /// `OCADE_LLAMA_ARCHIVE=<chemin> cargo test --lib summary::install::tests::real_archive -- --ignored --nocapture`.
     #[test]
     #[ignore = "archive réelle du moteur (OCADE_LLAMA_ARCHIVE) : exécution manuelle"]
     fn real_archive_extracts_and_runs_when_provided() {

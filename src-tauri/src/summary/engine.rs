@@ -832,7 +832,7 @@ mod tests {
     /// Passe complète avec le vrai `llama-server`, le vrai modèle et une vraie
     /// transcription du spike (liens symboliques : rien n'est copié).
     /// Exécution manuelle :
-    /// `cargo test summary::engine::real_engine -- --ignored --nocapture`.
+    /// `cargo test --lib summary::engine::tests::real_engine -- --ignored --nocapture`.
     #[cfg(unix)]
     #[tokio::test]
     #[ignore = "moteur et modèle réels (≈2 Go) : exécution manuelle"]
