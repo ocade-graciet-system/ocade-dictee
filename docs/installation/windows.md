@@ -1,6 +1,6 @@
 # Installation sur Windows
 
-**Version minimale :** Windows 10 (64 bits). **Fichier :** `OCADE.Dictee_…_x64-setup.exe` — seule version publiée ; elle fonctionne aussi sur Windows ARM, via émulation.
+**Version minimale :** Windows 10 (64 bits) ; 8 Go de mémoire recommandés au minimum pour le résumé. **Fichier :** `OCADE.Dictee_…_x64-setup.exe` — seule version publiée ; elle fonctionne aussi sur Windows ARM, via émulation.
 
 ## 1. Installer — avertissement SmartScreen (application non signée)
 
@@ -56,11 +56,20 @@ L'onglet **Fichier** transcrit aussi un fichier déjà enregistré, sans passer 
 3. Pour un premier fichier dans un format qu'elle ne lit pas directement (Opus/WhatsApp, 3GP, WMA, WebM…), l'application télécharge un outil de conversion (45 à 80 Mo ; une connexion Internet est nécessaire à ce moment-là). Ce téléchargement n'a lieu qu'une seule fois.
 4. Le texte obtenu peut être exporté au format Markdown.
 
-## 7. Au quotidien
+## 7. Résumer un enregistrement
+
+Après une transcription (ou en rouvrant une entrée de l'historique), le bouton **Résumer** de l'onglet **Fichier** produit un compte-rendu en français : un titre, un résumé, les points clés et, s'il y en a, les décisions et actions.
+
+1. Au premier usage, l'application télécharge une seule fois le moteur de résumé et son modèle (environ 2 Go ; une connexion Internet est nécessaire à ce moment-là). Le téléchargement peut être annulé et reprend là où il s'était arrêté. Un antivirus peut analyser ces fichiers pendant quelques minutes.
+2. Le compte-rendu est calculé entièrement sur votre PC : rien n'est envoyé sur Internet. Temps indicatif pour 1 h d'enregistrement : 3 à 5 minutes sur un PC récent, sans carte graphique dédiée ; un enregistrement de 2 h peut prendre 10 à 15 minutes.
+3. **Copier le compte-rendu** le place dans le presse-papier avec sa mise en forme (Word, Outlook, OneNote…) ; **Enregistrer sous…** produit un fichier Markdown contenant la transcription puis le compte-rendu.
+4. Le compte-rendu est conservé avec l'entrée dans l'historique de l'onglet **Fichier** ; **Résumer** permet de le recalculer.
+
+## 8. Au quotidien
 
 - L'application démarre avec Windows, masquée ; son icône se trouve dans la zone de notification (près de l'horloge, parfois sous la flèche **^**). **Paramètres…** affiche la fenêtre des paramètres.
 - Les mises à jour sont automatiques : au lancement, puis toutes les 24 heures, jamais pendant une dictée. Un écran « Mise à jour vers la version X » s'affiche, puis l'application redémarre seule.
 
 ## Désinstaller
 
-Ouvrez **Paramètres → Applications → Applications installées → OCADE Dictée → Désinstaller**, puis supprimez `%APPDATA%\com.ocade.handy` (modèle, 512 Mo).
+Ouvrez **Paramètres → Applications → Applications installées → OCADE Dictée → Désinstaller**, puis supprimez `%APPDATA%\com.ocade.handy` (modèles et outils : 512 Mo, jusqu'à 2,7 Go si le résumé a été utilisé).

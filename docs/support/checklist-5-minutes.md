@@ -17,6 +17,14 @@
 4. **Message « le système a refusé de l'enregistrer »** : rare. Sur macOS et Windows, l'enregistrement aboutit presque toujours ; ce message concerne surtout Linux, où l'environnement de bureau peut refuser une combinaison déjà prise. Choisissez une autre combinaison, ou l'un des quatre raccourcis de la liste.
 5. **Aucun raccourci ne fonctionne** : vérifiez l'autorisation Accessibilité (macOS, voir la case ci-dessus) puis relancez l'application.
 
+## Résumé d'un enregistrement (onglet Fichier)
+
+- **Téléchargement bloqué ou interrompu** : vérifiez la connexion Internet puis cliquez à nouveau sur **Résumer** ; le téléchargement reprend là où il s'était arrêté. Sur Windows, un antivirus peut analyser le fichier de 2 Go pendant plusieurs minutes au premier usage.
+- **« Le moteur de résumé n'a pas pu démarrer »** : relancez l'application puis réessayez ; si le problème persiste, relancez en mode débogage (ci-dessous) et lisez les lignes `llama-server` du journal (onglet Débogage).
+- **« Mémoire insuffisante »** : fermez les applications gourmandes (navigateur avec de nombreux onglets, visioconférence) puis réessayez ; le résumé demande 3 Go de mémoire disponible.
+- **Lenteur** : le résumé attend la fin d'une dictée en cours et tourne entièrement sur la machine — 1 h d'audio ≈ 1 min sur Mac Apple Silicon, 3 à 5 min sur PC récent, jusqu'à 10 à 15 min pour 2 h sur un portable sans carte graphique. La progression est affichée et le résumé peut être annulé.
+- **Réinstaller ou supprimer** : quittez l'application, puis supprimez `bin/llama-b10930/` (moteur, ≈ 30 Mo) et/ou `models/summary/` (modèle, ≈ 2 Go) dans le dossier de données (`~/Library/Application Support/com.ocade.handy` sur macOS, `%APPDATA%\com.ocade.handy` sur Windows, `~/.local/share/com.ocade.handy` sur Linux). Ils seront retéléchargés au prochain clic sur **Résumer**.
+
 ## Mode débogage (diagnostic avancé)
 
 À utiliser si un problème résiste à la checklist ci-dessus.
