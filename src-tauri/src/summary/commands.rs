@@ -41,7 +41,7 @@ pub async fn summarize_document(
 ) -> Result<String, SummaryError> {
     let dictation_app = app.clone();
     let progress_app = app.clone();
-    let markdown = engine
+    let result = engine
         .run(
             &text,
             move || dictation_in_progress(&dictation_app),
@@ -54,7 +54,16 @@ pub async fn summarize_document(
                 .emit(&progress_app);
             },
         )
-        .await?;
+        .await;
+    // Le message d'interface et la fiche support renvoient au journal : la
+    // cause doit s'y trouver, le front ne reçoit qu'une variante d'erreur.
+    let markdown = match result {
+        Ok(markdown) => markdown,
+        Err(e) => {
+            log::error!("Résumé impossible : {e}");
+            return Err(e);
+        }
+    };
     if let Some(id) = history_id {
         if let Err(e) = file_history.update_summary(id, &markdown) {
             log::warn!("Enregistrement du compte-rendu dans l'historique impossible: {e}");

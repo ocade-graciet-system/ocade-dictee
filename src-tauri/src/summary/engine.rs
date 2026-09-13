@@ -176,18 +176,9 @@ impl SummaryEngine {
         guard.take()
     }
 
-    /// Arrête le serveur inactif depuis `idle` (contexte bloquant).
-    pub fn stop_if_idle(&self, idle: Duration) -> bool {
-        match self.take_if_idle(idle) {
-            Some(server) => {
-                server.kill();
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// Version async, pour le veilleur d'inactivité (tâche 15).
+    /// Arrête le serveur inactif depuis `idle`. Seule variante : le veilleur
+    /// d'inactivité est la seule chose qui arrête un serveur au repos, et il
+    /// tourne dans l'exécuteur async.
     pub async fn stop_if_idle_async(&self, idle: Duration) -> bool {
         match self.take_if_idle(idle) {
             Some(server) => {
@@ -200,10 +191,10 @@ impl SummaryEngine {
 
     /// Exécute un résumé complet. `is_dictating` est sondé toutes les 500 ms
     /// tant qu'une dictée est en cours ; `on_progress` reçoit chaque étape.
-    pub async fn run(
+    pub async fn run<F: Fn() -> bool + Send>(
         &self,
         text: &str,
-        is_dictating: impl Fn() -> bool + Send,
+        is_dictating: F,
         mut on_progress: impl FnMut(SummaryPhase, u32, u32) + Send,
     ) -> Result<String, SummaryError> {
         if self
@@ -275,14 +266,16 @@ impl SummaryEngine {
         }
     }
 
-    async fn run_inner(
+    /// Attend la fin d'une dictée en cours : sondage toutes les 500 ms,
+    /// annulation honorée à tout instant. Appelée avant *chaque* phase lourde
+    /// (téléchargements, démarrage du serveur, génération) et pas seulement au
+    /// début : un téléchargement dure plusieurs minutes, une dictée lancée
+    /// entre-temps se disputerait sinon le processeur avec le résumé.
+    async fn wait_for_dictation<F: Fn() -> bool + Send>(
         &self,
-        text: &str,
+        is_dictating: &F,
         cancel: &CancellationToken,
-        is_dictating: impl Fn() -> bool + Send,
-        on_progress: &mut (impl FnMut(SummaryPhase, u32, u32) + Send),
-    ) -> Result<String, SummaryError> {
-        // Jamais en concurrence avec la dictée (CPU/GPU partagés).
+    ) -> Result<(), SummaryError> {
         while is_dictating() {
             tokio::select! {
                 biased;
@@ -293,6 +286,18 @@ impl SummaryEngine {
         if cancel.is_cancelled() {
             return Err(SummaryError::Cancelled);
         }
+        Ok(())
+    }
+
+    async fn run_inner<F: Fn() -> bool + Send>(
+        &self,
+        text: &str,
+        cancel: &CancellationToken,
+        is_dictating: F,
+        on_progress: &mut (impl FnMut(SummaryPhase, u32, u32) + Send),
+    ) -> Result<String, SummaryError> {
+        // Jamais en concurrence avec la dictée (CPU/GPU partagés).
+        self.wait_for_dictation(&is_dictating, cancel).await?;
 
         let server = match self.warm_server() {
             Some(server) => server,
@@ -300,19 +305,29 @@ impl SummaryEngine {
                 // Garde mémoire seulement à froid : un serveur déjà chaud a
                 // son modèle en mémoire, la refuser ici n'en libérerait pas.
                 check_memory((self.available_memory)())?;
-                // `ensure_*` n'émet pas de 100 % quand le fichier est déjà là :
-                // la fin de phase est annoncée ici, à chaque fois.
+                // `ensure_*` n'émet pas de 100 % quand le fichier est déjà là,
+                // et la fin de phase n'est annoncée ici que si quelque chose a
+                // effectivement été téléchargé : sinon l'interface afficherait
+                // « Téléchargement du moteur… 100 % » à chaque résumé.
+                let engine_missing = self.paths.engine_exe().is_none_or(|exe| !exe.is_file());
                 let exe = ensure_engine(&self.paths, &self.client, cancel, |percent| {
                     on_progress(SummaryPhase::Engine, percent, 100)
                 })
                 .await?;
-                on_progress(SummaryPhase::Engine, 100, 100);
+                if engine_missing {
+                    on_progress(SummaryPhase::Engine, 100, 100);
+                }
+                let model_missing = !self.paths.model_file().is_file();
                 let model = ensure_model(&self.paths, &self.client, cancel, |percent| {
                     on_progress(SummaryPhase::Model, percent, 100)
                 })
                 .await?;
-                on_progress(SummaryPhase::Model, 100, 100);
+                if model_missing {
+                    on_progress(SummaryPhase::Model, 100, 100);
+                }
 
+                // Une dictée a pu commencer pendant les téléchargements.
+                self.wait_for_dictation(&is_dictating, cancel).await?;
                 on_progress(SummaryPhase::Starting, 0, 1);
                 let config = LlamaServerConfig {
                     exe,
@@ -330,6 +345,8 @@ impl SummaryEngine {
             }
         };
 
+        // Dernier contrôle avant la génération, la phase la plus gourmande.
+        self.wait_for_dictation(&is_dictating, cancel).await?;
         let completion = LlamaCompletion {
             server: &server,
             model_name: MODEL.model_name,
@@ -345,6 +362,9 @@ impl SummaryEngine {
 mod tests {
     use super::*;
     use std::path::Path;
+    use std::sync::atomic::AtomicUsize;
+
+    use super::super::assets::LLAMA_BUILD;
 
     /// Compte-rendu conforme au gabarit (§6), rendu par le faux moteur.
     const GOOD_SUMMARY: &str = "# Titre\n\n## Résumé\nPhrase.\n\n## Points clés\n- point\n";
@@ -436,7 +456,6 @@ mod tests {
     async fn idle_stop_is_a_no_op_without_server() {
         let dir = tempfile::tempdir().unwrap();
         let engine = engine(dir.path());
-        assert!(!engine.stop_if_idle(Duration::ZERO));
         assert!(!engine.stop_if_idle_async(Duration::ZERO).await);
         assert!(engine.server_pid().is_none());
         engine.stop_server();
@@ -639,25 +658,15 @@ mod tests {
         assert_eq!(summary, GOOD_SUMMARY.trim());
         let pid = engine.server_pid().expect("serveur chaud");
         let events = recorded(&events);
-        assert!(
-            events.contains(&(SummaryPhase::Engine, 100, 100)),
-            "{events:?}"
-        );
-        assert!(
-            events.contains(&(SummaryPhase::Model, 100, 100)),
-            "{events:?}"
-        );
-        assert!(
-            events.contains(&(SummaryPhase::Starting, 0, 1)),
-            "{events:?}"
-        );
-        assert!(
-            events.contains(&(SummaryPhase::Starting, 1, 1)),
-            "{events:?}"
-        );
-        assert!(
-            events.contains(&(SummaryPhase::Summarizing, 1, 1)),
-            "{events:?}"
+        // Moteur et modèle déjà installés : aucune phase de téléchargement
+        // n'est annoncée, pas même un 100 % de complaisance.
+        assert_eq!(
+            events,
+            vec![
+                (SummaryPhase::Starting, 0, 1),
+                (SummaryPhase::Starting, 1, 1),
+                (SummaryPhase::Summarizing, 1, 1),
+            ]
         );
         assert!(paths.pid_file().is_file(), "pid écrit pour l'orphelin");
 
@@ -743,6 +752,83 @@ mod tests {
         assert!(!engine.is_running());
     }
 
+    /// Une dictée qui démarre *après* le début du résumé retarde la phase
+    /// suivante (ici le démarrage du serveur) sans faire échouer le
+    /// compte-rendu : l'attente est refaite avant chaque phase lourde, et pas
+    /// seulement une fois au début.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dictation_started_mid_run_delays_the_next_phase() {
+        if engine_asset().is_none() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let paths = SummaryPaths::new(dir.path());
+        let spawns = dir.path().join("spawns");
+        let port_file = dir.path().join("port");
+        install_fake_engine(&paths, &sleeping_engine_script(&spawns, &port_file));
+        serve_fake_llama(port_file, completion_reply(GOOD_SUMMARY), false);
+        let engine = engine_with_memory(dir.path(), plenty_of_memory);
+
+        // Aucune dictée au premier sondage ; une dictée occupe la machine aux
+        // deux suivants, puis se termine.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let probe = calls.clone();
+        let is_dictating = move || (1..=2).contains(&probe.fetch_add(1, Ordering::SeqCst));
+
+        let started = Instant::now();
+        let summary = engine
+            .run("Texte de la dictée.", is_dictating, |_, _, _| {})
+            .await
+            .unwrap();
+        assert_eq!(summary, GOOD_SUMMARY.trim());
+        let waited = started.elapsed();
+        assert!(
+            waited >= 2 * DICTATION_POLL,
+            "la phase suivante n'a pas attendu la fin de la dictée ({waited:?})"
+        );
+        assert!(
+            calls.load(Ordering::SeqCst) >= 4,
+            "l'attente doit être refaite avant chaque phase lourde"
+        );
+    }
+
+    /// Annulation pendant l'attente d'une dictée commencée après le début du
+    /// résumé : `Cancelled`, et aucun serveur n'a été lancé.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancel_while_waiting_for_a_dictation_started_mid_run() {
+        if engine_asset().is_none() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let paths = SummaryPaths::new(dir.path());
+        let spawns = dir.path().join("spawns");
+        let port_file = dir.path().join("port");
+        install_fake_engine(&paths, &sleeping_engine_script(&spawns, &port_file));
+        let engine = Arc::new(engine_with_memory(dir.path(), plenty_of_memory));
+
+        // Dictée absente au premier sondage, puis interminable.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let probe = calls.clone();
+        let is_dictating = move || probe.fetch_add(1, Ordering::SeqCst) >= 1;
+
+        let runner = engine.clone();
+        let run =
+            tokio::spawn(async move { runner.run("texte", is_dictating, |_, _, _| {}).await });
+        assert!(
+            wait_until(Duration::from_secs(10), || calls.load(Ordering::SeqCst)
+                >= 2)
+            .await,
+            "l'attente de fin de dictée aurait dû s'installer"
+        );
+        engine.cancel();
+        assert_eq!(run.await.unwrap().unwrap_err(), SummaryError::Cancelled);
+        assert_eq!(spawn_count(&spawns), 0, "aucun serveur lancé");
+        assert!(engine.server_pid().is_none());
+        assert!(!engine.is_running());
+    }
+
     /// Passe complète avec le vrai `llama-server`, le vrai modèle et une vraie
     /// transcription du spike (liens symboliques : rien n'est copié).
     /// Exécution manuelle :
@@ -753,11 +839,22 @@ mod tests {
     async fn real_engine_summarizes_a_dictation() {
         let spike = std::path::PathBuf::from(std::env::var("HOME").unwrap())
             .join("Downloads/Ocade_Dictée-cargo/llm-spike");
+        if !spike.is_dir() {
+            eprintln!(
+                "sauté : dossier d'essai absent ({}) — moteur et modèle réels requis",
+                spike.display()
+            );
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let paths = SummaryPaths::new(dir.path());
         std::fs::create_dir_all(&paths.bin_dir).unwrap();
         std::fs::create_dir_all(&paths.models_dir).unwrap();
-        std::os::unix::fs::symlink(spike.join("llama-b10930"), paths.engine_dir()).unwrap();
+        std::os::unix::fs::symlink(
+            spike.join(format!("llama-{LLAMA_BUILD}")),
+            paths.engine_dir(),
+        )
+        .unwrap();
         std::os::unix::fs::symlink(
             spike.join("models").join(MODEL.file_name),
             paths.model_file(),
@@ -791,11 +888,10 @@ mod tests {
             Err(other) => panic!("{other:?}"),
         }
         let events = recorded(&events);
+        // Moteur et modèle déjà en place : aucune phase de téléchargement.
         assert_eq!(
             events,
             vec![
-                (SummaryPhase::Engine, 100, 100),
-                (SummaryPhase::Model, 100, 100),
                 (SummaryPhase::Starting, 0, 1),
                 (SummaryPhase::Starting, 1, 1),
                 (SummaryPhase::Summarizing, 1, 1),

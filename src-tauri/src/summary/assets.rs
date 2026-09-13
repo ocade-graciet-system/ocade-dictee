@@ -80,6 +80,22 @@ pub fn engine_asset() -> Option<&'static EngineAsset> {
     engine_asset_for(std::env::consts::OS, std::env::consts::ARCH)
 }
 
+/// La version de macOS donnée (« 14.5 », « 13.3.1 », « 26.0 ») permet-elle de
+/// lancer le moteur ? Les binaires llama.cpp b10930 épinglés ci-dessus (arm64
+/// comme x64) portent `LC_BUILD_VERSION minos 13.3`, alors que l'application
+/// démarre dès macOS 10.15. `None` quand la chaîne n'est pas analysable : la
+/// garde est alors ignorée plutôt que bloquante.
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_version_supports_engine(version: &str) -> Option<bool> {
+    let mut parts = version.trim().split('.');
+    let major: u32 = parts.next()?.trim().parse().ok()?;
+    let minor: u32 = match parts.next() {
+        Some(minor) => minor.trim().parse().ok()?,
+        None => 0,
+    };
+    Some(major > 13 || (major == 13 && minor >= 3))
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ModelAsset {
     pub file_name: &'static str,
@@ -160,6 +176,18 @@ mod tests {
             MODEL.size_bytes < 2 * 1024 * 1024 * 1024,
             "Q4_K_M tient sous 2 Gio (miroir GitHub possible)"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_version_guard_matches_the_pinned_build() {
+        assert_eq!(macos_version_supports_engine("12.7.6"), Some(false));
+        assert_eq!(macos_version_supports_engine("13.2"), Some(false));
+        assert_eq!(macos_version_supports_engine("13.3"), Some(true));
+        assert_eq!(macos_version_supports_engine("13.3.1"), Some(true));
+        assert_eq!(macos_version_supports_engine("14.5"), Some(true));
+        assert_eq!(macos_version_supports_engine("26.0"), Some(true));
+        assert_eq!(macos_version_supports_engine("abc"), None);
     }
 
     #[test]

@@ -271,13 +271,14 @@ fn run_version_check_with_timeout(
     cancel: Option<&CancellationToken>,
 ) -> Result<(), VersionCheckFailure> {
     let mut command = std::process::Command::new(exe);
-    // Sorties capturées (jamais sur la console de l'app) et lues après la fin
-    // du processus : `--version` n'écrit que deux lignes, et un binaire qui
-    // noierait ses tuyaux serait de toute façon arrêté par l'échéance.
+    // `--version` écrit sur stderr ; stdout part au néant plutôt que dans un
+    // tube que personne ne draine (un tube plein bloquerait le processus).
+    // stderr est lu après la fin du processus : un binaire qui noierait son
+    // tube serait de toute façon arrêté par l'échéance.
     command
         .arg("--version")
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());
     // Le dossier du binaire est le dossier de travail (DLL voisines sur
     // Windows) ; un parent vide (`exe` sans dossier) n'en est pas un.
@@ -300,10 +301,9 @@ fn run_version_check_with_timeout(
             Ok(None) => {}
             Err(e) => {
                 kill_child(&mut child);
-                return Err(VersionCheckFailure::Detail(format!(
-                    "attente de {}: {e}",
-                    exe.display()
-                )));
+                let detail = format!("attente de {}: {e}", exe.display());
+                warn_version_check(&detail, &read_stderr(&mut child));
+                return Err(VersionCheckFailure::Detail(detail));
             }
         }
         if cancel.is_some_and(|cancel| cancel.is_cancelled()) {
@@ -313,6 +313,10 @@ fn run_version_check_with_timeout(
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
             kill_child(&mut child);
+            warn_version_check(
+                &VersionCheckFailure::TimedOut.detail(),
+                &read_stderr(&mut child),
+            );
             return Err(VersionCheckFailure::TimedOut);
         }
         std::thread::sleep(left.min(VERSION_CHECK_POLL));
@@ -320,15 +324,33 @@ fn run_version_check_with_timeout(
     if status.success() {
         return Ok(());
     }
+    let stderr = read_stderr(&mut child);
+    let detail = format!(
+        "`llama-server --version` a renvoyé {:?}: {stderr}",
+        status.code()
+    );
+    warn_version_check(&detail, &stderr);
+    Err(VersionCheckFailure::Detail(detail))
+}
+
+/// Sortie d'erreur du processus (vide si le tube n'est plus disponible).
+fn read_stderr(child: &mut std::process::Child) -> String {
     let mut stderr = String::new();
     if let Some(mut piped) = child.stderr.take() {
         let _ = piped.read_to_string(&mut stderr);
     }
-    Err(VersionCheckFailure::Detail(format!(
-        "`llama-server --version` a renvoyé {:?}: {}",
-        status.code(),
-        stderr.trim()
-    )))
+    stderr.trim().to_string()
+}
+
+/// Journalise l'échec du contrôle `--version` avec la sortie d'erreur du
+/// moteur : c'est le seul endroit où la cause réelle (bibliothèque manquante,
+/// binaire refusé) reste lisible pour le support.
+fn warn_version_check(detail: &str, stderr: &str) {
+    if stderr.is_empty() {
+        log::warn!("Contrôle du moteur de résumé échoué : {detail}");
+    } else {
+        log::warn!("Contrôle du moteur de résumé échoué : {detail}\n{stderr}");
+    }
 }
 
 /// Tue le processus et le récolte : pas de zombie derrière une échéance ou une
@@ -358,6 +380,24 @@ async fn check_engine_version(exe: &Path, cancel: &CancellationToken) -> Result<
             detail: format!("contrôle --version interrompu: {e}"),
         }),
     }
+}
+
+/// Pré-vol macOS, avant tout téléchargement : les binaires llama.cpp épinglés
+/// exigent macOS 13.3 alors que l'application démarre dès 10.15. Sur une
+/// version antérieure le moteur ne se lancerait pas — inutile de télécharger
+/// 2,2 Go pour échouer ensuite. Version illisible ou absente : on continue.
+#[cfg(target_os = "macos")]
+fn check_macos_version() -> Result<(), SummaryError> {
+    let Some(version) = sysinfo::System::os_version() else {
+        return Ok(());
+    };
+    if super::assets::macos_version_supports_engine(&version) == Some(false) {
+        let detail =
+            "macOS 13.3 ou plus récent est requis pour le résumé (moteur llama.cpp)".to_string();
+        log::error!("{detail} (macOS {version} détecté)");
+        return Err(SummaryError::EngineStartFailed { detail });
+    }
+    Ok(())
 }
 
 fn engine_asset_or_unsupported() -> Result<&'static EngineAsset, SummaryError> {
@@ -402,6 +442,8 @@ pub async fn ensure_engine(
     cancel: &CancellationToken,
     on_progress: impl FnMut(u32),
 ) -> Result<PathBuf, SummaryError> {
+    #[cfg(target_os = "macos")]
+    check_macos_version()?;
     let asset = engine_asset_or_unsupported()?;
     ensure_engine_from(asset, paths, client, cancel, on_progress).await
 }
@@ -1163,11 +1205,14 @@ mod tests {
         assert_eq!(path, paths.models_dir.join("m.gguf"));
     }
 
-    /// Avec la vraie archive de la plateforme (OCADE_LLAMA_ARCHIVE=<chemin>),
-    /// extrait et exécute réellement `llama-server --version`. Silencieux sinon.
+    /// Avec la vraie archive de la plateforme, extrait et exécute réellement
+    /// `llama-server --version`. Exécution manuelle :
+    /// `OCADE_LLAMA_ARCHIVE=<chemin de l'archive> cargo test summary::install::real_archive -- --ignored --nocapture`.
     #[test]
+    #[ignore = "archive réelle du moteur (OCADE_LLAMA_ARCHIVE) : exécution manuelle"]
     fn real_archive_extracts_and_runs_when_provided() {
         let Ok(archive) = std::env::var("OCADE_LLAMA_ARCHIVE") else {
+            eprintln!("sauté : OCADE_LLAMA_ARCHIVE non défini");
             return;
         };
         let asset = engine_asset().expect("plateforme prise en charge");

@@ -243,10 +243,10 @@ impl LlamaServer {
     }
 
     /// Arrêt immédiat (kill + wait) ; idempotent. Le fichier pid n'est
-    /// retiré qu'au premier appel effectif (celui qui trouve un enfant) :
-    /// un second `kill()`/`Drop` ne doit pas effacer le fichier pid d'un
-    /// serveur de remplacement qui aurait réutilisé le même chemin entre
-    /// temps.
+    /// retiré qu'au premier appel effectif (celui qui trouve un enfant) et
+    /// seulement s'il porte encore *notre* pid : un second `kill()`/`Drop`,
+    /// ou un arrêt concurrent au démarrage d'un serveur de remplacement qui a
+    /// réutilisé le même chemin, ne doit pas effacer le fichier pid de l'autre.
     pub fn kill(&self) {
         let mut guard = lock(&self.child);
         if let Some(mut child) = guard.take() {
@@ -255,8 +255,18 @@ impl LlamaServer {
             let _ = child.wait();
             log::info!("llama-server arrêté (pid {})", self.pid);
             if let Some(pid_file) = &self.pid_file {
-                let _ = std::fs::remove_file(pid_file);
+                self.remove_own_pid_file(pid_file);
             }
+        }
+    }
+
+    /// Retire le fichier pid s'il nomme bien ce serveur. Un fichier illisible
+    /// (déjà retiré, par exemple) ou portant un autre pid est laissé en place.
+    fn remove_own_pid_file(&self, pid_file: &Path) {
+        let ours =
+            std::fs::read_to_string(pid_file).is_ok_and(|text| text.trim() == self.pid.to_string());
+        if ours {
+            let _ = std::fs::remove_file(pid_file);
         }
     }
 }
@@ -627,6 +637,48 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn kill_keeps_a_pid_file_that_names_another_server() {
+        // Course veilleur / nouveau résumé : le veilleur tue le serveur
+        // inactif pendant qu'un résumé qui démarre a déjà écrit le pid de son
+        // propre serveur dans le même fichier. Le `kill()` du premier ne doit
+        // pas effacer le fichier pid du second : sans lui, un serveur survivant
+        // à une fermeture brutale deviendrait introuvable au démarrage suivant.
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("llama-server");
+        std::fs::write(&exe, b"#!/bin/sh\nexec sleep 30\n").unwrap();
+        super::super::install::set_executable(&exe).unwrap();
+        let pid_file = dir.path().join("server.pid");
+
+        let mut command = Command::new(&exe);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        let child = command.spawn().unwrap();
+        let pid = child.id();
+        let server = LlamaServer {
+            child: Mutex::new(Some(child)),
+            pid,
+            port: 4242,
+            api_key: "k".into(),
+            stderr_tail: Arc::new(Mutex::new(VecDeque::new())),
+            pid_file: Some(pid_file.clone()),
+        };
+        // Le fichier pid porte celui d'un autre serveur.
+        let other_pid = pid + 1;
+        std::fs::write(&pid_file, other_pid.to_string()).unwrap();
+
+        server.kill();
+        assert!(!server.is_alive());
+        assert_eq!(
+            std::fs::read_to_string(&pid_file).unwrap(),
+            other_pid.to_string(),
+            "le fichier pid d'un autre serveur a été effacé"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn confirm_no_port_squatter_rejects_a_process_dead_right_after_health() {
         // `/health` a répondu 200 mais notre processus est déjà mort : un
         // autre service occupait le port (fenêtre TOCTOU de `free_port`), ou
@@ -715,8 +767,10 @@ mod tests {
 
     /// Démarrage réel, sauté tant que `OCADE_LLAMA_SERVER_EXE` et
     /// `OCADE_LLAMA_MODEL` ne désignent pas un vrai moteur et un vrai modèle
-    /// (la suite ordinaire ne lance aucun binaire externe).
+    /// (la suite ordinaire ne lance aucun binaire externe). Exécution manuelle :
+    /// `OCADE_LLAMA_SERVER_EXE=<chemin> OCADE_LLAMA_MODEL=<chemin> cargo test summary::server::real_engine -- --ignored --nocapture`.
     #[tokio::test]
+    #[ignore = "moteur et modèle réels (OCADE_LLAMA_SERVER_EXE / OCADE_LLAMA_MODEL) : exécution manuelle"]
     async fn real_engine_starts_serves_health_and_stops() {
         let (Ok(exe), Ok(model)) = (
             std::env::var("OCADE_LLAMA_SERVER_EXE"),
