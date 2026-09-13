@@ -256,6 +256,20 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         log::warn!("Purge de l'historique impossible: {}", e);
     }
     app_handle.manage(file_history_manager);
+
+    // Compte-rendu local (plan 09) : moteur llama.cpp lancé à la demande,
+    // survivant d'une fermeture brutale tué au démarrage, arrêt après 10 min
+    // d'inactivité.
+    let summary_engine = Arc::new(
+        summary::engine::SummaryEngine::new(summary::install::SummaryPaths::new(
+            &portable::app_data_dir(app_handle).expect("Failed to resolve app data dir"),
+        ))
+        .expect("Failed to initialize summary engine"),
+    );
+    summary_engine.cleanup_orphan();
+    summary::commands::spawn_idle_watchdog(summary_engine.clone());
+    app_handle.manage(summary_engine);
+
     app_handle.manage(tray::CurrentTrayIconState::new());
 
     // Note: Shortcuts are NOT initialized here.
@@ -689,8 +703,9 @@ pub fn run(cli_args: CliArgs) {
             commands::video_download::download_entry_video,
             commands::video_download::export_entry_video,
             commands::video_download::cancel_video_download,
-            commands::format::format_document,
-            commands::format::format_ready,
+            summary::commands::summarize_document,
+            summary::commands::cancel_summary,
+            summary::commands::summary_status,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![
@@ -699,6 +714,7 @@ pub fn run(cli_args: CliArgs) {
             managers::transcription::StreamPhaseEvent,
             commands::file_transcription::FileTranscriptionProgress,
             commands::video_download::VideoDownloadProgress,
+            summary::SummaryProgress,
         ]);
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
@@ -979,8 +995,14 @@ pub fn run(cli_args: CliArgs) {
             tauri::RunEvent::Reopen { .. } => {
                 show_main_window(app);
             }
-            // Teardown transcribe.cpp before exit
+            // Teardown transcribe.cpp before exit ; le serveur llama.cpp du
+            // compte-rendu (processus enfant) est tué ici, sinon il survivrait
+            // à l'application.
             tauri::RunEvent::Exit => {
+                if let Some(engine) = app.try_state::<Arc<summary::engine::SummaryEngine>>() {
+                    engine.cancel();
+                    engine.stop_server();
+                }
                 if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                     let _ = tm.unload_model();
                 }

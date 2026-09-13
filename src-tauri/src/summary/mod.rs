@@ -88,7 +88,7 @@ pub enum SummaryPhase {
     Engine,
     /// Téléchargement du modèle ; `current` = pourcentage (0-100), `total` = 100.
     Model,
-    /// Démarrage du serveur (chargement du modèle en mémoire) ; 0/0.
+    /// Démarrage du serveur (chargement du modèle en mémoire) ; 0/1 puis 1/1.
     Starting,
     /// Résumé ; `current` = partie en cours, `total` = nombre de parties.
     Summarizing,

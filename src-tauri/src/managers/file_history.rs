@@ -132,10 +132,6 @@ impl FileHistoryManager {
 
     /// Mémorise le compte-rendu Markdown d'une entrée (recalculable : la
     /// nouvelle valeur remplace l'ancienne).
-    // Appelée par `summary::commands::summarize_document` (tâche 15) : pas
-    // encore de site d'appel dans le crate tant que cette tâche n'est pas
-    // faite, d'où l'allow ciblé plutôt qu'un avertissement `dead_code`.
-    #[allow(dead_code)]
     pub fn update_summary(&self, id: i64, summary_markdown: &str) -> Result<()> {
         let updated = self.open()?.execute(
             "UPDATE file_transcription_history SET summary_markdown = ?1 WHERE id = ?2",

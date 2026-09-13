@@ -1,7 +1,6 @@
 pub mod audio;
 pub mod file_history;
 pub mod file_transcription;
-pub mod format;
 pub mod history;
 pub mod models;
 pub mod transcription;
