@@ -37,9 +37,6 @@ pub struct ReasoningConfig {
 /// Paramètres d'échantillonnage optionnels (plan 09 : température basse et
 /// plafond de tokens pour le compte-rendu local). Absents du JSON quand `None`,
 /// pour que les fournisseurs distants gardent exactement le corps d'aujourd'hui.
-// `dead_code` : consommé par l'orchestration du résumé (tâche 12 du plan 09) ;
-// l'attribut tombe avec son premier appelant.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ChatSamplingOptions {
     pub temperature: Option<f64>,
@@ -54,8 +51,6 @@ pub struct ChatSamplingOptions {
 #[derive(Debug, Clone, Default)]
 pub struct ChatCompletionOutcome {
     pub content: Option<String>,
-    // `dead_code` : lu par la tâche 12 du plan 09, pas encore ici.
-    #[allow(dead_code)]
     pub truncated: bool,
 }
 
@@ -310,7 +305,6 @@ pub async fn send_chat_completion_with_schema(
 /// Variante sans schéma avec paramètres d'échantillonnage explicites (plan 09).
 /// Rend aussi la troncature, que le résumé local utilise pour signaler une
 /// tranche coupée par `max_tokens`.
-#[allow(dead_code)]
 pub async fn send_chat_completion_with_options(
     provider: &PostProcessProvider,
     api_key: String,
