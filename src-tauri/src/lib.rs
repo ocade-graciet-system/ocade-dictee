@@ -17,6 +17,7 @@ pub mod portable;
 mod settings;
 mod shortcut;
 mod signal_handle;
+pub mod summary;
 mod transcription_coordinator;
 mod tray;
 mod tray_i18n;
