@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OCADE Dictée",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "identifier": "com.ocade.handy",
   "build": {
     "beforeDevCommand": "bun scripts/fetch-yt-dlp.ts && bun run dev",
