@@ -1,6 +1,6 @@
 # Installation sur Linux
 
-**Fichier :** `OCADE.Dictee_…_amd64.AppImage` — seul format distribué pour Linux (x64, toutes distributions) ; pas de paquet `.deb` ni `.rpm`. Session **X11** recommandée (sous Wayland, l'affichage de la fenêtre d'enregistrement et le collage du texte peuvent être limités) ; 8 Go de mémoire recommandés au minimum pour le résumé.
+**Fichier :** `OCADE.Dictee_…_amd64.AppImage` — seul format distribué pour Linux (x64, Ubuntu 22.04, Debian 12 ou plus récents : glibc 2.34, OpenSSL 3) ; pas de paquet `.deb` ni `.rpm`. Session **X11** recommandée (sous Wayland, l'affichage de la fenêtre d'enregistrement et le collage du texte peuvent être limités) ; 8 Go de mémoire recommandés au minimum pour le résumé.
 
 ## 1. Installer
 
@@ -46,9 +46,9 @@ L'onglet **Fichier** transcrit aussi un fichier déjà enregistré, sans passer 
 
 Après une transcription (ou en rouvrant une entrée de l'historique), le bouton **Résumer** de l'onglet **Fichier** produit un compte-rendu en français : un titre, un résumé, les points clés et, s'il y en a, les décisions et actions.
 
-1. Au premier usage, l'application télécharge une seule fois le moteur de résumé et son modèle (environ 2 Go ; une connexion Internet est nécessaire à ce moment-là). Le téléchargement peut être annulé et reprend là où il s'était arrêté. Un antivirus peut analyser ces fichiers pendant quelques minutes.
+1. Au premier usage, l'application télécharge une seule fois le moteur de résumé et son modèle (environ 2,2 Go ; une connexion Internet est nécessaire à ce moment-là). Le téléchargement peut être annulé et reprend là où il s'était arrêté. Un antivirus peut analyser ces fichiers pendant quelques minutes.
 2. Le compte-rendu est calculé entièrement sur votre ordinateur : rien n'est envoyé sur Internet. Temps indicatif pour 1 h d'enregistrement : 3 à 5 minutes sur un ordinateur récent, sans carte graphique dédiée ; un enregistrement de 2 h peut prendre 10 à 15 minutes.
-3. **Copier le compte-rendu** le place dans le presse-papier avec sa mise en forme (LibreOffice, Thunderbird…) ; **Enregistrer sous…** produit un fichier Markdown contenant la transcription puis le compte-rendu.
+3. **Copier le compte-rendu** le place dans le presse-papier avec sa mise en forme (LibreOffice, Thunderbird…) ; **Enregistrer sous…** produit un fichier Markdown contenant la transcription, une ligne de séparation `---`, puis le compte-rendu.
 4. Le compte-rendu est conservé avec l'entrée dans l'historique de l'onglet **Fichier** ; **Résumer** permet de le recalculer.
 
 ## 8. Au quotidien

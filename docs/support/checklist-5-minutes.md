@@ -19,11 +19,16 @@
 
 ## Résumé d'un enregistrement (onglet Fichier)
 
-- **Téléchargement bloqué ou interrompu** : vérifiez la connexion Internet puis cliquez à nouveau sur **Résumer** ; le téléchargement reprend là où il s'était arrêté. Sur Windows, un antivirus peut analyser le fichier de 2 Go pendant plusieurs minutes au premier usage.
+- **Téléchargement bloqué ou interrompu** : vérifiez la connexion Internet puis cliquez à nouveau sur **Résumer** ; le téléchargement reprend là où il s'était arrêté. Sur Windows, un antivirus peut analyser le fichier de 2,2 Go pendant plusieurs minutes au premier usage.
 - **« Le moteur de résumé n'a pas pu démarrer »** : relancez l'application puis réessayez ; si le problème persiste, relancez en mode débogage (ci-dessous) et lisez les lignes `llama-server` du journal (onglet Débogage).
+- **Sur Mac, le résumé nécessite macOS 13.3 ou plus récent** (l'application elle-même fonctionne dès macOS 10.15) : sur une version antérieure, le message « n'a pas pu démarrer » s'affiche immédiatement, sans téléchargement.
+- **Sous Windows, si le journal mentionne 0xC0000135 ou une DLL VCRUNTIME140 manquante** : installez le Visual C++ Redistributable 2015-2022 x64 de Microsoft, puis réessayez.
+- **Sous Linux, le moteur nécessite Ubuntu 22.04 / Debian 12 ou plus récent** (glibc 2.34, OpenSSL 3) ; sur une distribution plus ancienne, le moteur ne démarre pas.
+- **« Espace disque insuffisant : 3 Go libres sont nécessaires »** : libérez de la place sur le disque du dossier de données (moteur et modèle, plus une marge), puis réessayez.
+- **« Le compte-rendu produit est incomplet ; réessayez »** : le modèle n'a pas rendu la structure attendue ; recliquez sur **Résumer**. Si cela se répète sur le même enregistrement, relevez la ligne « Résumé impossible » du journal (onglet Débogage).
 - **« Mémoire insuffisante »** : fermez les applications gourmandes (navigateur avec de nombreux onglets, visioconférence) puis réessayez ; le résumé demande 3 Go de mémoire disponible.
 - **Lenteur** : le résumé attend la fin d'une dictée en cours et tourne entièrement sur la machine — 1 h d'audio ≈ 1 min sur Mac Apple Silicon, 3 à 5 min sur PC récent, jusqu'à 10 à 15 min pour 2 h sur un portable sans carte graphique. La progression est affichée et le résumé peut être annulé.
-- **Réinstaller ou supprimer** : quittez l'application, puis supprimez `bin/llama-b10930/` (moteur, ≈ 30 Mo) et/ou `models/summary/` (modèle, ≈ 2 Go) dans le dossier de données (`~/Library/Application Support/com.ocade.handy` sur macOS, `%APPDATA%\com.ocade.handy` sur Windows, `~/.local/share/com.ocade.handy` sur Linux). Ils seront retéléchargés au prochain clic sur **Résumer**.
+- **Réinstaller ou supprimer** : quittez l'application, puis supprimez `bin/llama-b10930/` (moteur, 27 à 45 Mo selon le système) et/ou `models/summary/` (modèle, ≈ 2,2 Go) dans le dossier de données (`~/Library/Application Support/com.ocade.handy` sur macOS, `%APPDATA%\com.ocade.handy` sur Windows, `~/.local/share/com.ocade.handy` sur Linux). Ils seront retéléchargés au prochain clic sur **Résumer**.
 
 ## Mode débogage (diagnostic avancé)
 

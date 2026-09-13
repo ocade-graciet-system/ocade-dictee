@@ -1,6 +1,6 @@
 # Installation sur macOS
 
-**Version minimale :** macOS 10.15 ; 8 Go de mémoire recommandés au minimum pour le résumé. **Fichier :** `OCADE.Dictee_…_aarch64.dmg` (Mac Apple Silicon : M1, M2, M3, M4…) ou `…_x64.dmg` (Mac Intel). Pour savoir lequel utiliser : menu → **À propos de ce Mac** → ligne **Puce** (Apple M…) ou **Processeur** (Intel).
+**Version minimale :** macOS 10.15, et macOS 13.3 ou plus récent pour le résumé (l'application elle-même fonctionne dès macOS 10.15) ; 8 Go de mémoire recommandés au minimum pour le résumé. **Fichier :** `OCADE.Dictee_…_aarch64.dmg` (Mac Apple Silicon : M1, M2, M3, M4…) ou `…_x64.dmg` (Mac Intel). Pour savoir lequel utiliser : menu → **À propos de ce Mac** → ligne **Puce** (Apple M…) ou **Processeur** (Intel).
 
 ## 1. Installer
 
@@ -70,9 +70,9 @@ L'onglet **Fichier** transcrit aussi un fichier déjà enregistré, sans passer 
 
 Après une transcription (ou en rouvrant une entrée de l'historique), le bouton **Résumer** de l'onglet **Fichier** produit un compte-rendu en français : un titre, un résumé, les points clés et, s'il y en a, les décisions et actions.
 
-1. Au premier usage, l'application télécharge une seule fois le moteur de résumé et son modèle (environ 2 Go ; une connexion Internet est nécessaire à ce moment-là). Le téléchargement peut être annulé et reprend là où il s'était arrêté.
-2. Le compte-rendu est calculé entièrement sur votre Mac : rien n'est envoyé sur Internet. Temps indicatif pour 1 h d'enregistrement : ≈ 1 minute sur un Mac Apple Silicon.
-3. **Copier le compte-rendu** le place dans le presse-papier avec sa mise en forme (Pages, Word, Mail, Notes…) ; **Enregistrer sous…** produit un fichier Markdown contenant la transcription puis le compte-rendu.
+1. Au premier usage, l'application télécharge une seule fois le moteur de résumé et son modèle (environ 2,2 Go ; une connexion Internet est nécessaire à ce moment-là). Le téléchargement peut être annulé et reprend là où il s'était arrêté.
+2. Le compte-rendu est calculé entièrement sur votre Mac : rien n'est envoyé sur Internet. Temps indicatif pour 1 h d'enregistrement : ≈ 1 minute sur un Mac Apple Silicon, 2 à 4 minutes sur un Mac Intel.
+3. **Copier le compte-rendu** le place dans le presse-papier avec sa mise en forme (Pages, Word, Mail, Notes…) ; **Enregistrer sous…** produit un fichier Markdown contenant la transcription, une ligne de séparation `---`, puis le compte-rendu.
 4. Le compte-rendu est conservé avec l'entrée dans l'historique de l'onglet **Fichier** ; **Résumer** permet de le recalculer.
 
 ## 9. Au quotidien

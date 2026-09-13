@@ -27,7 +27,7 @@ Procédures pas à pas pour accompagner l'installation sur le poste d'un client 
 
 1. Choisissez votre raccourci dans **Général** (4 propositions, identiques sur les 3 systèmes).
 2. Maintenez-le, parlez, relâchez : le texte apparaît dans l'application active.
-3. Onglet **Fichier** : transcription d'un fichier audio/vidéo ou d'une URL, compte-rendu local (« Résumer », téléchargement unique d'environ 2 Go), export Markdown.
+3. Onglet **Fichier** : transcription d'un fichier audio/vidéo ou d'une URL, compte-rendu local (« Résumer », téléchargement unique d'environ 2,2 Go), export Markdown.
 
 ## Développement
 

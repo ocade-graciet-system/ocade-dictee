@@ -56,7 +56,17 @@ symphonia = { version = "0.5", features = ["mp3", "isomp4", "aac", "alac", "pcm"
 hound = "3.5.1"
 log = "0.4.25"
 env_filter = "0.1.0"
-tokio = "1.43.0"
+# Features déclarées explicitement plutôt qu'héritées de l'unification avec
+# hf-hub/reqwest : `macros` (#[tokio::test], select!), `rt-multi-thread`
+# (spawn, spawn_blocking), `time` (sleep, timeout) et `sync` (exigée par le
+# CancellationToken de tokio-util). Le code n'utilise ni tokio::fs, ni
+# tokio::io, ni tokio::process, ni tokio::net.
+tokio = { version = "1.43.0", features = [
+  "macros",
+  "rt-multi-thread",
+  "sync",
+  "time",
+] }
 vad-rs = { git = "https://github.com/cjpais/vad-rs", default-features = false }
 enigo = "0.6.1"
 rodio = { git = "https://github.com/cjpais/rodio.git" }
@@ -64,7 +74,8 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 tokio-util = "0.7"
 sysinfo = { version = "0.39", default-features = false, features = ["system", "disk"] }
 zip = { version = "8.6", default-features = false, features = ["deflate-flate2"] }
-rand = "0.8"
+# 0.9 : version déjà présente dans l'arbre via hf-hub (une seule copie).
+rand = "0.9"
 futures-util = "0.3"
 rustfft = "6.4.0"
 strsim = "0.11.0"

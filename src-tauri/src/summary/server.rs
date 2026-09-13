@@ -51,7 +51,7 @@ pub fn free_port() -> std::io::Result<u16> {
 /// Clé API aléatoire (32 octets, hexadécimal) : seule l'app peut parler au serveur.
 pub fn random_api_key() -> String {
     let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
