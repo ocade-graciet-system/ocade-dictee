@@ -527,8 +527,7 @@
       },
       "copy": "Copier",
       "copied": "Copié !",
-      "copyRaw": "Copier le brut",
-      "copyFormatted": "Copier la mise en forme",
+      "copyRaw": "Copier la transcription",
       "saveAs": "Enregistrer sous...",
       "saveSuccess": "Document enregistré",
       "saveError": "Échec de l'enregistrement du document",
@@ -558,13 +557,32 @@
         "saved": "Vidéo enregistrée",
         "error": "Échec du téléchargement de la vidéo"
       },
-      "format": {
-        "button": "Mettre en forme",
-        "loading": "Mise en forme en cours...",
-        "notConfiguredLink": "Ouvrir les réglages Avancé",
-        "rawTitle": "Texte brut",
-        "formattedTitle": "Texte mis en forme",
-        "errorTitle": "Échec de la mise en forme"
+      "summary": {
+        "button": "Résumer",
+        "firstUseHint": "Premier usage : téléchargement unique d'environ {{size}}.",
+        "preparingDownload": "Préparation du résumé — téléchargement unique d'environ {{size}}",
+        "preparing": "Préparation du résumé…",
+        "phase": {
+          "engine": "Téléchargement du moteur… {{current}} %",
+          "model": "Téléchargement du modèle… {{current}} %",
+          "starting": "Démarrage du moteur…",
+          "summarizing": "Résumé en cours… (partie {{current}}/{{total}})"
+        },
+        "cancel": "Annuler",
+        "transcriptionTitle": "Transcription",
+        "title": "Compte-rendu",
+        "copy": "Copier le compte-rendu",
+        "copyError": "Impossible de copier le compte-rendu",
+        "errors": {
+          "offline": "Le résumé nécessite un téléchargement unique de 2 Go. Connectez-vous à Internet puis réessayez.",
+          "diskSpace": "Espace disque insuffisant : 3 Go libres sont nécessaires ({{free}} disponibles).",
+          "memory": "Mémoire insuffisante pour lancer le résumé : fermez d'autres applications puis réessayez.",
+          "downloadFailed": "Le téléchargement a échoué ; réessayez.",
+          "checksumMismatch": "Le téléchargement a échoué ; réessayez.",
+          "engineStartFailed": "Le moteur de résumé n'a pas pu démarrer. Réessayez ; si le problème persiste, consultez le journal (onglet Débogage).",
+          "incompleteOutput": "Le compte-rendu produit est incomplet ; réessayez.",
+          "busy": "Un résumé est déjà en cours."
+        }
       }
     },
     "debug": {

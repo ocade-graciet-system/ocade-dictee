@@ -10,6 +10,8 @@
     "updater:default",
     "process:default",
     "dialog:default",
+    "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-write-html",
     "global-shortcut:allow-is-registered",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",

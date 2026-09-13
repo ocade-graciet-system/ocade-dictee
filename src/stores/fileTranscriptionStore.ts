@@ -8,6 +8,8 @@ import {
   type FileTranscriptionProgress,
   type FileTranscriptionResult,
   type Result,
+  type SummaryError,
+  type SummaryProgress,
 } from "@/bindings";
 
 // Le backend émet ce marqueur (français, indépendant de la langue UI) quand
@@ -17,6 +19,18 @@ import {
 export const CANCELLED_MARKER = "annulée par l'utilisateur";
 
 export type FileTranscriptionStatus = "idle" | "processing" | "done" | "error";
+
+/** États du compte-rendu (spec plan 09, §5). */
+export type SummaryStatus =
+  "idle" | "preparing" | "starting" | "summarizing" | "done" | "error";
+
+/** Statuts pendant lesquels un résumé occupe le moteur : bouton désactivé,
+ *  mise à jour forcée reportée, historique verrouillé. */
+export const SUMMARY_ACTIVE_STATUSES: readonly SummaryStatus[] = [
+  "preparing",
+  "starting",
+  "summarizing",
+];
 
 const getFileName = (path: string): string => {
   const parts = path.split(/[/\\]/);
@@ -39,15 +53,25 @@ interface FileTranscriptionStore {
   /** Chemin du `.md` écrit sur disque (null pour une entrée re-consultée). */
   outputPath: string | null;
   markdown: string | null;
-  formattedText: string | null;
   errorMessage: string | null;
   /** Id de l'entrée d'historique affichée (null si l'enregistrement a échoué). */
   historyId: number | null;
-  formatting: boolean;
   cancelling: boolean;
   urlInput: string;
   history: FileHistoryItem[];
   initialized: boolean;
+
+  /** Compte-rendu local (plan 09). */
+  summaryStatus: SummaryStatus;
+  summaryProgress: SummaryProgress | null;
+  /** Le résumé en cours a d'abord besoin d'un téléchargement (moteur/modèle). */
+  summaryNeedsDownload: boolean;
+  /** Moteur et modèle déjà installés (null tant que non interrogé). */
+  summaryInstalled: boolean | null;
+  /** Octets restant à télécharger, pour annoncer le téléchargement unique. */
+  summaryDownloadBytes: number;
+  summaryMarkdown: string | null;
+  summaryError: SummaryError | null;
 
   initialize: () => Promise<void>;
   setUrlInput: (value: string) => void;
@@ -55,7 +79,6 @@ interface FileTranscriptionStore {
   startUrl: (url: string) => Promise<void>;
   cancel: () => Promise<void>;
   reset: () => void;
-  format: () => Promise<{ ok: true } | { ok: false; error: string }>;
   loadHistory: () => Promise<void>;
   openHistoryEntry: (id: number) => Promise<boolean>;
   deleteHistoryEntry: (id: number) => Promise<boolean>;
@@ -63,7 +86,21 @@ interface FileTranscriptionStore {
     id: number,
   ) => Promise<{ ok: true; path: string } | { ok: false; error: string }>;
   exportVideo: (id: number, destPath: string) => Promise<boolean>;
+  refreshSummaryStatus: () => Promise<void>;
+  summarize: () => Promise<void>;
+  cancelSummary: () => Promise<void>;
 }
+
+// Remis à zéro à chaque changement de document affiché. `summaryInstalled` et
+// `summaryDownloadBytes` n'en font pas partie : ce sont des faits
+// d'installation, indépendants du document consulté.
+const EMPTY_SUMMARY = {
+  summaryStatus: "idle" as SummaryStatus,
+  summaryProgress: null,
+  summaryNeedsDownload: false,
+  summaryMarkdown: null,
+  summaryError: null,
+};
 
 export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
   set,
@@ -83,10 +120,9 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
       progress: null,
       outputPath: null,
       markdown: null,
-      formattedText: null,
       errorMessage: null,
       historyId: null,
-      formatting: false,
+      ...EMPTY_SUMMARY,
     });
 
     try {
@@ -123,14 +159,15 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
     progress: null,
     outputPath: null,
     markdown: null,
-    formattedText: null,
     errorMessage: null,
     historyId: null,
-    formatting: false,
     cancelling: false,
     urlInput: "",
     history: [],
     initialized: false,
+    ...EMPTY_SUMMARY,
+    summaryInstalled: null,
+    summaryDownloadBytes: 0,
 
     initialize: async () => {
       if (get().initialized) return;
@@ -148,7 +185,25 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
           },
         }));
       });
+      // Progression du compte-rendu : les phases de téléchargement gardent le
+      // statut « preparing », le démarrage et le résumé ont le leur. Un
+      // événement tardif — arrivé après une annulation, une erreur ou la fin —
+      // est ignoré : il ferait réapparaître l'encart d'un résumé terminé.
+      await events.summaryProgress.listen((event) => {
+        if (!SUMMARY_ACTIVE_STATUSES.includes(get().summaryStatus)) return;
+        const { phase } = event.payload;
+        set({
+          summaryProgress: event.payload,
+          summaryStatus:
+            phase === "starting"
+              ? "starting"
+              : phase === "summarizing"
+                ? "summarizing"
+                : "preparing",
+        });
+      });
       await get().loadHistory();
+      await get().refreshSummaryStatus();
     },
 
     setUrlInput: (value) => set({ urlInput: value }),
@@ -181,45 +236,10 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
         progress: null,
         outputPath: null,
         markdown: null,
-        formattedText: null,
         errorMessage: null,
         historyId: null,
-        formatting: false,
+        ...EMPTY_SUMMARY,
       });
-    },
-
-    format: async () => {
-      const { markdown, formatting, historyId } = get();
-      if (!markdown || formatting) {
-        return { ok: false as const, error: "not ready" };
-      }
-      set({ formatting: true });
-      try {
-        const result = await commands.formatDocument(markdown);
-        if (result.status !== "ok") {
-          return { ok: false as const, error: result.error };
-        }
-        set({ formattedText: result.data });
-        // Persiste la mise en forme dans l'historique pour la retrouver plus
-        // tard ; un échec ici n'invalide pas le résultat affiché.
-        if (historyId !== null) {
-          const saved = await commands.fileHistoryUpdateFormatted(
-            historyId,
-            result.data,
-          );
-          if (saved.status !== "ok") {
-            console.error("Failed to persist formatted text:", saved.error);
-          }
-        }
-        return { ok: true as const };
-      } catch (error) {
-        return {
-          ok: false as const,
-          error: error instanceof Error ? error.message : String(error),
-        };
-      } finally {
-        set({ formatting: false });
-      }
     },
 
     loadHistory: async () => {
@@ -236,7 +256,13 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
     },
 
     openHistoryEntry: async (id) => {
-      if (get().status === "processing") return false;
+      const { status, summaryStatus } = get();
+      if (
+        status === "processing" ||
+        SUMMARY_ACTIVE_STATUSES.includes(summaryStatus)
+      ) {
+        return false;
+      }
       try {
         const result = await commands.fileHistoryGet(id);
         if (result.status !== "ok" || result.data === null) {
@@ -248,12 +274,14 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
           sourceLabel: entry.source_name,
           sourceKind: entry.source_kind === "url" ? "url" : "local",
           markdown: entry.raw_text,
-          formattedText: entry.formatted_text,
           historyId: entry.id,
           outputPath: null,
           errorMessage: null,
           progress: null,
-          formatting: false,
+          ...EMPTY_SUMMARY,
+          // Compte-rendu enregistré : affiché sans recalcul.
+          summaryMarkdown: entry.summary_markdown,
+          summaryStatus: entry.summary_markdown ? "done" : "idle",
         });
         return true;
       } catch (error) {
@@ -320,6 +348,99 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
       } catch (error) {
         console.error("Failed to export video:", error);
         return false;
+      }
+    },
+
+    refreshSummaryStatus: async () => {
+      try {
+        const status = await commands.summaryStatus();
+        set({
+          summaryInstalled: status.engineReady && status.modelReady,
+          summaryDownloadBytes: status.downloadSizeBytes,
+        });
+      } catch (error) {
+        console.error("Failed to read summary status:", error);
+      }
+    },
+
+    summarize: async () => {
+      const { markdown, historyId, summaryStatus, summaryInstalled } = get();
+      if (!markdown || SUMMARY_ACTIVE_STATUSES.includes(summaryStatus)) return;
+
+      // « preparing » posé d'abord, sans attente : le bouton se désactive
+      // immédiatement et un second clic ne peut pas lancer un résumé
+      // concurrent (que le moteur refuserait par `Busy`).
+      set({
+        summaryStatus: "preparing",
+        summaryProgress: null,
+        summaryNeedsDownload: summaryInstalled === false,
+        summaryError: null,
+      });
+
+      // Annonce du téléchargement unique si le moteur ou le modèle manque.
+      // Statut illisible : on garde la dernière valeur connue (celle
+      // d'`initialize`) plutôt que de ne rien annoncer.
+      await get().refreshSummaryStatus();
+      set({ summaryNeedsDownload: get().summaryInstalled === false });
+
+      // L'entrée affichée peut changer pendant le calcul (réouverture d'une
+      // autre entrée d'historique) : le résultat n'est affiché que s'il
+      // correspond toujours à l'entrée courante ; il est de toute façon
+      // enregistré côté backend pour `historyId`.
+      const target = historyId;
+      const stillCurrent = () => get().historyId === target;
+
+      try {
+        const result = await commands.summarizeDocument(markdown, historyId);
+        if (result.status === "ok") {
+          set({ summaryInstalled: true, summaryDownloadBytes: 0 });
+          if (stillCurrent()) {
+            set({
+              summaryStatus: "done",
+              summaryMarkdown: result.data,
+              summaryProgress: null,
+            });
+          }
+          void get().loadHistory();
+          return;
+        }
+        if (result.error.kind === "cancelled") {
+          // Retour silencieux à l'état précédent.
+          if (stillCurrent()) {
+            set({
+              summaryStatus: get().summaryMarkdown ? "done" : "idle",
+              summaryProgress: null,
+            });
+          }
+          return;
+        }
+        if (stillCurrent()) {
+          set({
+            summaryStatus: "error",
+            summaryError: result.error,
+            summaryProgress: null,
+          });
+        }
+      } catch (error) {
+        console.error("Summary failed:", error);
+        if (stillCurrent()) {
+          set({
+            summaryStatus: "error",
+            summaryError: {
+              kind: "engineStartFailed",
+              detail: error instanceof Error ? error.message : String(error),
+            },
+            summaryProgress: null,
+          });
+        }
+      }
+    },
+
+    cancelSummary: async () => {
+      try {
+        await commands.cancelSummary();
+      } catch (error) {
+        console.error("Failed to cancel summary:", error);
       }
     },
   };
