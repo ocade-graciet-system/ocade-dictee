@@ -5,7 +5,10 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
 import { ProgressBar } from "../shared";
 import { useModelStore } from "../../stores/modelStore";
-import { useFileTranscriptionStore } from "../../stores/fileTranscriptionStore";
+import {
+  SUMMARY_ACTIVE_STATUSES,
+  useFileTranscriptionStore,
+} from "../../stores/fileTranscriptionStore";
 import { commands } from "@/bindings";
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // toutes les 24 h (issue #6)
@@ -59,7 +62,7 @@ export const ForcedUpdater: React.FC = () => {
   // texte. Une préparation de modèle non plus : elle reprendrait après le
   // redémarrage, mais l'écran de préparation du premier lancement disparaîtrait
   // en plein transfert de 512 Mo. Côté page Fichier, tout est également perdu
-  // par un redémarrage : la transcription et le formatage se comptent en
+  // par un redémarrage : la transcription et le compte-rendu se comptent en
   // minutes, un téléchargement de vidéo repartirait de zéro.
   const isBusyElsewhere = async () => {
     const models = useModelStore.getState();
@@ -71,7 +74,7 @@ export const ForcedUpdater: React.FC = () => {
       Object.keys(models.verifyingModels).length > 0 ||
       Object.keys(models.extractingModels).length > 0 ||
       files.status === "processing" ||
-      files.formatting ||
+      SUMMARY_ACTIVE_STATUSES.includes(files.summaryStatus) ||
       Object.keys(files.videoDownloads).length > 0
     );
   };

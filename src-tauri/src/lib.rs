@@ -7,6 +7,7 @@ mod catalog;
 pub mod cli;
 mod clipboard;
 mod commands;
+pub mod download;
 mod helpers;
 mod input;
 mod llm_client;
@@ -16,6 +17,7 @@ pub mod portable;
 mod settings;
 mod shortcut;
 mod signal_handle;
+pub mod summary;
 mod transcription_coordinator;
 mod tray;
 mod tray_i18n;
@@ -37,7 +39,7 @@ use signal_hook::consts::{SIGUSR1, SIGUSR2};
 #[cfg(unix)]
 use signal_hook::iterator::Signals;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 use tauri::image::Image;
 pub use transcription_coordinator::TranscriptionCoordinator;
 
@@ -211,6 +213,42 @@ fn build_macos_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::W
     Menu::with_items(app, &[&app_menu, &edit_menu, &window_menu])
 }
 
+/// Moteur du compte-rendu, pour les chemins de sortie qui n'ont pas
+/// d'`AppHandle` : le hook `on_before_exit` du plugin de mise à jour est un
+/// `Fn() + Send + Sync + 'static` sans argument. Référence faible : elle ne
+/// prolonge pas la vie du moteur, que Tauri possède.
+static SUMMARY_ENGINE: OnceLock<Weak<summary::engine::SummaryEngine>> = OnceLock::new();
+
+/// Annule le résumé en cours et arrête le serveur llama.cpp. Arrêt synchrone :
+/// les appelants sont des contextes bloquants, juste avant la fin du
+/// processus, où le serveur doit être mort avant que l'on rende la main.
+fn stop_summary_engine(engine: &summary::engine::SummaryEngine) {
+    engine.cancel();
+    engine.stop_server();
+}
+
+/// Arrêt du moteur accroché au nettoyage de Tauri : la ressource est déposée
+/// dans la table de ressources de l'application, que `cleanup_before_exit()`
+/// vide juste avant la fin du processus. C'est le seul point de passage commun
+/// aux chemins qui n'émettent jamais `RunEvent::Exit` : l'installation d'une
+/// mise à jour (l'installateur NSIS de Windows termine par `process::exit(0)`)
+/// et le redémarrage (`relaunch`). Sans cela, `llama-server` survivrait à
+/// l'application, avec ses 2,7 Go de mémoire, jusqu'au prochain démarrage.
+///
+/// Le plugin de mise à jour n'expose pas son propre `on_before_exit` (il le
+/// réserve à `cleanup_before_exit`), d'où ce raccordement par ressource.
+struct SummaryEngineExitGuard;
+
+impl tauri::Resource for SummaryEngineExitGuard {}
+
+impl Drop for SummaryEngineExitGuard {
+    fn drop(&mut self) {
+        if let Some(engine) = SUMMARY_ENGINE.get().and_then(Weak::upgrade) {
+            stop_summary_engine(&engine);
+        }
+    }
+}
+
 fn initialize_core_logic(app_handle: &AppHandle) {
     // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
     // The frontend is responsible for calling the `initialize_enigo` command
@@ -254,6 +292,22 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         log::warn!("Purge de l'historique impossible: {}", e);
     }
     app_handle.manage(file_history_manager);
+
+    // Compte-rendu local (plan 09) : moteur llama.cpp lancé à la demande,
+    // survivant d'une fermeture brutale tué au démarrage, arrêt après 10 min
+    // d'inactivité.
+    let summary_engine = Arc::new(
+        summary::engine::SummaryEngine::new(summary::install::SummaryPaths::new(
+            &portable::app_data_dir(app_handle).expect("Failed to resolve app data dir"),
+        ))
+        .expect("Failed to initialize summary engine"),
+    );
+    let _ = SUMMARY_ENGINE.set(Arc::downgrade(&summary_engine));
+    app_handle.resources_table().add(SummaryEngineExitGuard);
+    summary_engine.cleanup_orphan();
+    summary::commands::spawn_idle_watchdog(summary_engine.clone());
+    app_handle.manage(summary_engine);
+
     app_handle.manage(tray::CurrentTrayIconState::new());
 
     // Note: Shortcuts are NOT initialized here.
@@ -683,13 +737,13 @@ pub fn run(cli_args: CliArgs) {
             commands::file_transcription::cancel_file_transcription,
             commands::file_history::file_history_list,
             commands::file_history::file_history_get,
-            commands::file_history::file_history_update_formatted,
             commands::file_history::file_history_delete,
             commands::video_download::download_entry_video,
             commands::video_download::export_entry_video,
             commands::video_download::cancel_video_download,
-            commands::format::format_document,
-            commands::format::format_ready,
+            summary::commands::summarize_document,
+            summary::commands::cancel_summary,
+            summary::commands::summary_status,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![
@@ -698,6 +752,7 @@ pub fn run(cli_args: CliArgs) {
             managers::transcription::StreamPhaseEvent,
             commands::file_transcription::FileTranscriptionProgress,
             commands::video_download::VideoDownloadProgress,
+            summary::SummaryProgress,
         ]);
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
@@ -794,6 +849,10 @@ pub fn run(cli_args: CliArgs) {
     builder
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
+        // Le moteur de résumé est arrêté avant l'installation d'une mise à
+        // jour par `SummaryEngineExitGuard` (voir plus haut) : le plugin
+        // appelle `cleanup_before_exit()` avant de rendre la main à
+        // l'installateur.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -978,8 +1037,13 @@ pub fn run(cli_args: CliArgs) {
             tauri::RunEvent::Reopen { .. } => {
                 show_main_window(app);
             }
-            // Teardown transcribe.cpp before exit
+            // Teardown transcribe.cpp before exit ; le serveur llama.cpp du
+            // compte-rendu (processus enfant) est tué ici, sinon il survivrait
+            // à l'application.
             tauri::RunEvent::Exit => {
+                if let Some(engine) = app.try_state::<Arc<summary::engine::SummaryEngine>>() {
+                    stop_summary_engine(&engine);
+                }
                 if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                     let _ = tm.unload_model();
                 }

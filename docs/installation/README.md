@@ -8,4 +8,4 @@
 
 Téléchargement : https://github.com/ocade-graciet-system/ocade-dictee/releases/latest
 
-Après l'installation : premier lancement (téléchargement du modèle, ≈ 512 Mo, une seule fois), puis test de dictée. Le raccourci de dictée peut ensuite être remplacé par la combinaison de votre choix : voir la section « Changer le raccourci de dictée » de la procédure de votre système. Checklist support : [../support/checklist-5-minutes.md](../support/checklist-5-minutes.md).
+Après l'installation : premier lancement (téléchargement du modèle, ≈ 512 Mo, une seule fois), puis test de dictée. L'onglet **Fichier** transcrit un enregistrement et, sur demande, en produit un compte-rendu local (téléchargement unique d'environ 2,2 Go au premier usage). Le raccourci de dictée peut ensuite être remplacé par la combinaison de votre choix : voir la section « Changer le raccourci de dictée » de la procédure de votre système. Checklist support : [../support/checklist-5-minutes.md](../support/checklist-5-minutes.md).
