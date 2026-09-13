@@ -66,12 +66,16 @@ interface FileTranscriptionStore {
   summaryNeedsDownload: boolean;
   /** Moteur et modèle déjà installés (null tant que non interrogé). */
   summaryInstalled: boolean | null;
-  /** Octets restant à télécharger, pour annoncer le téléchargement unique. */
+  /** Octets restant à télécharger : taille totale des éléments manquants
+   *  (moteur et/ou modèle), pour annoncer le téléchargement unique. */
   summaryDownloadBytes: number;
   summaryMarkdown: string | null;
   summaryError: SummaryError | null;
   /** Annulation du résumé demandée : le bouton « Annuler » est désarmé. */
   cancellingSummary: boolean;
+  /** Annulation demandée avant que le moteur n'ait démarré : elle serait sinon
+   *  perdue (rien à annuler côté moteur) et le résumé partirait quand même. */
+  summaryCancelRequested: boolean;
 
   initialize: () => Promise<void>;
   setUrlInput: (value: string) => void;
@@ -101,6 +105,7 @@ const EMPTY_SUMMARY = {
   summaryMarkdown: null,
   summaryError: null,
   cancellingSummary: false,
+  summaryCancelRequested: false,
 };
 
 export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
@@ -383,13 +388,8 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
         summaryNeedsDownload: summaryInstalled === false,
         summaryError: null,
         cancellingSummary: false,
+        summaryCancelRequested: false,
       });
-
-      // Annonce du téléchargement unique si le moteur ou le modèle manque.
-      // Statut illisible : on garde la dernière valeur connue (celle
-      // d'`initialize`) plutôt que de ne rien annoncer.
-      await get().refreshSummaryStatus();
-      set({ summaryNeedsDownload: get().summaryInstalled === false });
 
       // L'entrée affichée peut changer pendant le calcul : réouverture d'une
       // autre entrée d'historique, ou suppression de celle-ci (`historyId`
@@ -419,8 +419,23 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
           ),
           summaryProgress: null,
           cancellingSummary: false,
+          summaryCancelRequested: false,
         });
       };
+
+      // Annonce du téléchargement unique si le moteur ou le modèle manque.
+      // Statut illisible : on garde la dernière valeur connue (celle
+      // d'`initialize`) plutôt que de ne rien annoncer.
+      await get().refreshSummaryStatus();
+      set({ summaryNeedsDownload: get().summaryInstalled === false });
+
+      // « Annuler » cliqué pendant cette lecture d'état : le moteur n'a encore
+      // rien commencé, la demande y serait sans effet et le résumé partirait
+      // malgré le clic. Il suffit de ne pas le lancer.
+      if (get().summaryCancelRequested) {
+        settle("cancelled");
+        return;
+      }
 
       try {
         const result = await commands.summarizeDocument(markdown, historyId);
@@ -450,8 +465,10 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
     cancelSummary: async () => {
       // Comme pour la transcription : le bouton est désarmé dès le clic, puis
       // réarmé à la résolution du résumé (`settle`) — ou tout de suite si la
-      // demande d'annulation elle-même a échoué.
-      set({ cancellingSummary: true });
+      // demande d'annulation elle-même a échoué. L'intention est mémorisée :
+      // cliquée avant que `summarizeDocument` ne soit appelée, l'annulation
+      // n'a rien à annuler côté moteur et serait autrement perdue.
+      set({ cancellingSummary: true, summaryCancelRequested: true });
       try {
         await commands.cancelSummary();
       } catch (error) {

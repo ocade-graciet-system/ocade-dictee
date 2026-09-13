@@ -546,7 +546,9 @@ export const FileTranscription: React.FC = () => {
                     onClick={() => void summarize()}
                     variant="primary-soft"
                     size="sm"
-                    disabled={busy}
+                    // Une transcription vide ne donnerait qu'un
+                    // « compte-rendu incomplet ; réessayez », trompeur.
+                    disabled={busy || markdown.trim() === ""}
                     title={
                       summaryInstalled === false ? firstUseHint : undefined
                     }
@@ -642,7 +644,10 @@ export const FileTranscription: React.FC = () => {
 
               {/* Encart de progression du compte-rendu (spec plan 09, §5). */}
               {summaryRunning && (
-                <div className="space-y-2 rounded-lg border border-logo-primary/30 bg-logo-primary/5 p-4">
+                <div
+                  role="status"
+                  className="space-y-2 rounded-lg border border-logo-primary/30 bg-logo-primary/5 p-4"
+                >
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 text-sm text-text">
                       <Loader2 className="w-4 h-4 animate-spin text-logo-primary" />

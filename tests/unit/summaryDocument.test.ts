@@ -30,8 +30,24 @@ describe("markdownToHtml", () => {
     expect(html).toContain("<ul>");
     expect(html).toContain("<li>a</li>");
   });
-  test("le HTML brut n'est pas interprété", () => {
-    expect(markdownToHtml("<script>x</script>")).not.toContain("<script>");
+  // Même configuration que `MarkdownContent` (`skipHtml`) : le HTML brut écrit
+  // dans le Markdown est retiré, et non recopié sous forme échappée — ce qui
+  // est collé dans un traitement de texte est ce qui est affiché à l'écran.
+  test("le HTML brut est retiré, jamais interprété", () => {
+    expect(markdownToHtml("<script>x</script>")).toBe("");
+    expect(
+      markdownToHtml("Texte <b>gras</b> et <script>alert(1)</script> mêlés."),
+    ).toBe("<p>Texte gras et alert(1) mêlés.</p>");
+  });
+  // Les éléments du gabarit du compte-rendu font tous partie de la liste
+  // autorisée : rien n'est perdu à la copie.
+  test("tableaux GFM et citations conservés", () => {
+    const html = markdownToHtml(
+      "> Citation\n\n| a | b |\n| - | - |\n| 1 | 2 |\n",
+    );
+    expect(html).toContain("<blockquote>");
+    expect(html).toContain("<table>");
+    expect(html).toContain("<td>1</td>");
   });
 });
 

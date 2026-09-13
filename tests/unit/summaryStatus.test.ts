@@ -35,6 +35,23 @@ describe("resolveSummaryStatus — entrée changée ou supprimée pendant le cal
   });
 });
 
+describe("resolveSummaryStatus — annulation demandée avant le démarrage", () => {
+  // « Annuler » peut être cliqué pendant la préparation, avant même que le
+  // moteur ne soit sollicité : la demande n'a alors rien à annuler côté
+  // backend. Le store mémorise l'intention et ne lance pas le résumé ; l'état
+  // rendu est celui d'une annulation ordinaire, c'est-à-dire un retour
+  // silencieux à ce que l'entrée affichée montrait déjà.
+  test("retour silencieux, bouton « Annuler » réarmé", () => {
+    expect(resolveSummaryStatus("cancelled", false, null)).toBe("idle");
+    expect(resolveSummaryStatus("cancelled", false, "# Compte-rendu")).toBe(
+      "done",
+    );
+    expect(SUMMARY_ACTIVE_STATUSES).not.toContain(
+      resolveSummaryStatus("cancelled", false, null),
+    );
+  });
+});
+
 describe("resolveSummaryStatus — invariant", () => {
   // Le bug corrigé : l'entrée d'historique affichée est supprimée pendant le
   // résumé, `historyId` repasse à null, et le statut restait « summarizing »
