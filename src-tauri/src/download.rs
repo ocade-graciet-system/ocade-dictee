@@ -5,7 +5,14 @@
 //! Le fichier en cours s'écrit dans `part` ; une fois complet et vérifié il
 //! reste à cet emplacement (`download_to_part`) ou est renommé vers sa
 //! destination finale (`download_with_resume`). Un serveur qui ignore `Range`
-//! (200 au lieu de 206) ou refuse la reprise (416) fait repartir de zéro.
+//! (200 au lieu de 206), refuse la reprise (416) ou répond 206 à partir d'un
+//! autre décalage que celui demandé fait repartir de zéro.
+//!
+//! **Les appelants passent toujours un SHA-256 attendu** (`managers::model`,
+//! `summary::install`) : les en-têtes du serveur ne sont que des indications
+//! (le total peut être absent, le `Content-Range` mensonger), et seule cette
+//! empreinte garantit au final l'intégrité du fichier livré. Un `.part` déjà
+//! complet est d'ailleurs reconnu par son empreinte, sans aucune requête.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
@@ -13,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
-use reqwest::header::RANGE;
+use reqwest::header::{CONTENT_RANGE, RANGE};
 use reqwest::StatusCode;
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
@@ -24,7 +31,9 @@ pub const PART_SUFFIX: &str = ".part";
 /// Étapes remontées à l'appelant pendant un téléchargement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DownloadEvent {
-    /// Octets reçus (cumulés, reprise comprise) et total attendu (0 si inconnu).
+    /// Octets reçus (cumulés, reprise comprise) et total attendu. Quand le
+    /// serveur n'annonce aucune taille, `total` vaut `downloaded` : la barre
+    /// avance sans jamais se remplir, plutôt que d'afficher 0.
     Progress { downloaded: u64, total: u64 },
     /// Le fichier est complet, le SHA-256 est en cours de calcul.
     Verifying,
@@ -110,6 +119,21 @@ async fn compute_sha256_blocking(path: PathBuf) -> Result<String, DownloadError>
         .map_err(DownloadError::Io)
 }
 
+/// `Content-Range: bytes <début>-<fin>/<total>` → `(début, Some(total))`.
+/// Le total vaut `None` s'il est inconnu (`/*`). Renvoie `None` si l'en-tête
+/// n'est pas une plage d'octets exploitable (`bytes */4000` d'un 416, unité
+/// inconnue…).
+fn parse_content_range(value: &str) -> Option<(u64, Option<u64>)> {
+    let value = value.trim();
+    let unit_end = value.find(' ')?;
+    if !value[..unit_end].eq_ignore_ascii_case("bytes") {
+        return None;
+    }
+    let (range, total) = value[unit_end + 1..].split_once('/')?;
+    let start = range.split('-').next()?.trim().parse().ok()?;
+    Some((start, total.trim().parse().ok()))
+}
+
 async fn send_request(
     client: &reqwest::Client,
     url: &str,
@@ -141,6 +165,21 @@ pub async fn download_to_part(
     }
 
     let mut resume_from = std::fs::metadata(part).map(|m| m.len()).unwrap_or(0);
+
+    // Un `.part` déjà complet — tentative précédente interrompue juste avant la
+    // vérification ou le renommage — se reconnaît à son empreinte, sans la
+    // moindre requête. Sinon le serveur répondrait 416 (plage hors fichier) et
+    // on détruirait un fichier pourtant intact pour le retélécharger.
+    if resume_from > 0 {
+        if let Some(expected) = expected_sha256 {
+            on_event(DownloadEvent::Verifying);
+            let actual = compute_sha256_blocking(part.to_path_buf()).await?;
+            if actual.eq_ignore_ascii_case(expected) {
+                return Ok(());
+            }
+        }
+    }
+
     let mut response = send_request(client, url, resume_from).await?;
 
     // Serveur sans reprise (200 au lieu de 206) ou fichier partiel plus grand
@@ -160,14 +199,44 @@ pub async fn download_to_part(
         return Err(DownloadError::Failed(format!("HTTP {status}")));
     }
 
-    let total = resume_from + response.content_length().unwrap_or(0);
+    // Une réponse 206 doit dire d'où elle repart : un serveur qui renvoie un
+    // autre décalage (le fichier entier, par exemple) produirait des octets en
+    // double si on se contentait de compléter le `.part`. On la traite alors
+    // comme un 200 : troncature et réécriture depuis zéro.
+    let content_range = response
+        .headers()
+        .get(CONTENT_RANGE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_content_range);
+    let mut total = None;
+    if status == StatusCode::PARTIAL_CONTENT {
+        if let Some((start, announced_total)) = content_range {
+            if start != resume_from {
+                resume_from = 0;
+            }
+            total = announced_total;
+        }
+    }
+    // Sans total annoncé, il reste inconnu : ne surtout pas le confondre avec
+    // le décalage de reprise, sinon la garde de taille refuserait un fichier
+    // pourtant complet.
+    let total = total.or_else(|| {
+        response
+            .content_length()
+            .map(|length| resume_from.saturating_add(length))
+    });
+
     let mut file = if resume_from > 0 {
         OpenOptions::new().append(true).open(part)?
     } else {
         File::create(part)?
     };
     let mut downloaded = resume_from;
-    on_event(DownloadEvent::Progress { downloaded, total });
+    let progress_total = |downloaded: u64| total.unwrap_or(downloaded).max(downloaded);
+    on_event(DownloadEvent::Progress {
+        downloaded,
+        total: progress_total(downloaded),
+    });
 
     let mut last_emit = Instant::now();
     let mut stream = response.bytes_stream();
@@ -181,21 +250,30 @@ pub async fn download_to_part(
         file.write_all(&chunk)?;
         downloaded += chunk.len() as u64;
         if last_emit.elapsed() >= Duration::from_millis(100) {
-            on_event(DownloadEvent::Progress { downloaded, total });
+            on_event(DownloadEvent::Progress {
+                downloaded,
+                total: progress_total(downloaded),
+            });
             last_emit = Instant::now();
         }
     }
     file.flush()?;
+    // Les octets doivent être sur le disque avant le renommage que l'appelant
+    // va faire : sinon une coupure de courant laisserait un fichier au nom
+    // définitif mais au contenu tronqué, que plus rien ne reprendrait.
+    file.sync_all()?;
     drop(file);
     on_event(DownloadEvent::Progress {
         downloaded,
-        total: total.max(downloaded),
+        total: progress_total(downloaded),
     });
 
-    if total > 0 && downloaded != total {
-        return Err(DownloadError::Failed(format!(
-            "taille inattendue: {downloaded} octets reçus sur {total}"
-        )));
+    if let Some(total) = total {
+        if downloaded != total {
+            return Err(DownloadError::Failed(format!(
+                "taille inattendue: {downloaded} octets reçus sur {total}"
+            )));
+        }
     }
 
     if let Some(expected) = expected_sha256 {
@@ -220,12 +298,13 @@ pub async fn download_with_resume(
     dest: &Path,
     expected_sha256: Option<&str>,
     cancel: &CancellationToken,
-    on_event: impl FnMut(DownloadEvent),
+    mut on_event: impl FnMut(DownloadEvent),
 ) -> Result<(), DownloadError> {
     if dest.is_file() {
         match expected_sha256 {
             None => return Ok(()),
             Some(expected) => {
+                on_event(DownloadEvent::Verifying);
                 let actual = compute_sha256_blocking(dest.to_path_buf()).await?;
                 if actual.eq_ignore_ascii_case(expected) {
                     return Ok(());
@@ -256,6 +335,12 @@ mod tests {
         IgnoreRange,
         /// Répond 416 à toute requête avec `Range`.
         RejectRange,
+        /// Répond 206 mais en repartant de zéro (`Content-Range: bytes 0-…`)
+        /// alors qu'une reprise plus loin était demandée.
+        ResumeFromZero,
+        /// N'annonce aucune taille : ni `Content-Length` (le corps se termine
+        /// à la fermeture) ni total dans `Content-Range` (`/*`).
+        NoContentLength,
         /// Envoie `n` octets puis coupe la connexion.
         TruncateAfter(usize),
         /// Envoie le corps par blocs de 16 octets espacés de 50 ms.
@@ -307,6 +392,7 @@ mod tests {
                     .unwrap()
                     .push(if range.is_empty() { None } else { Some(range) });
                 let total = body.len() as u64;
+                let announces_size = !matches!(behaviour, Behaviour::NoContentLength);
                 let (status, from) = match (behaviour, start) {
                     (Behaviour::RejectRange, Some(_)) => {
                         let head = format!(
@@ -315,17 +401,23 @@ mod tests {
                         let _ = stream.write_all(head.as_bytes());
                         continue;
                     }
+                    (Behaviour::ResumeFromZero, Some(_)) => ("206 Partial Content", 0u64),
                     (Behaviour::IgnoreRange, _) | (_, None) => ("200 OK", 0u64),
                     (_, Some(s)) => ("206 Partial Content", s),
                 };
                 let payload = &body[from as usize..];
-                let mut head = format!(
-                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n",
-                    payload.len()
-                );
-                if from > 0 {
+                let mut head = format!("HTTP/1.1 {status}\r\nConnection: close\r\n");
+                if announces_size {
+                    head.push_str(&format!("Content-Length: {}\r\n", payload.len()));
+                }
+                if status.starts_with("206") {
+                    let announced = if announces_size {
+                        total.to_string()
+                    } else {
+                        "*".to_string()
+                    };
                     head.push_str(&format!(
-                        "Content-Range: bytes {from}-{}/{total}\r\n",
+                        "Content-Range: bytes {from}-{}/{announced}\r\n",
                         total - 1
                     ));
                 }
@@ -425,9 +517,10 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), data);
-        assert!(
-            events.is_empty(),
-            "rien à télécharger, donc aucun événement"
+        assert_eq!(
+            events,
+            vec![DownloadEvent::Verifying],
+            "seule la vérification du fichier déjà présent est annoncée"
         );
         assert!(
             server.ranges_seen.lock().unwrap().is_empty(),
@@ -532,6 +625,179 @@ mod tests {
         .unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), data);
         assert_eq!(server.ranges_seen.lock().unwrap().len(), 2);
+    }
+
+    /// Un `.part` déjà complet (interruption juste avant le renommage) est
+    /// reconnu par son SHA-256 sans qu'un seul octet reparte sur le réseau.
+    #[tokio::test]
+    async fn complete_part_with_valid_sha256_is_not_redownloaded() {
+        let data = body();
+        // Le serveur refuserait la reprise (416) : s'il voit passer quoi que ce
+        // soit, c'est que le raccourci n'a pas fonctionné.
+        let server = start_server(data.clone(), vec![Behaviour::RejectRange]);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("file.bin");
+        std::fs::write(part_path(&dest), &data).unwrap();
+        let client = build_client().unwrap();
+        let mut events = Vec::new();
+        download_with_resume(
+            &client,
+            &server.url,
+            &dest,
+            Some(&sha_hex(&data)),
+            &CancellationToken::new(),
+            |e| events.push(e),
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), data);
+        assert!(!part_path(&dest).exists());
+        assert_eq!(events, vec![DownloadEvent::Verifying]);
+        assert!(
+            server.ranges_seen.lock().unwrap().is_empty(),
+            "aucun octet ne doit être retéléchargé"
+        );
+    }
+
+    /// `.part` de la bonne taille mais corrompu : le SHA-256 ne correspond pas,
+    /// le serveur refuse la reprise (416), on repart de zéro et ça aboutit.
+    #[tokio::test]
+    async fn complete_part_with_wrong_sha256_restarts_from_scratch() {
+        let data = body();
+        let server = start_server(
+            data.clone(),
+            vec![Behaviour::RejectRange, Behaviour::Normal],
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("file.bin");
+        std::fs::write(part_path(&dest), vec![0xAAu8; data.len()]).unwrap();
+        let client = build_client().unwrap();
+        let mut events = Vec::new();
+        download_with_resume(
+            &client,
+            &server.url,
+            &dest,
+            Some(&sha_hex(&data)),
+            &CancellationToken::new(),
+            |e| events.push(e),
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), data);
+        let seen = server.ranges_seen.lock().unwrap();
+        assert_eq!(
+            seen.len(),
+            2,
+            "une reprise refusée puis une requête complète"
+        );
+        assert!(seen[0].is_some() && seen[1].is_none());
+        assert_eq!(
+            events.first(),
+            Some(&DownloadEvent::Verifying),
+            "le .part complet est haché avant toute requête"
+        );
+    }
+
+    /// Reprise demandée mais réponse 206 repartant de zéro : le `.part` doit
+    /// être tronqué et réécrit, jamais complété (sinon octets en double).
+    #[tokio::test]
+    async fn resume_response_starting_at_zero_is_not_appended() {
+        let data = body();
+        let server = start_server(data.clone(), vec![Behaviour::ResumeFromZero]);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("file.bin");
+        std::fs::write(part_path(&dest), &data[..1500]).unwrap();
+        let client = build_client().unwrap();
+        download_with_resume(
+            &client,
+            &server.url,
+            &dest,
+            Some(&sha_hex(&data)),
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), data);
+        assert_eq!(
+            server.ranges_seen.lock().unwrap().as_slice(),
+            &[Some("bytes=1500-".to_string())],
+            "une seule requête : la réponse reçue est réutilisée telle quelle"
+        );
+    }
+
+    /// Réponse sans `Content-Length` (corps terminé par la fermeture) : le
+    /// total est inconnu, ce n'est pas une erreur de taille.
+    #[tokio::test]
+    async fn missing_content_length_is_tolerated() {
+        let data = body();
+        let server = start_server(data.clone(), vec![Behaviour::NoContentLength]);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("file.bin");
+        let client = build_client().unwrap();
+        let mut events = Vec::new();
+        download_with_resume(
+            &client,
+            &server.url,
+            &dest,
+            Some(&sha_hex(&data)),
+            &CancellationToken::new(),
+            |e| events.push(e),
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), data);
+        let last_progress = events
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                DownloadEvent::Progress { downloaded, total } => Some((*downloaded, *total)),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            last_progress,
+            (4000, 4000),
+            "total inconnu : la progression suit les octets reçus"
+        );
+    }
+
+    /// Même chose sur une reprise : `Content-Range: bytes 1500-3999/*` sans
+    /// `Content-Length` ne doit pas être pris pour un total de 1500 octets.
+    #[tokio::test]
+    async fn missing_content_length_on_resume_is_tolerated() {
+        let data = body();
+        let server = start_server(data.clone(), vec![Behaviour::NoContentLength]);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("file.bin");
+        std::fs::write(part_path(&dest), &data[..1500]).unwrap();
+        let client = build_client().unwrap();
+        download_with_resume(
+            &client,
+            &server.url,
+            &dest,
+            Some(&sha_hex(&data)),
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), data);
+        assert_eq!(
+            server.ranges_seen.lock().unwrap().as_slice(),
+            &[Some("bytes=1500-".to_string())]
+        );
+    }
+
+    #[test]
+    fn parses_content_range() {
+        assert_eq!(
+            parse_content_range("bytes 1500-3999/4000"),
+            Some((1500, Some(4000)))
+        );
+        assert_eq!(parse_content_range("bytes 0-9/*"), Some((0, None)));
+        assert_eq!(parse_content_range("bytes */4000"), None);
+        assert_eq!(parse_content_range("pages 1-2/10"), None);
     }
 
     #[tokio::test]
