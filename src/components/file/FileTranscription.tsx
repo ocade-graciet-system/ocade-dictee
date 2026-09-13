@@ -100,6 +100,7 @@ export const FileTranscription: React.FC = () => {
     summaryDownloadBytes,
     summaryMarkdown,
     summaryError,
+    cancellingSummary,
     initialize,
     setUrlInput,
     startFile,
@@ -341,12 +342,24 @@ export const FileTranscription: React.FC = () => {
       })
     : null;
 
+  // Taille annoncée pour le téléchargement unique (moteur + modèle), ou `null`
+  // quand le backend n'annonce rien à télécharger (0 octet : aucun asset pour
+  // cette plateforme). On bascule alors sur les variantes sans taille des
+  // messages, plutôt que d'annoncer « 0 Go » ou une taille inventée.
+  const downloadSizeLabel =
+    summaryDownloadBytes > 0 ? formatGigabytes(summaryDownloadBytes) : null;
+
   // Chaque variante de `SummaryError` a son message (spec plan 09, §5) ;
   // `cancelled` n'en a pas (retour silencieux).
   const describeSummaryError = (error: SummaryError): string => {
     switch (error.kind) {
       case "offline":
-        return t("settings.file.summary.errors.offline");
+        // Même taille que l'encart de progression : une seule vérité.
+        return downloadSizeLabel
+          ? t("settings.file.summary.errors.offline", {
+              size: downloadSizeLabel,
+            })
+          : t("settings.file.summary.errors.offlineNoSize");
       case "diskSpace":
         return t("settings.file.summary.errors.diskSpace", {
           free: formatGigabytes(error.freeBytes),
@@ -368,8 +381,18 @@ export const FileTranscription: React.FC = () => {
     }
   };
 
-  // Taille annoncée pour le téléchargement unique (moteur + modèle).
-  const downloadSizeLabel = formatGigabytes(summaryDownloadBytes);
+  // Annonce du téléchargement unique, avant le premier résumé puis dans
+  // l'encart de progression.
+  const firstUseHint = downloadSizeLabel
+    ? t("settings.file.summary.firstUseHint", { size: downloadSizeLabel })
+    : t("settings.file.summary.firstUseHintNoSize");
+  const preparingLabel = !summaryNeedsDownload
+    ? t("settings.file.summary.preparing")
+    : downloadSizeLabel
+      ? t("settings.file.summary.preparingDownload", {
+          size: downloadSizeLabel,
+        })
+      : t("settings.file.summary.preparingDownloadNoSize");
 
   // Titre de l'encart : téléchargement unique annoncé, puis phase courante.
   // La phase `summarizing` est un décompte de parties (« partie n/m ») dont le
@@ -379,11 +402,7 @@ export const FileTranscription: React.FC = () => {
         current: summaryProgress.current,
         total: summaryProgress.total,
       })
-    : summaryNeedsDownload
-      ? t("settings.file.summary.preparingDownload", {
-          size: downloadSizeLabel,
-        })
-      : t("settings.file.summary.preparing");
+    : preparingLabel;
   const summaryDownloading =
     summaryProgress !== null &&
     (summaryProgress.phase === "engine" || summaryProgress.phase === "model");
@@ -529,11 +548,7 @@ export const FileTranscription: React.FC = () => {
                     size="sm"
                     disabled={busy}
                     title={
-                      summaryInstalled === false
-                        ? t("settings.file.summary.firstUseHint", {
-                            size: downloadSizeLabel,
-                          })
-                        : undefined
+                      summaryInstalled === false ? firstUseHint : undefined
                     }
                     className="flex items-center gap-2"
                   >
@@ -612,7 +627,7 @@ export const FileTranscription: React.FC = () => {
                     onClick={reset}
                     variant="ghost"
                     size="sm"
-                    disabled={summaryRunning}
+                    disabled={busy}
                     className="flex items-center gap-2"
                   >
                     <RotateCcw className="w-4 h-4" />
@@ -622,11 +637,7 @@ export const FileTranscription: React.FC = () => {
               </div>
 
               {summaryInstalled === false && !summaryRunning && (
-                <p className="text-xs text-text/50">
-                  {t("settings.file.summary.firstUseHint", {
-                    size: downloadSizeLabel,
-                  })}
-                </p>
+                <p className="text-xs text-text/50">{firstUseHint}</p>
               )}
 
               {/* Encart de progression du compte-rendu (spec plan 09, §5). */}
@@ -641,6 +652,7 @@ export const FileTranscription: React.FC = () => {
                       onClick={() => void cancelSummary()}
                       variant="secondary"
                       size="sm"
+                      disabled={cancellingSummary}
                       className="flex items-center gap-2"
                     >
                       <X className="w-4 h-4" />
@@ -757,13 +769,16 @@ export const FileTranscription: React.FC = () => {
                       <Film className="w-4 h-4" />
                     </button>
                   ))}
+                {/* Supprimer pendant une transcription ou un résumé
+                    retirerait l'entrée que le calcul en cours alimente. */}
                 <button
                   type="button"
                   onClick={() =>
                     void handleDeleteHistoryEntry(item.id, item.source_name)
                   }
+                  disabled={busy}
                   title={t("settings.file.history.delete")}
-                  className="p-1.5 rounded shrink-0 text-text/40 hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                  className="p-1.5 rounded shrink-0 text-text/40 hover:text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-text/40 disabled:hover:bg-transparent"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>

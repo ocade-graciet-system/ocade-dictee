@@ -11,6 +11,12 @@ import {
   type SummaryError,
   type SummaryProgress,
 } from "@/bindings";
+import {
+  resolveSummaryStatus,
+  SUMMARY_ACTIVE_STATUSES,
+  type SummaryOutcome,
+  type SummaryStatus,
+} from "@/lib/utils/summaryStatus";
 
 // Le backend émet ce marqueur (français, indépendant de la langue UI) quand
 // l'utilisateur annule via `cancel_file_transcription` — y compris pendant le
@@ -20,17 +26,9 @@ export const CANCELLED_MARKER = "annulée par l'utilisateur";
 
 export type FileTranscriptionStatus = "idle" | "processing" | "done" | "error";
 
-/** États du compte-rendu (spec plan 09, §5). */
-export type SummaryStatus =
-  "idle" | "preparing" | "starting" | "summarizing" | "done" | "error";
-
-/** Statuts pendant lesquels un résumé occupe le moteur : bouton désactivé,
- *  mise à jour forcée reportée, historique verrouillé. */
-export const SUMMARY_ACTIVE_STATUSES: readonly SummaryStatus[] = [
-  "preparing",
-  "starting",
-  "summarizing",
-];
+// Le vocabulaire des statuts du compte-rendu vit dans un module pur (testable
+// sans Tauri) ; il reste exposé ici, seul import de ses consommateurs.
+export { SUMMARY_ACTIVE_STATUSES, type SummaryStatus };
 
 const getFileName = (path: string): string => {
   const parts = path.split(/[/\\]/);
@@ -72,6 +70,8 @@ interface FileTranscriptionStore {
   summaryDownloadBytes: number;
   summaryMarkdown: string | null;
   summaryError: SummaryError | null;
+  /** Annulation du résumé demandée : le bouton « Annuler » est désarmé. */
+  cancellingSummary: boolean;
 
   initialize: () => Promise<void>;
   setUrlInput: (value: string) => void;
@@ -100,18 +100,30 @@ const EMPTY_SUMMARY = {
   summaryNeedsDownload: false,
   summaryMarkdown: null,
   summaryError: null,
+  cancellingSummary: false,
 };
 
 export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
   set,
   get,
 ) => {
+  // Transcription ou compte-rendu en cours : le moteur est occupé, et toute
+  // action qui remplacerait ou supprimerait le document affiché est refusée
+  // (l'interface désactive déjà ces commandes ; ceci couvre les courses, par
+  // exemple une confirmation de suppression ouverte avant le résumé).
+  const isBusy = (): boolean => {
+    const { status, summaryStatus } = get();
+    return (
+      status === "processing" || SUMMARY_ACTIVE_STATUSES.includes(summaryStatus)
+    );
+  };
+
   const runTranscription = async (
     sourceLabel: string,
     sourceKind: "local" | "url",
     invoke: () => Promise<Result<FileTranscriptionResult, string>>,
   ): Promise<void> => {
-    if (get().status === "processing") return;
+    if (isBusy()) return;
 
     set({
       status: "processing",
@@ -256,13 +268,7 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
     },
 
     openHistoryEntry: async (id) => {
-      const { status, summaryStatus } = get();
-      if (
-        status === "processing" ||
-        SUMMARY_ACTIVE_STATUSES.includes(summaryStatus)
-      ) {
-        return false;
-      }
+      if (isBusy()) return false;
       try {
         const result = await commands.fileHistoryGet(id);
         if (result.status !== "ok" || result.data === null) {
@@ -291,6 +297,7 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
     },
 
     deleteHistoryEntry: async (id) => {
+      if (isBusy()) return false;
       try {
         const result = await commands.fileHistoryDelete(id);
         if (result.status !== "ok") {
@@ -375,6 +382,7 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
         summaryProgress: null,
         summaryNeedsDownload: summaryInstalled === false,
         summaryError: null,
+        cancellingSummary: false,
       });
 
       // Annonce du téléchargement unique si le moteur ou le modèle manque.
@@ -383,64 +391,72 @@ export const useFileTranscriptionStore = create<FileTranscriptionStore>()((
       await get().refreshSummaryStatus();
       set({ summaryNeedsDownload: get().summaryInstalled === false });
 
-      // L'entrée affichée peut changer pendant le calcul (réouverture d'une
-      // autre entrée d'historique) : le résultat n'est affiché que s'il
-      // correspond toujours à l'entrée courante ; il est de toute façon
-      // enregistré côté backend pour `historyId`.
+      // L'entrée affichée peut changer pendant le calcul : réouverture d'une
+      // autre entrée d'historique, ou suppression de celle-ci (`historyId`
+      // repasse alors à null). Le compte-rendu et l'erreur, rattachés à
+      // l'entrée d'origine, ne sont dans ce cas pas affichés — le compte-rendu
+      // est de toute façon enregistré côté backend pour `historyId`.
       const target = historyId;
       const stillCurrent = () => get().historyId === target;
+
+      // Le statut terminal, lui, est posé quoi qu'il arrive : le conditionner
+      // à `stillCurrent()` laissait l'interface bloquée en « résumé en cours »
+      // pour toute la session dès que l'entrée affichée disparaissait.
+      const settle = (
+        outcome: SummaryOutcome,
+        attached: {
+          summaryMarkdown?: string;
+          summaryError?: SummaryError;
+        } = {},
+      ): void => {
+        const stale = !stillCurrent();
+        set({
+          ...(stale ? {} : attached),
+          summaryStatus: resolveSummaryStatus(
+            outcome,
+            stale,
+            get().summaryMarkdown,
+          ),
+          summaryProgress: null,
+          cancellingSummary: false,
+        });
+      };
 
       try {
         const result = await commands.summarizeDocument(markdown, historyId);
         if (result.status === "ok") {
           set({ summaryInstalled: true, summaryDownloadBytes: 0 });
-          if (stillCurrent()) {
-            set({
-              summaryStatus: "done",
-              summaryMarkdown: result.data,
-              summaryProgress: null,
-            });
-          }
+          settle("done", { summaryMarkdown: result.data });
           void get().loadHistory();
           return;
         }
         if (result.error.kind === "cancelled") {
-          // Retour silencieux à l'état précédent.
-          if (stillCurrent()) {
-            set({
-              summaryStatus: get().summaryMarkdown ? "done" : "idle",
-              summaryProgress: null,
-            });
-          }
+          // Retour silencieux à l'état précédent, sans message.
+          settle("cancelled");
           return;
         }
-        if (stillCurrent()) {
-          set({
-            summaryStatus: "error",
-            summaryError: result.error,
-            summaryProgress: null,
-          });
-        }
+        settle("error", { summaryError: result.error });
       } catch (error) {
         console.error("Summary failed:", error);
-        if (stillCurrent()) {
-          set({
-            summaryStatus: "error",
-            summaryError: {
-              kind: "engineStartFailed",
-              detail: error instanceof Error ? error.message : String(error),
-            },
-            summaryProgress: null,
-          });
-        }
+        settle("error", {
+          summaryError: {
+            kind: "engineStartFailed",
+            detail: error instanceof Error ? error.message : String(error),
+          },
+        });
       }
     },
 
     cancelSummary: async () => {
+      // Comme pour la transcription : le bouton est désarmé dès le clic, puis
+      // réarmé à la résolution du résumé (`settle`) — ou tout de suite si la
+      // demande d'annulation elle-même a échoué.
+      set({ cancellingSummary: true });
       try {
         await commands.cancelSummary();
       } catch (error) {
         console.error("Failed to cancel summary:", error);
+        set({ cancellingSummary: false });
       }
     },
   };

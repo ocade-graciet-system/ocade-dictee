@@ -560,7 +560,9 @@
       "summary": {
         "button": "Résumer",
         "firstUseHint": "Premier usage : téléchargement unique d'environ {{size}}.",
+        "firstUseHintNoSize": "Premier usage : un téléchargement unique est nécessaire.",
         "preparingDownload": "Préparation du résumé — téléchargement unique d'environ {{size}}",
+        "preparingDownloadNoSize": "Préparation du résumé — téléchargement unique nécessaire",
         "preparing": "Préparation du résumé…",
         "phase": {
           "engine": "Téléchargement du moteur… {{current}} %",
@@ -574,7 +576,8 @@
         "copy": "Copier le compte-rendu",
         "copyError": "Impossible de copier le compte-rendu",
         "errors": {
-          "offline": "Le résumé nécessite un téléchargement unique de 2 Go. Connectez-vous à Internet puis réessayez.",
+          "offline": "Le résumé nécessite un téléchargement unique d'environ {{size}}. Connectez-vous à Internet puis réessayez.",
+          "offlineNoSize": "Le résumé nécessite un téléchargement unique. Connectez-vous à Internet puis réessayez.",
           "diskSpace": "Espace disque insuffisant : 3 Go libres sont nécessaires ({{free}} disponibles).",
           "memory": "Mémoire insuffisante pour lancer le résumé : fermez d'autres applications puis réessayez.",
           "downloadFailed": "Le téléchargement a échoué ; réessayez.",
