@@ -55,6 +55,18 @@ pub fn random_api_key() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Client pour le serveur local : jamais de proxy. `reqwest` active
+/// `auto_sys_proxy` par défaut et n'exclut pas la boucle locale — un proxy
+/// système (fréquent en entreprise) ferait échouer toutes les requêtes vers
+/// `127.0.0.1` s'il n'exempte pas la boucle locale. Pas de délai global :
+/// chaque appelant pose son propre timeout (`wait_healthy` notamment).
+pub fn build_local_client() -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(5))
+        .build()
+}
+
 /// Ligne de commande de `llama-server` (§4 de la spec).
 pub fn build_args(config: &LlamaServerConfig, port: u16, api_key: &str) -> Vec<String> {
     let mut args: Vec<String> = vec![
@@ -187,7 +199,7 @@ impl LlamaServer {
         )
         .await;
         match health {
-            Ok(()) => Ok(server),
+            Ok(()) => confirm_no_port_squatter(&server).map(|()| server),
             Err(error) => {
                 server.kill();
                 Err(error)
@@ -230,7 +242,11 @@ impl LlamaServer {
         }
     }
 
-    /// Arrêt immédiat (kill + wait) ; idempotent.
+    /// Arrêt immédiat (kill + wait) ; idempotent. Le fichier pid n'est
+    /// retiré qu'au premier appel effectif (celui qui trouve un enfant) :
+    /// un second `kill()`/`Drop` ne doit pas effacer le fichier pid d'un
+    /// serveur de remplacement qui aurait réutilisé le même chemin entre
+    /// temps.
     pub fn kill(&self) {
         let mut guard = lock(&self.child);
         if let Some(mut child) = guard.take() {
@@ -238,9 +254,9 @@ impl LlamaServer {
             let _ = child.kill();
             let _ = child.wait();
             log::info!("llama-server arrêté (pid {})", self.pid);
-        }
-        if let Some(pid_file) = &self.pid_file {
-            let _ = std::fs::remove_file(pid_file);
+            if let Some(pid_file) = &self.pid_file {
+                let _ = std::fs::remove_file(pid_file);
+            }
         }
     }
 }
@@ -258,6 +274,26 @@ impl Drop for LlamaServer {
     fn drop(&mut self) {
         self.kill();
     }
+}
+
+/// `/health` a répondu 200, mais rien ne garantit que c'est bien notre
+/// processus qui a répondu : un autre service a pu occuper le port avant
+/// nous (fenêtre TOCTOU de `free_port`), ou le nôtre vient de mourir juste
+/// après avoir répondu. On revérifie donc `is_alive()` avant de faire
+/// confiance au `/health`.
+fn confirm_no_port_squatter(server: &LlamaServer) -> Result<(), SummaryError> {
+    if server.is_alive() {
+        return Ok(());
+    }
+    // Par sûreté : dans la quasi-totalité des cas le processus est déjà
+    // mort, mais `kill()` reste idempotent et sans risque.
+    server.kill();
+    Err(SummaryError::EngineStartFailed {
+        detail: format!(
+            "le processus s'est arrêté juste après avoir répondu /health (le port était peut-être déjà occupé par autre chose)\n{}",
+            server.stderr_tail()
+        ),
+    })
 }
 
 /// Sonde `GET /health` toutes les 500 ms jusqu'à 200, la mort du processus
@@ -342,7 +378,7 @@ mod tests {
         LlamaServerConfig {
             exe: exe.to_path_buf(),
             model: PathBuf::from("/models/summary/model.gguf"),
-            ctx_size: 16_384,
+            ctx_size: 12_288,
             threads: 4,
             gpu_layers: default_gpu_layers(),
             extra_args: vec!["--reasoning-budget".into(), "0".into()],
@@ -354,7 +390,7 @@ mod tests {
     fn args_follow_the_spec() {
         let args = build_args(&config(Path::new("/bin/llama-server")), 4242, "k3y");
         let joined = args.join(" ");
-        assert!(joined.starts_with("-m /models/summary/model.gguf --host 127.0.0.1 --port 4242 --api-key k3y -c 16384 --threads 4 -ngl "));
+        assert!(joined.starts_with("-m /models/summary/model.gguf --host 127.0.0.1 --port 4242 --api-key k3y -c 12288 --threads 4 -ngl "));
         assert!(joined.contains("--parallel 1 --no-webui"));
         assert!(joined.ends_with("--reasoning-budget 0"));
         if cfg!(target_os = "macos") {
@@ -403,7 +439,7 @@ mod tests {
     #[tokio::test]
     async fn health_wait_tolerates_503_while_loading() {
         let port = fake_health_server(vec![503, 503, 200]);
-        let client = reqwest::Client::new();
+        let client = build_local_client().unwrap();
         let started = Instant::now();
         wait_healthy(
             &client,
@@ -424,7 +460,7 @@ mod tests {
     #[tokio::test]
     async fn health_wait_fails_fast_when_process_died() {
         let port = free_port().unwrap();
-        let client = reqwest::Client::new();
+        let client = build_local_client().unwrap();
         let err = wait_healthy(
             &client,
             port,
@@ -449,7 +485,7 @@ mod tests {
     #[tokio::test]
     async fn health_wait_times_out() {
         let port = free_port().unwrap();
-        let client = reqwest::Client::new();
+        let client = build_local_client().unwrap();
         let err = wait_healthy(
             &client,
             port,
@@ -480,7 +516,7 @@ mod tests {
         let pid_file = dir.path().join("llama").join("server.pid");
         let mut cfg = config(&exe);
         cfg.pid_file = Some(pid_file.clone());
-        let client = reqwest::Client::new();
+        let client = build_local_client().unwrap();
         let err = LlamaServer::start(cfg, &client).await.unwrap_err();
         match err {
             SummaryError::EngineStartFailed { detail } => {
@@ -533,6 +569,135 @@ mod tests {
         // Idempotent : un second arrêt ne panique pas et ne bloque pas.
         server.kill();
         assert!(!server.is_alive());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn kill_does_not_erase_a_replacement_servers_pid_file() {
+        // Un serveur remplacé (ex. rechargement de config) est tué
+        // explicitement puis abandonné ; son `Drop` appelle `kill()` une
+        // seconde fois pendant que le remplaçant a déjà écrit son propre pid
+        // dans le même fichier. Le second appel doit être un no-op complet
+        // vis-à-vis du fichier pid.
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("llama-server");
+        std::fs::write(&exe, b"#!/bin/sh\nexec sleep 30\n").unwrap();
+        super::super::install::set_executable(&exe).unwrap();
+        let pid_file = dir.path().join("server.pid");
+
+        let spawn = |pid_file: &Path| -> LlamaServer {
+            let mut command = Command::new(&exe);
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped());
+            let child = command.spawn().unwrap();
+            let pid = child.id();
+            std::fs::write(pid_file, pid.to_string()).unwrap();
+            LlamaServer {
+                child: Mutex::new(Some(child)),
+                pid,
+                port: 4242,
+                api_key: "k".into(),
+                stderr_tail: Arc::new(Mutex::new(VecDeque::new())),
+                pid_file: Some(pid_file.to_path_buf()),
+            }
+        };
+
+        let previous = spawn(&pid_file);
+        previous.kill(); // arrêt explicite du serveur qu'on remplace
+        assert!(!pid_file.exists());
+
+        let replacement = spawn(&pid_file); // écrit son pid dans le même fichier
+        assert_eq!(
+            std::fs::read_to_string(&pid_file).unwrap(),
+            replacement.pid().to_string()
+        );
+
+        drop(previous); // second `kill()` idempotent, via `Drop`
+        assert_eq!(
+            std::fs::read_to_string(&pid_file).unwrap(),
+            replacement.pid().to_string(),
+            "le Drop du serveur déjà tué a effacé le fichier pid du remplaçant"
+        );
+
+        replacement.kill();
+        assert!(!pid_file.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confirm_no_port_squatter_rejects_a_process_dead_right_after_health() {
+        // `/health` a répondu 200 mais notre processus est déjà mort : un
+        // autre service occupait le port (fenêtre TOCTOU de `free_port`), ou
+        // le nôtre est mort juste après avoir répondu. `wait_healthy` seul ne
+        // peut pas le voir : il ne revérifie pas `is_alive()` après le
+        // dernier appel réseau réussi.
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("llama-server");
+        std::fs::write(
+            &exe,
+            b"#!/bin/sh\necho 'srv load_model: exiting' >&2\nexit 0\n",
+        )
+        .unwrap();
+        super::super::install::set_executable(&exe).unwrap();
+        let mut command = Command::new(&exe);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn().unwrap();
+        let pid = child.id();
+        let _ = child.wait(); // le processus a déjà terminé et été moissonné
+        let server = LlamaServer {
+            child: Mutex::new(Some(child)),
+            pid,
+            port: 4242,
+            api_key: "k".into(),
+            stderr_tail: Arc::new(Mutex::new(VecDeque::new())),
+            pid_file: None,
+        };
+        assert!(!server.is_alive());
+        let err = confirm_no_port_squatter(&server).unwrap_err();
+        match err {
+            SummaryError::EngineStartFailed { detail } => {
+                assert!(!detail.is_empty(), "un diagnostic est attendu")
+            }
+            other => panic!("{other:?}"),
+        }
+        // `kill()` a été appelé par sûreté : idempotent sur un enfant déjà
+        // moissonné, ne panique pas, ne bloque pas.
+        assert!(!server.is_alive());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confirm_no_port_squatter_accepts_a_still_alive_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("llama-server");
+        std::fs::write(&exe, b"#!/bin/sh\nexec sleep 30\n").unwrap();
+        super::super::install::set_executable(&exe).unwrap();
+        let mut command = Command::new(&exe);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        let child = command.spawn().unwrap();
+        let pid = child.id();
+        let server = LlamaServer {
+            child: Mutex::new(Some(child)),
+            pid,
+            port: 4242,
+            api_key: "k".into(),
+            stderr_tail: Arc::new(Mutex::new(VecDeque::new())),
+            pid_file: None,
+        };
+        assert!(confirm_no_port_squatter(&server).is_ok());
+        assert!(
+            server.is_alive(),
+            "un processus vivant ne doit pas être tué"
+        );
+        server.kill();
     }
 
     #[test]
