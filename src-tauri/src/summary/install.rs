@@ -65,6 +65,9 @@ const VERSION_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Intervalle de scrutation du processus pendant l'attente du contrôle.
 const VERSION_CHECK_POLL: Duration = Duration::from_millis(100);
+/// Attente maximale de la fermeture du tube stderr après la fin du processus
+/// (immédiate pour `llama-server`, qui n'a pas de sous-processus).
+const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl From<DownloadError> for SummaryError {
     fn from(e: DownloadError) -> Self {
@@ -293,6 +296,11 @@ fn run_version_check_with_timeout(
     let mut child = command
         .spawn()
         .map_err(|e| VersionCheckFailure::Detail(format!("lancement de {}: {e}", exe.display())))?;
+    // stderr est drainé dans un fil dès le lancement : après une échéance ou
+    // une annulation, on ne lit jamais le tube « jusqu'à la fin » — un
+    // sous-processus survivant au binaire tué (ex. `sh` + `sleep`) garderait
+    // sinon l'extrémité d'écriture ouverte et bloquerait ici.
+    let stderr_reader = StderrReader::start(child.stderr.take());
 
     let deadline = Instant::now() + timeout;
     let status = loop {
@@ -302,7 +310,7 @@ fn run_version_check_with_timeout(
             Err(e) => {
                 kill_child(&mut child);
                 let detail = format!("attente de {}: {e}", exe.display());
-                warn_version_check(&detail, &read_stderr(&mut child));
+                warn_version_check(&detail, &stderr_reader.snapshot(Duration::ZERO));
                 return Err(VersionCheckFailure::Detail(detail));
             }
         }
@@ -315,7 +323,7 @@ fn run_version_check_with_timeout(
             kill_child(&mut child);
             warn_version_check(
                 &VersionCheckFailure::TimedOut.detail(),
-                &read_stderr(&mut child),
+                &stderr_reader.snapshot(Duration::ZERO),
             );
             return Err(VersionCheckFailure::TimedOut);
         }
@@ -324,7 +332,9 @@ fn run_version_check_with_timeout(
     if status.success() {
         return Ok(());
     }
-    let stderr = read_stderr(&mut child);
+    // Le processus est terminé : le tube se ferme aussitôt (sauf sous-processus
+    // survivant, cas borné par l'attente ci-dessous).
+    let stderr = stderr_reader.snapshot(STDERR_DRAIN_TIMEOUT);
     let detail = format!(
         "`llama-server --version` a renvoyé {:?}: {stderr}",
         status.code()
@@ -333,13 +343,55 @@ fn run_version_check_with_timeout(
     Err(VersionCheckFailure::Detail(detail))
 }
 
-/// Sortie d'erreur du processus (vide si le tube n'est plus disponible).
-fn read_stderr(child: &mut std::process::Child) -> String {
-    let mut stderr = String::new();
-    if let Some(mut piped) = child.stderr.take() {
-        let _ = piped.read_to_string(&mut stderr);
+/// Lecture de la sortie d'erreur du processus dans un fil dédié : le tube est
+/// drainé au fil de l'eau (un binaire bavard ne se bloque pas sur un tube
+/// plein) et `snapshot` rend ce qui a été lu sans jamais attendre la fermeture
+/// du tube au-delà du délai demandé.
+struct StderrReader {
+    buffer: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl StderrReader {
+    fn start(stderr: Option<std::process::ChildStderr>) -> Self {
+        let buffer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let handle = stderr.map(|mut piped| {
+            let sink = std::sync::Arc::clone(&buffer);
+            std::thread::spawn(move || {
+                let mut chunk = [0u8; 4096];
+                loop {
+                    match piped.read(&mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            if let Ok(mut sink) = sink.lock() {
+                                sink.extend_from_slice(&chunk[..n]);
+                            }
+                        }
+                    }
+                }
+            })
+        });
+        Self { buffer, handle }
     }
-    stderr.trim().to_string()
+
+    /// Contenu lu jusqu'ici, après avoir laissé au plus `wait_at_most` au fil
+    /// de lecture pour atteindre la fin du tube. Le fil n'est jamais joint de
+    /// force : s'il reste bloqué par un sous-processus survivant, il se
+    /// terminera avec lui.
+    fn snapshot(&self, wait_at_most: Duration) -> String {
+        if let Some(handle) = &self.handle {
+            let deadline = Instant::now() + wait_at_most;
+            while !handle.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let bytes = self
+            .buffer
+            .lock()
+            .map(|buffer| buffer.clone())
+            .unwrap_or_default();
+        String::from_utf8_lossy(&bytes).trim().to_string()
+    }
 }
 
 /// Journalise l'échec du contrôle `--version` avec la sortie d'erreur du
