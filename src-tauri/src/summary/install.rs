@@ -429,6 +429,9 @@ pub(crate) mod test_archives {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
     use super::test_archives::*;
     use super::*;
 
@@ -520,6 +523,24 @@ mod tests {
         assert!(!target.join("llama-b10930.extracting").exists());
     }
 
+    /// Une extraction qui échoue ne touche pas à l'installation en place :
+    /// `final_dir` n'est remplacé qu'au renommage final.
+    #[test]
+    fn a_failed_extraction_keeps_the_previous_installation() {
+        let dir = tempfile::tempdir().unwrap();
+        let final_dir = dir.path().join("llama-b10930");
+        std::fs::create_dir_all(&final_dir).unwrap();
+        std::fs::write(final_dir.join("llama-server"), b"ancien").unwrap();
+        let archive = dir.path().join("bad.tar.gz");
+        std::fs::write(&archive, b"not an archive").unwrap();
+        extract_engine_archive(&archive, ArchiveKind::TarGz, &final_dir).unwrap_err();
+        assert_eq!(
+            std::fs::read(final_dir.join("llama-server")).unwrap(),
+            b"ancien"
+        );
+        assert!(!dir.path().join("llama-b10930.extracting").exists());
+    }
+
     #[cfg(unix)]
     #[test]
     fn version_check_runs_the_executable() {
@@ -541,7 +562,15 @@ mod tests {
 
     /// Serveur HTTP local qui sert `body` en entier (une requête par connexion).
     fn serve_once(body: Vec<u8>) -> String {
+        serve_counting(body).0
+    }
+
+    /// Même serveur, avec le compteur de requêtes servies : de quoi vérifier
+    /// qu'une archive corrompue n'est retéléchargée qu'une seule fois.
+    fn serve_counting(body: Vec<u8>) -> (String, Arc<AtomicUsize>) {
         use std::io::{BufRead, BufReader, Write};
+        let requests = Arc::new(AtomicUsize::new(0));
+        let served = Arc::clone(&requests);
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/asset", listener.local_addr().unwrap());
         std::thread::spawn(move || {
@@ -552,6 +581,7 @@ mod tests {
                 while reader.read_line(&mut line).unwrap_or(0) > 0 && line != "\r\n" {
                     line.clear();
                 }
+                served.fetch_add(1, Ordering::SeqCst);
                 let _ = write!(
                     stream,
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -560,7 +590,7 @@ mod tests {
                 let _ = stream.write_all(&body);
             }
         });
-        url
+        (url, requests)
     }
 
     fn leak(s: String) -> &'static str {
@@ -621,9 +651,10 @@ mod tests {
     #[tokio::test]
     async fn ensure_engine_reports_checksum_mismatch_after_one_retry() {
         let dir = tempfile::tempdir().unwrap();
+        let (url, requests) = serve_counting(b"corrupt".to_vec());
         let asset = EngineAsset {
             file_name: "llama-b10930-bin-test.tar.gz",
-            url: leak(serve_once(b"corrupt".to_vec())),
+            url: leak(url),
             sha256: "0000000000000000000000000000000000000000000000000000000000000000",
             size_bytes: 0,
             kind: ArchiveKind::TarGz,
@@ -635,6 +666,92 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, SummaryError::ChecksumMismatch);
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            2,
+            "un seul retéléchargement"
+        );
+    }
+
+    /// Archive intacte au SHA-256 mais illisible : supprimée, retéléchargée une
+    /// seule fois, puis abandon avec le détail de l'extraction.
+    #[tokio::test]
+    async fn ensure_engine_redownloads_once_when_extraction_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = b"ce n'est pas une archive".to_vec();
+        let sha = format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(&body));
+        let (url, requests) = serve_counting(body);
+        let asset = EngineAsset {
+            file_name: "llama-b10930-bin-test.tar.gz",
+            url: leak(url),
+            sha256: leak(sha),
+            size_bytes: 0,
+            kind: ArchiveKind::TarGz,
+            exe_name: "llama-server",
+        };
+        let paths = SummaryPaths::new(&dir.path().join("data"));
+        let client = crate::download::build_client().unwrap();
+        let err = ensure_engine_from(&asset, &paths, &client, &CancellationToken::new(), |_| {})
+            .await
+            .unwrap_err();
+        match err {
+            SummaryError::EngineStartFailed { detail } => {
+                assert!(detail.contains("tar.gz"), "{detail}")
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            2,
+            "un seul retéléchargement"
+        );
+        assert!(!paths
+            .bin_dir
+            .join("llama-b10930-bin-test.tar.gz.part")
+            .exists());
+        assert!(!paths.engine_dir().exists());
+    }
+
+    /// `--version` qui échoue : l'erreur porte le code de sortie et stderr, et
+    /// l'archive n'est pas retéléchargée (elle est intacte).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ensure_engine_reports_a_failing_version_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("src.tar.gz");
+        write_tar_gz(
+            &archive,
+            "llama-b10930",
+            &[(
+                "llama-server",
+                b"#!/bin/sh\necho 'dyld: libggml introuvable' >&2\nexit 3\n",
+                0o755,
+            )],
+        );
+        let bytes = std::fs::read(&archive).unwrap();
+        let sha = crate::download::compute_sha256(&archive).unwrap();
+        let (url, requests) = serve_counting(bytes);
+        let asset = EngineAsset {
+            file_name: "llama-b10930-bin-test.tar.gz",
+            url: leak(url),
+            sha256: leak(sha),
+            size_bytes: 0,
+            kind: ArchiveKind::TarGz,
+            exe_name: "llama-server",
+        };
+        let paths = SummaryPaths::new(&dir.path().join("data"));
+        let client = crate::download::build_client().unwrap();
+        let err = ensure_engine_from(&asset, &paths, &client, &CancellationToken::new(), |_| {})
+            .await
+            .unwrap_err();
+        match err {
+            SummaryError::EngineStartFailed { detail } => assert!(
+                detail.contains("--version") && detail.contains("3") && detail.contains("libggml"),
+                "{detail}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
