@@ -1,6 +1,14 @@
 //! Gabarit et prompts (spec §6), en constantes. Toute modification du gabarit
 //! doit rester cohérente avec `check_template` : ce que les prompts demandent
 //! est exactement ce que le contrôle accepte.
+//!
+//! Le modèle local n'obéit pas au mot près : sur une vraie transcription,
+//! Ministral rend ses titres en gras (`## **Résumé**`, `## Résumé :`) et
+//! intercale des lignes `---`. `clean_output` normalise donc la sortie
+//! (titres ramenés à leur forme canonique, séparateurs retirés) *avant* le
+//! contrôle, plutôt que de rejeter un compte-rendu correct sur sa mise en
+//! forme. Ce qui reste refusé relève du fond : plusieurs comptes-rendus
+//! collés, une section inconnue, une section obligatoire absente.
 
 pub const SYSTEM_PROMPT: &str = "Tu es un assistant de rédaction professionnel. Tu écris uniquement en français, dans un style clair et neutre. Tu reformules et organises le contenu fourni sans rien inventer : aucune information absente de la transcription, aucun commentaire, aucune introduction ni conclusion hors du gabarit demandé.";
 
@@ -8,11 +16,12 @@ pub const SYSTEM_PROMPT: &str = "Tu es un assistant de rédaction professionnel.
 /// final. Les contraintes « un seul compte-rendu », « un seul titre », « pas de
 /// séparateur » et « pas de bloc de code » viennent de l'essai comparatif : le
 /// modèle rendait sinon plusieurs comptes-rendus, un par partie, collés par une
-/// ligne de séparation.
-pub const TEMPLATE_INSTRUCTIONS: &str = "Rédige un seul compte-rendu global en Markdown, de 250 à 450 mots, en respectant exactement cette structure : une seule ligne `# ` suivie d'un titre court ; `## Résumé` : 3 à 6 phrases ; `## Points clés` : liste à puces des informations importantes (faits, chiffres, noms, dates) ; `## Décisions et actions` : liste à puces « qui, quoi, quand » — s'il n'y a ni décision ni action, n'écris ni la section ni une mention de son absence. N'ajoute aucune autre section, ne reproduis pas les parties une par une, n'écris aucune ligne de séparation `---` et n'utilise aucun bloc de code (pas de ```).";
+/// ligne de séparation. La dernière phrase (titres exacts, sans gras ni
+/// deux-points) vient de la passe réelle sur Ministral.
+pub const TEMPLATE_INSTRUCTIONS: &str = "Rédige un seul compte-rendu global en Markdown, de 250 à 450 mots, en respectant exactement cette structure : une seule ligne `# ` suivie d'un titre court ; `## Résumé` : 3 à 6 phrases ; `## Points clés` : liste à puces des informations importantes (faits, chiffres, noms, dates) ; `## Décisions et actions` : liste à puces « qui, quoi, quand » — s'il n'y a ni décision ni action, n'écris ni la section ni une mention de son absence. N'ajoute aucune autre section, ne reproduis pas les parties une par une, n'écris aucune ligne de séparation `---` et n'utilise aucun bloc de code (pas de ```). Les titres de section s'écrivent exactement `## Résumé`, `## Points clés`, `## Décisions et actions`, sans gras, sans deux-points, sans ligne de séparation.";
 
 /// Rappel ajouté au prompt lors de l'unique relance après un gabarit incomplet.
-pub const STRICT_REMINDER: &str = "RAPPEL STRICT : la réponse précédente ne respectait pas la structure demandée. Réponds uniquement avec le compte-rendu, exactement dans cette structure et sans aucune autre section ni commentaire : une seule ligne `# ` avec un titre court, puis `## Résumé`, puis `## Points clés`, puis (seulement s'il y a des décisions ou des actions) `## Décisions et actions`. N'écris aucune ligne de séparation `---` et n'utilise aucun bloc de code.";
+pub const STRICT_REMINDER: &str = "RAPPEL STRICT : la réponse précédente ne respectait pas la structure demandée. Réponds uniquement avec le compte-rendu, exactement dans cette structure et sans aucune autre section ni commentaire : une seule ligne `# ` avec un titre court, puis `## Résumé`, puis `## Points clés`, puis (seulement s'il y a des décisions ou des actions) `## Décisions et actions`. Les titres de section s'écrivent exactement `## Résumé`, `## Points clés`, `## Décisions et actions`, sans gras, sans deux-points, sans ligne de séparation. N'écris aucune ligne de séparation `---` et n'utilise aucun bloc de code.";
 
 /// Rappel ajouté au prompt lorsque la réponse précédente a été tronquée faute
 /// de place (sortie coupée au budget de tokens).
@@ -85,18 +94,170 @@ pub enum TemplateIssue {
     MissingKeyPoints,
     UnexpectedSection(String),
     /// Ligne de séparation (`---`, `***`, `___`), signe de documents collés.
+    /// `clean_output` les retire toutes : ce cas ne se produit plus sur une
+    /// sortie nettoyée et ne subsiste que comme filet pour un contrôle mené
+    /// directement sur du Markdown brut.
     Separator,
 }
 
-/// Ligne de séparation Markdown laissée seule sur sa ligne.
+/// Ligne de séparation Markdown (« thematic break » CommonMark) : au moins
+/// trois fois le même marqueur `-`, `*` ou `_`, seuls sur la ligne, espaces
+/// autorisés entre eux — `---`, `***`, `___`, `----`, `- - -`.
 fn is_separator(line: &str) -> bool {
-    matches!(line.trim(), "---" | "***" | "___")
+    let line = line.trim();
+    let marker = match line.chars().next() {
+        Some(c @ ('-' | '*' | '_')) => c,
+        _ => return false,
+    };
+    let mut markers = 0usize;
+    for c in line.chars() {
+        if c == marker {
+            markers += 1;
+        } else if !c.is_whitespace() {
+            return false;
+        }
+    }
+    markers >= 3
+}
+
+/// Retire les marqueurs d'emphase encadrants (`**`, `__`, `*`, `_`), au besoin
+/// plusieurs fois (`***Résumé***`), et les espaces autour.
+fn strip_emphasis(text: &str) -> &str {
+    let mut text = text.trim();
+    loop {
+        let inner = ["**", "__", "*", "_"].into_iter().find_map(|marker| {
+            let inner = text.strip_prefix(marker)?.strip_suffix(marker)?.trim();
+            (!inner.is_empty()).then_some(inner)
+        });
+        match inner {
+            Some(inner) => text = inner,
+            None => return text,
+        }
+    }
+}
+
+/// Minuscule sans accent ; `None` pour une marque combinante, si bien qu'un
+/// « é » composé (`e` + U+0301) et un « é » précomposé donnent la même clé.
+fn fold_char(c: char) -> Option<char> {
+    if ('\u{0300}'..='\u{036f}').contains(&c) {
+        return None;
+    }
+    let c = c.to_lowercase().next().unwrap_or(c);
+    Some(match c {
+        'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' => 'a',
+        'é' | 'è' | 'ê' | 'ë' => 'e',
+        'í' | 'ì' | 'î' | 'ï' => 'i',
+        'ó' | 'ò' | 'ô' | 'ö' | 'õ' => 'o',
+        'ú' | 'ù' | 'û' | 'ü' => 'u',
+        'ç' => 'c',
+        'ñ' => 'n',
+        'ÿ' => 'y',
+        other => other,
+    })
+}
+
+/// Clé de comparaison d'un titre de section : minuscules, accents retirés,
+/// `&` lu « et », toute autre ponctuation (trait d'union compris) ramenée à un
+/// espace, espaces repliés. « Points-clés », « POINTS CLEFS » et
+/// « Points clés » donnent la même clé.
+fn section_key(text: &str) -> String {
+    let mut key = String::new();
+    for c in text.chars() {
+        match fold_char(c) {
+            Some(c) if c.is_alphanumeric() => key.push(c),
+            Some('&') => key.push_str(" et "),
+            Some(_) => key.push(' '),
+            None => {}
+        }
+    }
+    key.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Forme canonique de la section nommée par `text`, ou `None` si ce n'est pas
+/// une des trois sections du gabarit. Une numérotation en tête (« 1. Résumé »)
+/// est ignorée.
+fn canonical_section(text: &str) -> Option<&'static str> {
+    let key = section_key(text);
+    let key = key
+        .split_once(' ')
+        .filter(|(head, _)| head.chars().all(|c| c.is_ascii_digit()))
+        .map_or(key.as_str(), |(_, rest)| rest);
+    match key {
+        "resume" => Some(SECTION_SUMMARY),
+        "points cles" | "points cle" | "points clefs" | "points clef" => Some(SECTION_KEY_POINTS),
+        "decisions et actions"
+        | "decisions et action"
+        | "decision et action"
+        | "decisions actions"
+        | "decisions" => Some(SECTION_DECISIONS),
+        _ => None,
+    }
+}
+
+/// Réécrit une ligne de titre ATX : emphase, dièses de fermeture et deux-points
+/// finaux retirés, sections du gabarit ramenées à leur forme canonique exacte.
+/// `None` si la ligne n'est pas un titre (le `#` doit être suivi d'un espace,
+/// comme en CommonMark : `#mot-clé` reste du texte).
+fn normalize_heading(line: &str) -> Option<String> {
+    // L'emphase peut envelopper la ligne entière : `**## Résumé**`.
+    let line = strip_emphasis(line.trim());
+    let level = line.chars().take_while(|c| *c == '#').count();
+    if level == 0 || level > 6 {
+        return None;
+    }
+    let rest = &line[level..];
+    if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let mut text = rest.trim();
+    loop {
+        let before = text.len();
+        text = strip_emphasis(text.trim_end_matches('#'));
+        text = text.trim_end_matches(|c: char| c == ':' || c == '\u{ff1a}' || c.is_whitespace());
+        if text.len() == before {
+            break;
+        }
+    }
+    if text.is_empty() {
+        return Some("#".repeat(level));
+    }
+    if level == 2 {
+        if let Some(canonical) = canonical_section(text) {
+            return Some(canonical.to_string());
+        }
+    }
+    Some(format!("{} {text}", "#".repeat(level)))
+}
+
+/// Passe ligne à ligne : titres normalisés, lignes de séparation retirées où
+/// qu'elles soient, espaces de fin et lignes vides en trop repliés.
+fn normalize_lines(text: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for line in text.lines() {
+        if is_separator(line) {
+            continue;
+        }
+        let line = normalize_heading(line).unwrap_or_else(|| line.trim_end().to_string());
+        if line.is_empty() {
+            // Une seule ligne vide de séparation, jamais en tête.
+            if lines.last().is_none_or(|previous| previous.is_empty()) {
+                continue;
+            }
+        }
+        lines.push(line);
+    }
+    while lines.last().is_some_and(|line| line.is_empty()) {
+        lines.pop();
+    }
+    lines.join("\n")
 }
 
 /// Contrôle du gabarit (§6) : exactement une ligne `# `, `## Résumé`,
 /// `## Points clés` ; `## Décisions et actions` facultatif ; toute autre ligne
 /// `## ` et toute ligne de séparation sont refusées. Les sous-titres `### `
-/// à l'intérieur d'une section restent acceptés.
+/// à l'intérieur d'une section restent acceptés. À appeler sur une sortie
+/// passée par `clean_output` : la mise en forme y est déjà normalisée, ce qui
+/// reste refusé ici relève du fond.
 pub fn check_template(markdown: &str) -> Result<(), TemplateIssue> {
     let mut titles = 0usize;
     let mut has_summary = false;
@@ -136,19 +297,10 @@ pub fn check_template(markdown: &str) -> Result<(), TemplateIssue> {
     Ok(())
 }
 
-/// Retire un séparateur laissé seul en dernière ligne.
-fn strip_trailing_separator(text: &str) -> &str {
-    let text = text.trim();
-    match text.rsplit_once('\n') {
-        Some((head, last)) if is_separator(last) => head.trim_end(),
-        Some(_) => text,
-        None if is_separator(text) => "",
-        None => text,
-    }
-}
-
-/// Nettoyage de la sortie brute du modèle : bloc de réflexion `<think>…</think>`
-/// éventuel, clôture Markdown (accents graves), séparateur final, espaces.
+/// Nettoyage et normalisation de la sortie brute du modèle : bloc de réflexion
+/// `<think>…</think>` éventuel, clôture Markdown (accents graves), titres
+/// ramenés à leur forme canonique, lignes de séparation retirées, espaces.
+/// Idempotent : nettoyer une sortie déjà nettoyée ne change rien.
 pub fn clean_output(raw: &str) -> String {
     let mut text = raw.to_string();
     while let Some(start) = text.find("<think>") {
@@ -165,17 +317,12 @@ pub fn clean_output(raw: &str) -> String {
             text.clear();
         }
     }
-    // Clôture et séparateur finaux, dans n'importe quel ordre.
-    loop {
-        let before = text.len();
-        if let Some(stripped) = text.trim_end().strip_suffix("```") {
-            text = stripped.to_string();
-        }
-        text = strip_trailing_separator(&text).to_string();
-        if text.len() == before {
-            return text;
-        }
+    text = normalize_lines(&text);
+    // Clôture finale, éventuellement démasquée par le retrait d'un séparateur.
+    while let Some(stripped) = text.trim_end().strip_suffix("```") {
+        text = normalize_lines(stripped);
     }
+    text
 }
 
 #[cfg(test)]
@@ -245,6 +392,27 @@ mod tests {
             .contains("un seul compte-rendu global qui synthétise l'ensemble des parties"));
     }
 
+    /// Les écarts constatés en conditions réelles (titres en gras, deux-points,
+    /// séparateurs) sont nommés dans les deux prompts qui décrivent le gabarit.
+    #[test]
+    fn prompts_spell_out_the_exact_section_headings() {
+        for constraint in [
+            "Les titres de section s'écrivent exactement",
+            "sans gras",
+            "sans deux-points",
+            "sans ligne de séparation",
+        ] {
+            assert!(
+                TEMPLATE_INSTRUCTIONS.contains(constraint),
+                "TEMPLATE_INSTRUCTIONS sans « {constraint} »"
+            );
+            assert!(
+                STRICT_REMINDER.contains(constraint),
+                "STRICT_REMINDER sans « {constraint} »"
+            );
+        }
+    }
+
     #[test]
     fn template_check_accepts_the_expected_structure() {
         assert_eq!(check_template(GOOD), Ok(()));
@@ -290,10 +458,25 @@ mod tests {
             Err(TemplateIssue::MultipleTitles(2))
         );
 
-        for separator in ["---", "***", "___", "  ---  "] {
+        for separator in ["---", "***", "___", "  ---  ", "----", "- - -"] {
             let markdown = format!("# T\n## Résumé\nx\n{separator}\n## Points clés\n- y\n");
             assert_eq!(check_template(&markdown), Err(TemplateIssue::Separator));
         }
+    }
+
+    /// Plusieurs comptes-rendus collés restent refusés une fois les
+    /// séparateurs retirés : c'est le nombre de titres qui les trahit.
+    #[test]
+    fn cleaning_never_turns_two_documents_into_one() {
+        let two_documents = format!(
+            "{GOOD}\n---\n\n# **Deuxième réunion**\n\n## **Résumé**\nx\n\n## Points clés\n- y\n"
+        );
+        let cleaned = clean_output(&two_documents);
+        assert!(!cleaned.contains("---"), "{cleaned}");
+        assert_eq!(
+            check_template(&cleaned),
+            Err(TemplateIssue::MultipleTitles(2))
+        );
     }
 
     #[test]
@@ -310,5 +493,91 @@ mod tests {
             "# T\n## Résumé\nx\n## Points clés\n- y"
         );
         assert_eq!(clean_output("# T\n- y\n```\n---\n"), "# T\n- y");
+    }
+
+    /// Sortie réelle de Ministral relevée à la tâche 13 : titres en gras,
+    /// deux-points, lignes `---` entre les sections.
+    #[test]
+    fn output_cleaning_normalizes_the_real_model_output() {
+        let raw = "# **Création d'une landing page interactive**\n\n## **Résumé**\nPhrase une. Phrase deux. Phrase trois.\n\n---\n\n## **Points clés**\n- Budget : 30 000 €\n\n---\n\n## **Décisions et actions** :\n- Marie envoie le devis lundi\n";
+        let cleaned = clean_output(raw);
+        assert_eq!(
+            cleaned,
+            "# Création d'une landing page interactive\n\n## Résumé\nPhrase une. Phrase deux. Phrase trois.\n\n## Points clés\n- Budget : 30 000 €\n\n## Décisions et actions\n- Marie envoie le devis lundi"
+        );
+        assert_eq!(check_template(&cleaned), Ok(()));
+        assert_eq!(clean_output(&cleaned), cleaned, "nettoyage idempotent");
+    }
+
+    #[test]
+    fn section_headings_are_rewritten_in_canonical_form() {
+        for raw in [
+            "## **Résumé**",
+            "## __Résumé__",
+            "## *Résumé*",
+            "## Résumé :",
+            "## **Résumé :**",
+            "## RÉSUMÉ",
+            "## Resume",
+            // « é » composé : `e` + accent aigu combinant.
+            "## Re\u{0301}sume\u{0301}",
+            "##   résumé   ",
+            "## Résumé ##",
+            "**## Résumé**",
+            "## 1. Résumé",
+        ] {
+            assert_eq!(clean_output(raw), SECTION_SUMMARY, "« {raw} »");
+        }
+        for raw in [
+            "## **Points clés**",
+            "## Points-clés :",
+            "## points clefs",
+            "## Points Clés",
+            "## POINTS CLEFS :",
+        ] {
+            assert_eq!(clean_output(raw), SECTION_KEY_POINTS, "« {raw} »");
+        }
+        for raw in [
+            "## **Décisions et actions**",
+            "## Décisions & actions :",
+            "## DÉCISIONS ET ACTIONS",
+            "## Decisions et actions",
+            "## Décisions",
+        ] {
+            assert_eq!(clean_output(raw), SECTION_DECISIONS, "« {raw} »");
+        }
+        // Un titre de niveau 1 garde son texte ; seule la mise en forme part.
+        assert_eq!(clean_output("# **Réunion budget** :"), "# Réunion budget");
+        // Une section inconnue est normalisée, pas acceptée.
+        assert_eq!(clean_output("## **Conclusion** :"), "## Conclusion");
+        assert_eq!(
+            check_template("# T\n## Résumé\nx\n## Points clés\n- y\n## Conclusion\nz"),
+            Err(TemplateIssue::UnexpectedSection("## Conclusion".into()))
+        );
+        // Ni un mot-dièse ni du gras en début de ligne ne deviennent un titre.
+        assert_eq!(clean_output("#budget serré"), "#budget serré");
+        assert_eq!(
+            clean_output("**Points clés** du jour"),
+            "**Points clés** du jour"
+        );
+    }
+
+    #[test]
+    fn separators_are_removed_wherever_they_are() {
+        for separator in ["---", "***", "___", "----------", "- - -", "  ***  "] {
+            let raw = format!(
+                "# T\n\n{separator}\n\n## Résumé\nx\n\n{separator}\n\n## Points clés\n- y\n\n{separator}\n"
+            );
+            let cleaned = clean_output(&raw);
+            assert_eq!(
+                cleaned, "# T\n\n## Résumé\nx\n\n## Points clés\n- y",
+                "« {separator} »"
+            );
+            assert_eq!(check_template(&cleaned), Ok(()));
+        }
+        // Ce qui ressemble à un séparateur sans en être un reste intact.
+        for kept in ["- point", "--", "*Italique*", "a---b"] {
+            assert!(!is_separator(kept), "« {kept} »");
+        }
     }
 }
