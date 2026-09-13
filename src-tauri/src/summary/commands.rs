@@ -59,6 +59,10 @@ pub async fn summarize_document(
     // cause doit s'y trouver, le front ne reçoit qu'une variante d'erreur.
     let markdown = match result {
         Ok(markdown) => markdown,
+        Err(SummaryError::Cancelled) => {
+            log::info!("Résumé annulé à la demande de l'utilisateur");
+            return Err(SummaryError::Cancelled);
+        }
         Err(e) => {
             log::error!("Résumé impossible : {e}");
             return Err(e);
