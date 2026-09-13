@@ -395,6 +395,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn existing_valid_file_skips_the_network() {
+        let data = body();
+        let server = start_server(data.clone(), vec![Behaviour::Normal]);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("file.bin");
+        std::fs::write(&dest, &data).unwrap();
+        let client = build_client().unwrap();
+        let mut events = Vec::new();
+        download_with_resume(
+            &client,
+            &server.url,
+            &dest,
+            Some(&sha_hex(&data)),
+            &CancellationToken::new(),
+            |e| events.push(e),
+        )
+        .await
+        .unwrap();
+        // Sans SHA-256 attendu, la seule présence du fichier suffit.
+        download_with_resume(
+            &client,
+            &server.url,
+            &dest,
+            None,
+            &CancellationToken::new(),
+            |e| events.push(e),
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), data);
+        assert!(
+            events.is_empty(),
+            "rien à télécharger, donc aucun événement"
+        );
+        assert!(
+            server.ranges_seen.lock().unwrap().is_empty(),
+            "aucune requête ne doit partir"
+        );
+    }
+
+    #[tokio::test]
+    async fn existing_file_with_wrong_sha256_is_replaced() {
+        let data = body();
+        let server = start_server(data.clone(), vec![Behaviour::Normal]);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("file.bin");
+        std::fs::write(&dest, b"version corrompue").unwrap();
+        let client = build_client().unwrap();
+        download_with_resume(
+            &client,
+            &server.url,
+            &dest,
+            Some(&sha_hex(&data)),
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), data);
+        assert_eq!(server.ranges_seen.lock().unwrap().as_slice(), &[None]);
+    }
+
+    #[tokio::test]
     async fn resumes_partial_file_with_range() {
         let data = body();
         let server = start_server(data.clone(), vec![Behaviour::Normal]);
