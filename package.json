@@ -1,7 +1,7 @@
 {
   "name": "handy-ocade",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -17,6 +17,7 @@
     "test:playwright": "playwright test",
     "test:playwright:ui": "playwright test --ui",
     "check:translations": "bun scripts/check-translations.ts",
+    "test:unit": "bun test tests/unit",
     "postinstall": "bun scripts/check-nix-deps.ts"
   },
   "dependencies": {

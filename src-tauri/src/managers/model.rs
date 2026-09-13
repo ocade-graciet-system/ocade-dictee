@@ -3,17 +3,14 @@ use super::model_capabilities::{
 };
 use anyhow::Result;
 use flate2::read::GzDecoder;
-use futures_util::StreamExt;
 use hf_hub::api::tokio::{ApiBuilder, CancellationToken, Progress};
 use hf_hub::{Cache, Repo, RepoType};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use specta::Type;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::File;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1762,56 +1759,6 @@ impl ModelManager {
         })
     }
 
-    /// Verifies the SHA256 of `path` against `expected_sha256` (if provided).
-    /// On mismatch or read error the partial file is deleted and an error is returned,
-    /// so the next download attempt always starts from a clean state.
-    /// When `expected_sha256` is `None` (custom user models) verification is skipped.
-    fn verify_sha256(path: &Path, expected_sha256: Option<&str>, model_id: &str) -> Result<()> {
-        let Some(expected) = expected_sha256 else {
-            return Ok(());
-        };
-        match Self::compute_sha256(path) {
-            Ok(actual) if actual == expected => {
-                info!("SHA256 verified for model {}", model_id);
-                Ok(())
-            }
-            Ok(actual) => {
-                warn!(
-                    "SHA256 mismatch for model {}: expected {}, got {}",
-                    model_id, expected, actual
-                );
-                let _ = fs::remove_file(path);
-                Err(anyhow::anyhow!(
-                    "Download verification failed for model {}: file is corrupt. Please retry.",
-                    model_id
-                ))
-            }
-            Err(e) => {
-                let _ = fs::remove_file(path);
-                Err(anyhow::anyhow!(
-                    "Failed to verify download for model {}: {}. Please retry.",
-                    model_id,
-                    e
-                ))
-            }
-        }
-    }
-
-    /// Computes the SHA256 hex digest of a file, reading in 64KB chunks to handle large models.
-    fn compute_sha256(path: &Path) -> Result<String> {
-        let mut file = File::open(path)?;
-        let mut hasher = Sha256::new();
-        let mut buffer = [0u8; 65536];
-        loop {
-            let n = file.read(&mut buffer)?;
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buffer[..n]);
-        }
-        Ok(format!("{:x}", hasher.finalize()))
-    }
-
     /// Download a Hugging Face-sourced model into the shared HF cache via
     /// hf-hub, reporting progress through the same `model-download-progress`
     /// event the URL path uses. Relies on hf-hub's stock token + cache (no
@@ -2013,7 +1960,7 @@ impl ModelManager {
         }
 
         // Check if we have a partial download to resume
-        let mut resume_from = if partial_path.exists() {
+        let resume_from = if partial_path.exists() {
             let size = partial_path.metadata()?.len();
             info!("Resuming download of model {} from byte {}", model_id, size);
             size
@@ -2046,197 +1993,129 @@ impl ModelManager {
             disarmed: false,
         };
 
-        // Create HTTP client with range request for resuming.
-        // Délais explicites (issue #2) : sans eux, un miroir qui accepte la
-        // connexion puis se tait bloque la boucle de lecture indéfiniment —
-        // ni repli sur l'autre source, ni bouton « Réessayer » atteignable.
-        // `read_timeout` est une inactivité *par lecture* (le compteur repart à
-        // chaque paquet reçu) : un débit faible mais continu passe. Un `timeout`
-        // global est au contraire proscrit ici, il couperait un téléchargement
-        // de 512 Mo légitimement lent.
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(30))
-            .read_timeout(Duration::from_secs(60))
-            .build()?;
-        let mut request = client.get(&url);
-
-        if resume_from > 0 {
-            request = request.header("Range", format!("bytes={}-", resume_from));
-        }
-
-        let mut response = request.send().await?;
-
-        // If we tried to resume but server returned 200 (not 206 Partial Content),
-        // the server doesn't support range requests. Delete partial file and restart
-        // fresh to avoid file corruption (appending full file to partial).
-        if resume_from > 0 && response.status() == reqwest::StatusCode::OK {
-            warn!(
-                "Server doesn't support range requests for model {}, restarting download",
-                model_id
-            );
-            drop(response);
-            let _ = fs::remove_file(&partial_path);
-
-            // Reset resume_from since we're starting fresh
-            resume_from = 0;
-
-            // Restart download without range header
-            response = client.get(&url).send().await?;
-        }
-
-        // Reprise refusée par le serveur (416 Range Not Satisfiable) : le
-        // `.partial` est plus grand que la ressource — fichier remplacé côté
-        // miroir, ou reliquat d'un autre modèle. Sans ce traitement l'échec est
-        // définitif : les deux miroirs renvoient le même 416 et chaque
-        // « Réessayer » le rejoue à l'identique. On repart donc de zéro, comme
-        // pour un serveur qui ignore `Range` (cas 200 juste au-dessus). Une
-        // seule relance : `resume_from` vaut 0 ensuite, plus aucun en-tête
-        // `Range` n'est envoyé.
-        if resume_from > 0 && response.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
-            warn!(
-                "Reprise refusée (HTTP 416) pour le modèle {}, suppression du fichier partiel et téléchargement complet",
-                model_id
-            );
-            drop(response);
-            let _ = fs::remove_file(&partial_path);
-
-            // Plus rien à reprendre : on repart de l'octet 0.
-            resume_from = 0;
-
-            // Rejeu de la requête sans en-tête `Range`.
-            response = client.get(&url).send().await?;
-        }
-
-        // Check for success or partial content status
-        if !response.status().is_success()
-            && response.status() != reqwest::StatusCode::PARTIAL_CONTENT
-        {
-            return Err(anyhow::anyhow!(
-                "Failed to download model: HTTP {}",
-                response.status()
-            ));
-        }
-
-        let total_size = if resume_from > 0 {
-            // For resumed downloads, add the resume point to content length
-            resume_from + response.content_length().unwrap_or(0)
-        } else {
-            response.content_length().unwrap_or(0)
-        };
-
-        let mut downloaded = resume_from;
-        let mut stream = response.bytes_stream();
-
-        // Open file for appending if resuming, or create new if starting fresh
-        let mut file = if resume_from > 0 {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&partial_path)?
-        } else {
-            std::fs::File::create(&partial_path)?
-        };
-
-        // Emit initial progress
-        let initial_progress = DownloadProgress {
-            model_id: model_id.to_string(),
-            downloaded,
-            total: total_size,
-            percentage: if total_size > 0 {
-                (downloaded as f64 / total_size as f64) * 100.0
-            } else {
-                0.0
-            },
-        };
-        let _ = self
-            .app_handle
-            .emit("model-download-progress", &initial_progress);
-
-        // Throttle progress events to max 10/sec (100ms intervals)
+        // Téléchargement avec reprise, taille et SHA-256 : utilitaire partagé
+        // (`crate::download`, plan 09) — mêmes règles qu'avant (délais de
+        // connexion 30 s et de lecture 60 s, 200/416 sur une reprise →
+        // recommencer, annulation → `.partial` conservé, SHA-256 faux →
+        // `.partial` supprimé), mais testées sur un serveur HTTP local.
+        let client = crate::download::build_client()?;
         let mut last_emit = Instant::now();
         let throttle_duration = Duration::from_millis(100);
+        let app_handle = self.app_handle.clone();
+        let progress_model_id = model_id.to_string();
+        // L'utilitaire hache un `.partial` déjà présent *avant* de reprendre
+        // (pré-hachage) puis le fichier complet à la fin : chaque hachage est
+        // encadré par `model-verification-started` / `model-verification-completed`
+        // pour que l'écran affiche « Vérification » pendant le hachage
+        // seulement, et « Téléchargement » dès que les octets arrivent.
+        let mut verifying = false;
+        // Un `.partial` déjà complet et conforme est reconnu au pré-hachage :
+        // l'utilitaire rend la main sans un seul `Progress`.
+        let mut emitted_progress = false;
+        let download = crate::download::download_to_part(
+            &client,
+            &url,
+            &partial_path,
+            expected_sha256.as_deref(),
+            cancel_token,
+            |event| match event {
+                crate::download::DownloadEvent::Progress { downloaded, total } => {
+                    if verifying {
+                        // Pré-hachage terminé, le téléchargement reprend.
+                        verifying = false;
+                        let _ = app_handle.emit("model-verification-completed", &progress_model_id);
+                    }
+                    emitted_progress = true;
+                    // `total` vaut `downloaded` quand le serveur n'annonce pas
+                    // de taille, et 0 seulement avant le premier octet reçu.
+                    let percentage = if total > 0 {
+                        (downloaded as f64 / total as f64) * 100.0
+                    } else {
+                        0.0
+                    };
+                    // Throttle progress events to max 10/sec (100ms intervals),
+                    // but always emit the first and the final byte.
+                    let is_final = total > 0 && downloaded >= total;
+                    if downloaded == resume_from
+                        || is_final
+                        || last_emit.elapsed() >= throttle_duration
+                    {
+                        let _ = app_handle.emit(
+                            "model-download-progress",
+                            &DownloadProgress {
+                                model_id: progress_model_id.clone(),
+                                downloaded,
+                                total,
+                                percentage,
+                            },
+                        );
+                        last_emit = Instant::now();
+                    }
+                }
+                crate::download::DownloadEvent::Verifying => {
+                    verifying = true;
+                    let _ = app_handle.emit("model-verification-started", &progress_model_id);
+                    info!("Verifying SHA256 for model {}...", progress_model_id);
+                }
+            },
+        )
+        .await;
 
-        // Download with progress
-        while let Some(chunk) = stream.next().await {
-            // Check if download was cancelled
-            if cancel_token.is_cancelled() {
-                drop(file);
+        // Une vérification restée ouverte (échec ou annulation pendant un
+        // hachage) doit être refermée avant de sortir ou d'essayer le miroir
+        // suivant : aucun événement ne le ferait entre deux miroirs, et l'écran
+        // resterait sur « Vérification » pendant tout le téléchargement suivant.
+        // Le succès la referme plus bas, après le hachage final.
+        if download.is_err() && verifying {
+            let _ = self
+                .app_handle
+                .emit("model-verification-completed", model_id);
+        }
+
+        match download {
+            Ok(()) => {}
+            Err(crate::download::DownloadError::Cancelled) => {
                 info!("Download cancelled for: {}", model_id);
                 // Keep partial file for resume functionality.
                 // Guard handles is_downloading + cancel_flags cleanup on drop.
                 return Ok(());
             }
-
-            let chunk = chunk?;
-
-            file.write_all(&chunk)?;
-            downloaded += chunk.len() as u64;
-
-            let percentage = if total_size > 0 {
-                (downloaded as f64 / total_size as f64) * 100.0
-            } else {
-                0.0
-            };
-
-            // Emit progress event (throttled to avoid UI freeze)
-            if last_emit.elapsed() >= throttle_duration {
-                let progress = DownloadProgress {
-                    model_id: model_id.to_string(),
-                    downloaded,
-                    total: total_size,
-                    percentage,
-                };
-                let _ = self.app_handle.emit("model-download-progress", &progress);
-                last_emit = Instant::now();
-            }
-        }
-
-        // Emit final progress to ensure 100% is shown
-        let final_progress = DownloadProgress {
-            model_id: model_id.to_string(),
-            downloaded,
-            total: total_size,
-            percentage: if total_size > 0 {
-                (downloaded as f64 / total_size as f64) * 100.0
-            } else {
-                100.0
-            },
-        };
-        let _ = self
-            .app_handle
-            .emit("model-download-progress", &final_progress);
-
-        file.flush()?;
-        drop(file); // Ensure file is closed before moving
-
-        // Verify downloaded file size matches expected size
-        if total_size > 0 {
-            let actual_size = partial_path.metadata()?.len();
-            if actual_size != total_size {
-                // Download is incomplete/corrupted - delete partial and return error
-                let _ = fs::remove_file(&partial_path);
+            Err(crate::download::DownloadError::ChecksumMismatch { expected, actual }) => {
+                warn!(
+                    "SHA256 mismatch for model {}: expected {}, got {}",
+                    model_id, expected, actual
+                );
                 return Err(anyhow::anyhow!(
-                    "Download incomplete: expected {} bytes, got {} bytes",
-                    total_size,
-                    actual_size
+                    "Download verification failed for model {}: file is corrupt. Please retry.",
+                    model_id
+                ));
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to download model {}: {}",
+                    model_id,
+                    e
                 ));
             }
         }
-
-        // Verify SHA256 checksum. Runs in a blocking thread so the async executor is not
-        // stalled while hashing large model files (up to 1.6 GB). On failure the partial
-        // is deleted inside verify_sha256 so the next attempt always starts fresh.
-        let _ = self.app_handle.emit("model-verification-started", model_id);
-        info!("Verifying SHA256 for model {}...", model_id);
-        let verify_path = partial_path.clone();
-        let verify_expected = expected_sha256;
-        let verify_model_id = model_id.to_string();
-        let verify_result = tokio::task::spawn_blocking(move || {
-            Self::verify_sha256(&verify_path, verify_expected.as_deref(), &verify_model_id)
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("SHA256 task panicked: {}", e))?;
-        verify_result?;
+        // Reconnu complet au pré-hachage : la barre doit quand même atteindre
+        // 100 %, sinon l'écran de premier lancement reste sur la progression de
+        // la tentative précédente. `resume_from` est la taille du `.partial`,
+        // que rien n'a réécrit sur ce chemin.
+        if !emitted_progress {
+            let _ = self.app_handle.emit(
+                "model-download-progress",
+                &DownloadProgress {
+                    model_id: model_id.to_string(),
+                    downloaded: resume_from,
+                    total: resume_from,
+                    percentage: 100.0,
+                },
+            );
+        }
+        if expected_sha256.is_some() {
+            info!("SHA256 verified for model {}", model_id);
+        }
         let _ = self
             .app_handle
             .emit("model-verification-completed", model_id);
@@ -2646,75 +2525,6 @@ mod tests {
         let result = ModelManager::discover_custom_transcribe_models(&models_dir, &mut models);
         assert!(result.is_ok());
         assert_eq!(models.len(), count_before);
-    }
-
-    // ── SHA256 verification tests ─────────────────────────────────────────────
-
-    /// Helper: write `data` to a temp file and return (TempDir, path).
-    /// TempDir must be kept alive for the duration of the test.
-    fn write_temp_file(data: &[u8]) -> (TempDir, std::path::PathBuf) {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("model.partial");
-        let mut f = File::create(&path).unwrap();
-        f.write_all(data).unwrap();
-        (dir, path)
-    }
-
-    #[test]
-    fn test_verify_sha256_skipped_when_none() {
-        // Custom models have no expected hash — verification must be a no-op.
-        let (_dir, path) = write_temp_file(b"anything");
-        assert!(ModelManager::verify_sha256(&path, None, "custom").is_ok());
-        assert!(
-            path.exists(),
-            "file must be untouched when verification is skipped"
-        );
-    }
-
-    #[test]
-    fn test_verify_sha256_passes_on_correct_hash() {
-        // Compute the real hash so the test is self-consistent.
-        let (_dir, path) = write_temp_file(b"hello world");
-        let actual = ModelManager::compute_sha256(&path).unwrap();
-        assert!(
-            ModelManager::verify_sha256(&path, Some(&actual), "test_model").is_ok(),
-            "should pass when hash matches"
-        );
-        assert!(
-            path.exists(),
-            "file must be kept on successful verification"
-        );
-    }
-
-    #[test]
-    fn test_verify_sha256_fails_and_deletes_partial_on_mismatch() {
-        let (_dir, path) = write_temp_file(b"this is not the real model");
-        let wrong_hash = "0000000000000000000000000000000000000000000000000000000000000000";
-
-        let result = ModelManager::verify_sha256(&path, Some(wrong_hash), "bad_model");
-
-        assert!(result.is_err(), "mismatch must return an error");
-        assert!(
-            result.unwrap_err().to_string().contains("corrupt"),
-            "error message should mention corruption"
-        );
-        assert!(
-            !path.exists(),
-            "partial file must be deleted after hash mismatch"
-        );
-    }
-
-    #[test]
-    fn test_verify_sha256_fails_and_deletes_partial_when_file_missing() {
-        // Simulate a partial file that was already removed (e.g. disk full mid-download).
-        let dir = TempDir::new().unwrap();
-        let missing_path = dir.path().join("gone.partial");
-        // Don't create the file — it should not exist.
-
-        let result =
-            ModelManager::verify_sha256(&missing_path, Some("anyexpectedhash"), "missing_model");
-
-        assert!(result.is_err(), "missing file must return an error");
     }
 
     #[test]

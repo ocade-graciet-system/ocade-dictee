@@ -19,7 +19,9 @@ pub struct FileHistoryEntry {
     /// Chemin d'origine du fichier, ou URL de la vidéo.
     pub source_ref: String,
     pub raw_text: String,
-    pub formatted_text: Option<String>,
+    /// Compte-rendu Markdown produit par « Résumer » (plan 09) ; `None` tant
+    /// qu'aucun résumé n'a été calculé pour cette entrée.
+    pub summary_markdown: Option<String>,
     /// Vidéo MP4 conservée dans les données de l'app (entrées "url"
     /// uniquement, téléchargée à la demande).
     pub video_path: Option<String>,
@@ -96,6 +98,17 @@ impl FileHistoryManager {
                 return Err(e.into());
             }
         }
+        // Migration douce (plan 09) : compte-rendu local. La colonne
+        // `formatted_text` (ancien bouton « Mettre en forme ») reste en base,
+        // plus jamais relue.
+        if let Err(e) = conn.execute(
+            "ALTER TABLE file_transcription_history ADD COLUMN summary_markdown TEXT",
+            [],
+        ) {
+            if !e.to_string().contains("duplicate column") {
+                return Err(e.into());
+            }
+        }
         Ok(())
     }
 
@@ -117,10 +130,12 @@ impl FileHistoryManager {
         Ok(conn.last_insert_rowid())
     }
 
-    pub fn update_formatted(&self, id: i64, formatted_text: &str) -> Result<()> {
+    /// Mémorise le compte-rendu Markdown d'une entrée (recalculable : la
+    /// nouvelle valeur remplace l'ancienne).
+    pub fn update_summary(&self, id: i64, summary_markdown: &str) -> Result<()> {
         let updated = self.open()?.execute(
-            "UPDATE file_transcription_history SET formatted_text = ?1 WHERE id = ?2",
-            rusqlite::params![formatted_text, id],
+            "UPDATE file_transcription_history SET summary_markdown = ?1 WHERE id = ?2",
+            rusqlite::params![summary_markdown, id],
         )?;
         anyhow::ensure!(updated == 1, "entrée d'historique {id} introuvable");
         Ok(())
@@ -153,7 +168,7 @@ impl FileHistoryManager {
         let conn = self.open()?;
         let mut stmt = conn.prepare(
             "SELECT id, created_at, source_name, source_kind, source_ref, raw_text,
-                    formatted_text, video_path
+                    summary_markdown, video_path
              FROM file_transcription_history WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map([id], |row| {
@@ -164,7 +179,7 @@ impl FileHistoryManager {
                 source_kind: row.get(3)?,
                 source_ref: row.get(4)?,
                 raw_text: row.get(5)?,
-                formatted_text: row.get(6)?,
+                summary_markdown: row.get(6)?,
                 video_path: row.get(7)?,
             })
         })?;
@@ -233,16 +248,16 @@ mod tests {
         assert_eq!(items[0].source_kind, "url");
         assert_eq!(items[1].snippet, "Bonjour à tous");
 
-        // Détail complet + mise à jour du texte formaté.
+        // Détail complet + enregistrement du compte-rendu (plan 09).
         let entry = m.get(id).unwrap().unwrap();
         assert_eq!(entry.source_ref, "/tmp/réunion.mp3");
-        assert_eq!(entry.formatted_text, None);
-        m.update_formatted(id, "# Réunion\n\nBonjour à tous")
+        assert_eq!(entry.summary_markdown, None);
+        m.update_summary(id, "# Réunion\n\n## Résumé\nBonjour à tous")
             .unwrap();
         let entry = m.get(id).unwrap().unwrap();
         assert_eq!(
-            entry.formatted_text.as_deref(),
-            Some("# Réunion\n\nBonjour à tous")
+            entry.summary_markdown.as_deref(),
+            Some("# Réunion\n\n## Résumé\nBonjour à tous")
         );
 
         // Vidéo conservée : chemin mémorisé, drapeau dans la liste, fichier
@@ -263,6 +278,48 @@ mod tests {
         assert!(!video.exists(), "la vidéo conservée est supprimée aussi");
         assert_eq!(m.list().unwrap().len(), 1);
         assert!(m.delete(id).is_err(), "double suppression signalée");
-        assert!(m.update_formatted(id, "x").is_err());
+        assert!(m.update_summary(id, "x").is_err());
+    }
+
+    /// Une base créée avant le plan 09 (sans `summary_markdown`, avec
+    /// `formatted_text`) est migrée en douceur à l'ouverture.
+    #[test]
+    fn summary_column_is_added_to_existing_databases() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("file_history.db");
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE file_transcription_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at INTEGER NOT NULL,
+                    source_name TEXT NOT NULL,
+                    source_kind TEXT NOT NULL,
+                    source_ref TEXT NOT NULL,
+                    raw_text TEXT NOT NULL,
+                    formatted_text TEXT,
+                    video_path TEXT
+                );
+                INSERT INTO file_transcription_history
+                    (created_at, source_name, source_kind, source_ref, raw_text, formatted_text)
+                VALUES (1, 'ancien.mp3', 'local', '/tmp/ancien.mp3', 'Texte brut', 'Texte mis en forme');",
+            )
+            .unwrap();
+        }
+        let m = FileHistoryManager::new_at(db_path.clone()).unwrap();
+        let entry = m.get(1).unwrap().expect("entrée conservée");
+        assert_eq!(entry.raw_text, "Texte brut");
+        assert_eq!(entry.summary_markdown, None);
+        m.update_summary(1, "# Ancien").unwrap();
+        assert_eq!(
+            m.get(1).unwrap().unwrap().summary_markdown.as_deref(),
+            Some("# Ancien")
+        );
+        // Réouverture : la migration douce est idempotente.
+        let again = FileHistoryManager::new_at(db_path).unwrap();
+        assert_eq!(
+            again.get(1).unwrap().unwrap().summary_markdown.as_deref(),
+            Some("# Ancien")
+        );
     }
 }

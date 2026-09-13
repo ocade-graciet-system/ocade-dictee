@@ -947,22 +947,11 @@ async fileHistoryList() : Promise<Result<FileHistoryItem[], string>> {
 }
 },
 /**
- * Entrée complète (textes brut + formaté) pour l'affichage d'un résultat.
+ * Entrée complète (texte brut + compte-rendu) pour l'affichage d'un résultat.
  */
 async fileHistoryGet(id: number) : Promise<Result<FileHistoryEntry | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("file_history_get", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Mémorise le texte mis en forme (post-processing LLM) d'une entrée.
- */
-async fileHistoryUpdateFormatted(id: number, formattedText: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("file_history_update_formatted", { id, formattedText }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1010,28 +999,34 @@ async cancelVideoDownload() : Promise<void> {
     await TAURI_INVOKE("cancel_video_download");
 },
 /**
- * Envoie le document transcrit au fournisseur de post-traitement actif
- * (local Ollama ou cloud, selon la config utilisateur) pour le reformater.
- * Calqué sur `post_process_transcription` (actions.rs) pour la récupération
- * provider/modèle/clé API, mais sans la garde `post_process_enabled` : c'est
- * une action explicite via bouton, indépendante du post-traitement de
- * dictée.
+ * Produit le compte-rendu Markdown de `text`. Si `history_id` est fourni, le
+ * compte-rendu est enregistré dans l'entrée d'historique correspondante (un
+ * échec d'enregistrement n'invalide pas le résultat renvoyé).
+ * 
+ * Un seul résumé à la fois : le moteur rend `SummaryError::Busy` si un autre
+ * est déjà en cours. La progression part en événement `summary-progress`.
  */
-async formatDocument(text: string) : Promise<Result<string, string>> {
+async summarizeDocument(text: string, historyId: number | null) : Promise<Result<string, SummaryError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("format_document", { text }) };
+    return { status: "ok", data: await TAURI_INVOKE("summarize_document", { text, historyId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * Indique si un fournisseur de post-traitement actif ET un modèle non vide
- * sont configurés, pour piloter l'affichage du bouton « Mettre en forme »
- * côté UI (bouton si `true`, encart de configuration sinon).
+ * Demande l'annulation du résumé en cours (téléchargement, démarrage ou
+ * génération) ; sans effet s'il n'y en a pas.
  */
-async formatReady() : Promise<boolean> {
-    return await TAURI_INVOKE("format_ready");
+async cancelSummary() : Promise<void> {
+    await TAURI_INVOKE("cancel_summary");
+},
+/**
+ * Moteur et modèle présents ? Taille restant à télécharger (pour annoncer le
+ * téléchargement unique d'environ 2 Go avant le premier usage).
+ */
+async summaryStatus() : Promise<SummaryStatus> {
+    return await TAURI_INVOKE("summary_status");
 },
 /**
  * Checks if the Mac is a laptop by detecting battery presence
@@ -1057,12 +1052,14 @@ fileTranscriptionProgress: FileTranscriptionProgress,
 historyUpdatePayload: HistoryUpdatePayload,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent,
+summaryProgress: SummaryProgress,
 videoDownloadProgress: VideoDownloadProgress
 }>({
 fileTranscriptionProgress: "file-transcription-progress",
 historyUpdatePayload: "history-update-payload",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event",
+summaryProgress: "summary-progress",
 videoDownloadProgress: "video-download-progress"
 })
 
@@ -1159,7 +1156,12 @@ source_kind: string;
 /**
  * Chemin d'origine du fichier, ou URL de la vidéo.
  */
-source_ref: string; raw_text: string; formatted_text: string | null; 
+source_ref: string; raw_text: string; 
+/**
+ * Compte-rendu Markdown produit par « Résumer » (plan 09) ; `None` tant
+ * qu'aucun résumé n'a été calculé pour cette entrée.
+ */
+summary_markdown: string | null; 
 /**
  * Vidéo MP4 conservée dans les données de l'app (entrées "url"
  * uniquement, téléchargée à la demande).
@@ -1306,6 +1308,51 @@ export type StreamTextEvent = { committed: string; tentative: string }
  * Semantic kind of "working" phase, used to localize the spinner label.
  */
 export type StreamWorkKind = "transcribing" | "polishing"
+/**
+ * Erreurs remontées au front, qui les traduit (`settings.file.summary.errors.*`).
+ */
+export type SummaryError = 
+/**
+ * Téléchargement impossible faute de réseau (rien n'a été reçu).
+ */
+{ kind: "offline" } | { kind: "diskSpace"; neededBytes: number; freeBytes: number } | { kind: "memory"; neededBytes: number; freeBytes: number } | { kind: "downloadFailed"; detail: string } | { kind: "checksumMismatch" } | { kind: "engineStartFailed"; detail: string } | { kind: "incompleteOutput" } | { kind: "cancelled" } | 
+/**
+ * Un résumé est déjà en cours.
+ */
+{ kind: "busy" }
+/**
+ * Phase en cours, pour l'encart de progression de l'onglet Fichier.
+ */
+export type SummaryPhase = 
+/**
+ * Téléchargement du moteur ; `current` = pourcentage (0-100), `total` = 100.
+ */
+"engine" | 
+/**
+ * Téléchargement du modèle ; `current` = pourcentage (0-100), `total` = 100.
+ */
+"model" | 
+/**
+ * Démarrage du serveur (chargement du modèle en mémoire) ; 0/1 puis 1/1.
+ */
+"starting" | 
+/**
+ * Résumé ; `current` = partie en cours, `total` = nombre de parties.
+ */
+"summarizing"
+/**
+ * Événement `summary-progress`, émis à chaque étape (téléchargements,
+ * démarrage, tranche en cours).
+ */
+export type SummaryProgress = { phase: SummaryPhase; current: number; total: number }
+/**
+ * État des fichiers nécessaires, pour annoncer le téléchargement unique.
+ */
+export type SummaryStatus = { engineReady: boolean; modelReady: boolean; 
+/**
+ * Octets restant à télécharger (0 si tout est installé).
+ */
+downloadSizeBytes: number }
 /**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.

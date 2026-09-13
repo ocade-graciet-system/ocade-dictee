@@ -7,7 +7,12 @@ interface MarkdownContentProps {
   markdown: string;
 }
 
-const allowedElements = [
+/**
+ * Éléments Markdown rendus. Partagée avec `markdownToHtml`
+ * (`lib/utils/summaryDocument`) : le compte-rendu copié dans le presse-papier
+ * doit contenir exactement ce que l'écran affiche.
+ */
+export const MARKDOWN_ALLOWED_ELEMENTS = [
   "a",
   "blockquote",
   "br",
@@ -209,7 +214,7 @@ export const MarkdownContent: React.FC<MarkdownContentProps> = ({
   return (
     <div className="space-y-3">
       <ReactMarkdown
-        allowedElements={allowedElements}
+        allowedElements={MARKDOWN_ALLOWED_ELEMENTS}
         components={components}
         remarkPlugins={[remarkGfm]}
         skipHtml
