@@ -685,7 +685,6 @@ pub fn run(cli_args: CliArgs) {
             commands::file_transcription::cancel_file_transcription,
             commands::file_history::file_history_list,
             commands::file_history::file_history_get,
-            commands::file_history::file_history_update_formatted,
             commands::file_history::file_history_delete,
             commands::video_download::download_entry_video,
             commands::video_download::export_entry_video,

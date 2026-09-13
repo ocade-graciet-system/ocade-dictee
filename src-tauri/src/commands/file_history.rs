@@ -11,7 +11,7 @@ pub async fn file_history_list(
     file_history.list().map_err(|e| e.to_string())
 }
 
-/// Entrée complète (textes brut + formaté) pour l'affichage d'un résultat.
+/// Entrée complète (texte brut + compte-rendu) pour l'affichage d'un résultat.
 #[tauri::command]
 #[specta::specta]
 pub async fn file_history_get(
@@ -19,19 +19,6 @@ pub async fn file_history_get(
     id: i64,
 ) -> Result<Option<FileHistoryEntry>, String> {
     file_history.get(id).map_err(|e| e.to_string())
-}
-
-/// Mémorise le texte mis en forme (post-processing LLM) d'une entrée.
-#[tauri::command]
-#[specta::specta]
-pub async fn file_history_update_formatted(
-    file_history: State<'_, Arc<FileHistoryManager>>,
-    id: i64,
-    formatted_text: String,
-) -> Result<(), String> {
-    file_history
-        .update_formatted(id, &formatted_text)
-        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
