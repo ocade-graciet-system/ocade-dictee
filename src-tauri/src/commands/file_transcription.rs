@@ -230,8 +230,35 @@ fn validate_media_url(url: &str) -> Result<(), String> {
     }
 }
 
+/// Source du binaire yt-dlp pour macOS. Volontairement « latest » et non une
+/// version épinglée : yt-dlp doit suivre les changements des sites qu'il
+/// télécharge, une version figée cesserait de fonctionner en quelques mois.
+#[cfg(target_os = "macos")]
+const YT_DLP_MACOS_URL: &str =
+    "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos";
+
+/// Verrou d'installation de yt-dlp : sérialise le pré-chargement de démarrage
+/// ([`crate::external_tools`]) et l'appel à la demande. Le second arrivant
+/// attend le premier et repart de son résultat, au lieu de lancer un second
+/// téléchargement dans le même fichier de reprise.
+#[cfg(target_os = "macos")]
+static YT_DLP_INSTALL_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
+    once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
+
+/// macOS uniquement : emplacement de yt-dlp dans les données de l'app, qu'il y
+/// soit ou non. Sert au pré-chargement de démarrage pour savoir s'il reste
+/// quelque chose à télécharger, sans déclencher le téléchargement lui-même.
+#[cfg(target_os = "macos")]
+pub(crate) fn yt_dlp_bin_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(crate::portable::app_data_dir(app)
+        .map_err(|e| format!("Dossier de données inaccessible: {e}"))?
+        .join("bin")
+        .join("yt-dlp"))
+}
+
 /// macOS uniquement : fournit yt-dlp depuis les données de l'app, téléchargé
-/// au premier usage. Impossible de l'embarquer en sidecar sur cette
+/// au premier usage (ou pré-chargé au démarrage, voir
+/// [`crate::external_tools`]). Impossible de l'embarquer en sidecar sur cette
 /// plateforme : Tauri re-signe le bundle en ad-hoc, or yt-dlp_macos
 /// (PyInstaller) extrait au lancement une bibliothèque Python signée avec le
 /// Team ID yt-dlp — dyld refuse alors le chargement (« mapping process and
@@ -239,38 +266,27 @@ fn validate_media_url(url: &str) -> Result<(), String> {
 /// binaire garde sa signature d'origine cohérente et ne porte pas d'attribut
 /// de quarantaine.
 #[cfg(target_os = "macos")]
-async fn ensure_yt_dlp_macos(app: &AppHandle) -> Result<PathBuf, String> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let bin_dir = crate::portable::app_data_dir(app)
-        .map_err(|e| format!("Dossier de données inaccessible: {e}"))?
-        .join("bin");
-    let bin_path = bin_dir.join("yt-dlp");
+pub(crate) async fn ensure_yt_dlp_macos(app: &AppHandle) -> Result<PathBuf, String> {
+    let bin_path = yt_dlp_bin_path(app)?;
     if bin_path.exists() {
         return Ok(bin_path);
     }
 
-    std::fs::create_dir_all(&bin_dir)
-        .map_err(|e| format!("Création du dossier bin impossible: {e}"))?;
+    let _guard = YT_DLP_INSTALL_LOCK.lock().await;
+    if bin_path.exists() {
+        return Ok(bin_path);
+    }
 
-    let url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos";
-    let response = reqwest::get(url)
-        .await
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| format!("Téléchargement de l'outil yt-dlp impossible: {e}"))?;
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("Téléchargement de l'outil yt-dlp interrompu: {e}"))?;
-
-    // Écriture en deux temps (staging + rename atomique) : un téléchargement
-    // interrompu ne laisse jamais un binaire tronqué au chemin final.
-    let staging = bin_dir.join("yt-dlp.download");
-    std::fs::write(&staging, &bytes).map_err(|e| format!("Écriture de yt-dlp impossible: {e}"))?;
-    std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("Permissions de yt-dlp impossibles: {e}"))?;
-    std::fs::rename(&staging, &bin_path)
-        .map_err(|e| format!("Installation de yt-dlp impossible: {e}"))?;
+    crate::external_tools::install_executable(
+        YT_DLP_MACOS_URL,
+        &bin_path,
+        // URL « latest » : compléter un fichier partiel laissé par une session
+        // précédente collerait deux versions de yt-dlp bout à bout, sans
+        // SHA-256 pour s'en apercevoir. On repart de zéro à chaque tentative.
+        crate::external_tools::ResumePolicy::Forbidden,
+    )
+    .await
+    .map_err(|e| format!("Téléchargement de l'outil yt-dlp impossible: {e}"))?;
 
     Ok(bin_path)
 }
@@ -512,11 +528,14 @@ fn run_pipeline(
     // `PrepareTool` rend ce temps d'attente visible ; le drapeau d'annulation
     // est vérifié juste avant et juste après l'appel, ce qui permet d'honorer
     // une annulation demandée pendant cette phase dès que possible. Le
-    // téléchargement lui-même (`reqwest::get(...).bytes()`, dans
-    // `ensure_ffmpeg`) reste non interruptible pendant son déroulement : il
-    // n'existe pas de point d'annulation à mi-téléchargement (hors périmètre
-    // de cette correction, voir issue #22 pour un suivi en pourcentage qui
-    // permettrait d'y revenir).
+    // téléchargement lui-même (dans `ensure_ffmpeg`) reste non interruptible
+    // pendant son déroulement : il n'existe pas de point d'annulation à
+    // mi-téléchargement (hors périmètre de cette correction, voir issue #22
+    // pour un suivi en pourcentage qui permettrait d'y revenir). Cette phase
+    // couvre aussi l'attente du verrou d'installation quand le
+    // pré-chargement de démarrage (`crate::external_tools`) est déjà en train
+    // de récupérer le même binaire : on attend le sien plutôt que d'en
+    // télécharger un second en parallèle.
     let samples = match decode_to_samples(&source_path) {
         Ok(samples) => samples,
         Err(native_err) => {

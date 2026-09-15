@@ -8,6 +8,7 @@ pub mod cli;
 mod clipboard;
 mod commands;
 pub mod download;
+mod external_tools;
 mod helpers;
 mod input;
 mod llm_client;
@@ -976,6 +977,17 @@ pub fn run(cli_args: CliArgs) {
             std::thread::spawn(|| {
                 let _ = crate::managers::transcription::get_available_accelerators();
             });
+
+            // Pré-charge en tâche de fond les outils externes de l'onglet
+            // « Fichier » (yt-dlp sous macOS, ffmpeg partout) : sans cela,
+            // l'utilisateur qui vient d'installer l'application attend
+            // plusieurs dizaines de méga-octets au moment où il colle une URL.
+            // La tâche est détachée — ni la fenêtre ni aucune interaction
+            // n'attendent quoi que ce soit — et échoue en silence (journal
+            // seulement). `headless_mode` est passé par sécurité : ce point du
+            // `setup` est déjà hors du chemin headless, mais la règle « aucun
+            // réseau en mode headless » reste ainsi portée par le code appelé.
+            external_tools::spawn_preload(&app_handle, headless_mode);
 
             // Hide tray icon if --no-tray was passed
             if cli_args.no_tray {
