@@ -11,7 +11,10 @@
 //!   binaire PyInstaller, cf. [`crate::commands::file_transcription`]) et il
 //!   est donc téléchargé (~37 Mo) ;
 //! - **ffmpeg** est téléchargé sur toutes les plateformes (~80 Mo, cf.
-//!   [`crate::commands::video_download::ensure_ffmpeg`]).
+//!   [`crate::commands::video_download::ensure_ffmpeg`]) ;
+//! - **QuickJS** est téléchargé sur toutes les plateformes (~1 à 2,6 Mo, cf.
+//!   [`crate::commands::file_transcription::ensure_quickjs`]) : c'est le
+//!   moteur JavaScript sans lequel yt-dlp ne sait plus extraire YouTube.
 //!
 //! Sans pré-chargement, l'utilisateur qui vient d'installer l'application et
 //! qui colle une URL attend ces dizaines de méga-octets au moment précis où il
@@ -93,6 +96,9 @@ pub(crate) enum ExternalTool {
     YtDlp,
     /// Fusion vidéo+audio et repli de décodage des formats non natifs.
     Ffmpeg,
+    /// Moteur JavaScript que yt-dlp exige pour résoudre le défi YouTube
+    /// (toutes plateformes).
+    QuickJs,
 }
 
 impl ExternalTool {
@@ -101,6 +107,7 @@ impl ExternalTool {
         match self {
             ExternalTool::YtDlp => "yt-dlp",
             ExternalTool::Ffmpeg => "ffmpeg",
+            ExternalTool::QuickJs => "QuickJS",
         }
     }
 
@@ -110,6 +117,7 @@ impl ExternalTool {
         match self {
             ExternalTool::YtDlp => 37,
             ExternalTool::Ffmpeg => 80,
+            ExternalTool::QuickJs => 1,
         }
     }
 }
@@ -129,18 +137,25 @@ pub(crate) struct PreloadContext {
     pub yt_dlp_installed: bool,
     /// ffmpeg est déjà dans les données de l'application.
     pub ffmpeg_installed: bool,
+    /// Le moteur JavaScript est déjà dans les données de l'application.
+    pub quickjs_installed: bool,
 }
 
 /// Liste des outils à récupérer, dans l'ordre où ils seront téléchargés.
 ///
-/// yt-dlp passe avant ffmpeg : il est plus petit (~37 Mo contre ~80 Mo) et
-/// c'est lui qui débloque la transcription d'une URL, le geste le plus courant
-/// de l'onglet ; ffmpeg ne sert qu'à la fusion vidéo et au repli de décodage.
+/// Du plus petit au plus gros, ce qui est aussi l'ordre de ce qui débloque le
+/// geste le plus courant de l'onglet — transcrire une URL YouTube :
+/// QuickJS (~1 Mo) sans lequel yt-dlp ne sait plus extraire YouTube du tout,
+/// puis yt-dlp lui-même (~37 Mo), puis ffmpeg (~80 Mo) qui ne sert qu'à la
+/// fusion vidéo et au repli de décodage.
 pub(crate) fn preload_plan(ctx: &PreloadContext) -> Vec<ExternalTool> {
     if ctx.headless || ctx.disabled {
         return Vec::new();
     }
     let mut plan = Vec::new();
+    if !ctx.quickjs_installed {
+        plan.push(ExternalTool::QuickJs);
+    }
     if !ctx.yt_dlp_bundled && !ctx.yt_dlp_installed {
         plan.push(ExternalTool::YtDlp);
     }
@@ -286,7 +301,7 @@ pub(crate) fn install_part(part: &Path, dest: &Path) -> Result<(), String> {
 /// répond jamais ne fige plus le téléchargement indéfiniment), l'écriture au
 /// fil de l'eau dans un `.part` au lieu de garder tout le fichier en mémoire,
 /// et une classification des pannes réseau lisible dans le journal. Faute de
-/// SHA-256 publié pour ces deux binaires, l'intégrité repose sur le contrôle
+/// SHA-256 publié pour ces binaires, l'intégrité repose sur le contrôle
 /// de taille de `download_to_part` (`Content-Length`) — d'où l'interdiction de
 /// reprise sur les URL mouvantes, voir [`ResumePolicy`].
 pub(crate) async fn install_executable(
@@ -364,6 +379,7 @@ fn startup_busy(app: &AppHandle) -> bool {
 async fn install_tool(app: &AppHandle, tool: ExternalTool) -> Result<PathBuf, String> {
     match tool {
         ExternalTool::Ffmpeg => crate::commands::video_download::ensure_ffmpeg(app).await,
+        ExternalTool::QuickJs => crate::commands::file_transcription::ensure_quickjs(app).await,
         ExternalTool::YtDlp => {
             #[cfg(target_os = "macos")]
             {
@@ -404,6 +420,9 @@ async fn preload_task(app: AppHandle, headless: bool) {
         yt_dlp_bundled: !cfg!(target_os = "macos"),
         yt_dlp_installed,
         ffmpeg_installed: crate::commands::video_download::ffmpeg_bin_path(&app)
+            .map(|path| path.exists())
+            .unwrap_or(false),
+        quickjs_installed: crate::commands::file_transcription::quickjs_bin_path(&app)
             .map(|path| path.exists())
             .unwrap_or(false),
     };
@@ -456,8 +475,8 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    /// Installation neuve sur macOS : aucun des deux outils n'est là, et
-    /// yt-dlp n'y est pas embarqué en sidecar.
+    /// Installation neuve sur macOS : aucun des outils n'est là, et yt-dlp
+    /// n'y est pas embarqué en sidecar.
     fn fresh_macos() -> PreloadContext {
         PreloadContext {
             headless: false,
@@ -465,6 +484,7 @@ mod tests {
             yt_dlp_bundled: false,
             yt_dlp_installed: false,
             ffmpeg_installed: false,
+            quickjs_installed: false,
         }
     }
 
@@ -487,20 +507,40 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_macos_install_preloads_yt_dlp_then_ffmpeg() {
+    fn a_fresh_macos_install_preloads_quickjs_then_yt_dlp_then_ffmpeg() {
         assert_eq!(
             preload_plan(&fresh_macos()),
-            vec![ExternalTool::YtDlp, ExternalTool::Ffmpeg]
+            vec![
+                ExternalTool::QuickJs,
+                ExternalTool::YtDlp,
+                ExternalTool::Ffmpeg
+            ]
         );
     }
 
     #[test]
-    fn a_bundled_yt_dlp_leaves_only_ffmpeg_to_preload() {
+    fn a_bundled_yt_dlp_leaves_quickjs_and_ffmpeg_to_preload() {
         let ctx = PreloadContext {
             yt_dlp_bundled: true,
             ..fresh_macos()
         };
-        assert_eq!(preload_plan(&ctx), vec![ExternalTool::Ffmpeg]);
+        assert_eq!(
+            preload_plan(&ctx),
+            vec![ExternalTool::QuickJs, ExternalTool::Ffmpeg]
+        );
+    }
+
+    /// QuickJS est nécessaire partout, y compris là où yt-dlp est embarqué en
+    /// sidecar (Windows, Linux) : c'est justement le cas où l'absence de
+    /// moteur JavaScript était la seule chose qui manquait pour YouTube.
+    #[test]
+    fn quickjs_is_preloaded_even_where_yt_dlp_is_bundled() {
+        let ctx = PreloadContext {
+            yt_dlp_bundled: true,
+            ffmpeg_installed: true,
+            ..fresh_macos()
+        };
+        assert_eq!(preload_plan(&ctx), vec![ExternalTool::QuickJs]);
     }
 
     #[test]
@@ -508,11 +548,13 @@ mod tests {
         let ctx = PreloadContext {
             yt_dlp_installed: true,
             ffmpeg_installed: true,
+            quickjs_installed: true,
             ..fresh_macos()
         };
         assert_eq!(preload_plan(&ctx), Vec::new());
         let ctx = PreloadContext {
             ffmpeg_installed: true,
+            quickjs_installed: true,
             ..fresh_macos()
         };
         assert_eq!(preload_plan(&ctx), vec![ExternalTool::YtDlp]);
