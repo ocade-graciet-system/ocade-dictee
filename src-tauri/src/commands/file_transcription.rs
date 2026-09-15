@@ -9,7 +9,7 @@ use log::warn;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, State};
@@ -291,6 +291,122 @@ pub(crate) async fn ensure_yt_dlp_macos(app: &AppHandle) -> Result<PathBuf, Stri
     Ok(bin_path)
 }
 
+/// Version épinglée de QuickJS-NG, le moteur JavaScript que yt-dlp utilise
+/// pour résoudre le défi YouTube (voir [`ensure_quickjs`]).
+///
+/// Épinglée, contrairement à yt-dlp qui doit rester en « latest » pour suivre
+/// les changements des sites : un moteur JS n'a pas ce besoin, et une URL figée
+/// autorise la reprise d'un téléchargement coupé
+/// ([`crate::external_tools::ResumePolicy::Allowed`]).
+///
+/// La 0.12.0 est un plancher fonctionnel : en deçà, il manque des
+/// optimisations sans lesquelles la résolution du défi peut prendre plusieurs
+/// minutes au lieu de quelques secondes (cf. wiki EJS de yt-dlp).
+const QUICKJS_VERSION: &str = "v0.16.2";
+
+const QUICKJS_BASE_URL: &str = "https://github.com/quickjs-ng/quickjs/releases/download";
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const QUICKJS_ASSET: &str = "qjs-darwin-arm64";
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+const QUICKJS_ASSET: &str = "qjs-darwin-x86_64";
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const QUICKJS_ASSET: &str = "qjs-linux-aarch64";
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const QUICKJS_ASSET: &str = "qjs-linux-x86_64";
+// Windows ARM : pas de build dédié, le x64 tourne via l'émulation — même
+// stratégie que pour yt-dlp et ffmpeg.
+#[cfg(target_os = "windows")]
+const QUICKJS_ASSET: &str = "qjs-windows-x86_64.exe";
+
+/// Verrou d'installation de QuickJS : sérialise le pré-chargement de démarrage
+/// ([`crate::external_tools`]) et l'appel à la demande, comme pour yt-dlp et
+/// ffmpeg. Sans lui, les deux écriraient dans le même fichier de reprise.
+static QUICKJS_INSTALL_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
+    once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
+
+/// URL de l'asset QuickJS-NG de la plateforme courante.
+fn quickjs_asset_url() -> String {
+    format!("{QUICKJS_BASE_URL}/{QUICKJS_VERSION}/{QUICKJS_ASSET}")
+}
+
+/// Nom du binaire sur disque. yt-dlp exige `qjs`/`qjs.exe` dès lors qu'on ne
+/// lui passe qu'un dossier ; on lui passe le chemin complet du fichier, mais
+/// garder le nom canonique évite toute ambiguïté.
+fn quickjs_bin_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "qjs.exe"
+    } else {
+        "qjs"
+    }
+}
+
+/// Valeur de `--js-runtimes` désignant NOTRE binaire QuickJS.
+/// yt-dlp découpe `RUNTIME[:PATH]` sur le premier `:` uniquement
+/// (`arg.split(':', 1)`), donc un chemin Windows (`C:\...`) passe intact.
+fn quickjs_runtime_arg(path: &Path) -> String {
+    format!("quickjs:{}", path.display())
+}
+
+/// Emplacement de QuickJS dans les données de l'app, qu'il y soit ou non.
+/// Sert au pré-chargement de démarrage pour savoir s'il reste quelque chose à
+/// télécharger, sans déclencher le téléchargement lui-même.
+pub(crate) fn quickjs_bin_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(crate::portable::app_data_dir(app)
+        .map_err(|e| format!("Dossier de données inaccessible: {e}"))?
+        .join("bin")
+        .join(quickjs_bin_name()))
+}
+
+/// Fournit le moteur JavaScript dont yt-dlp a besoin pour YouTube, téléchargé
+/// au premier usage (ou pré-chargé au démarrage, voir
+/// [`crate::external_tools`]).
+///
+/// # Pourquoi un moteur JavaScript
+///
+/// Depuis 2025, YouTube impose un défi JavaScript que yt-dlp délègue à un
+/// runtime externe (mécanisme « EJS »). Sans runtime, l'extraction échoue :
+/// « No supported JavaScript runtime could be found », puis « This video is
+/// not available ». Le runtime doit venir de l'application : compter sur un
+/// `deno` ou `node` installé par l'utilisateur ne marche pas, et une
+/// application lancée depuis le Finder ou un lanceur de bureau n'hérite de
+/// toute façon pas du `PATH` du shell — c'est précisément ce qui rendait le
+/// défaut invisible en ligne de commande et systématique dans l'application.
+///
+/// # Pourquoi QuickJS-NG plutôt que Deno
+///
+/// Deno est le runtime « recommandé » par yt-dlp, mais il est distribué en
+/// archive zip de ~40 Mo pour ~130 Mo sur le disque. QuickJS-NG est un binaire
+/// statique unique de 1 à 2,6 Mo selon la plateforme, sans dépendance (le
+/// build Linux est `static-pie` : aucune exigence de glibc, donc toutes les
+/// distributions), pour un temps de résolution du défi équivalent — mesuré à
+/// ~11 s contre ~10 s pour Deno. Les scripts EJS eux-mêmes sont déjà embarqués
+/// dans les exécutables officiels yt-dlp qu'utilise l'application : il n'y a
+/// rien d'autre à récupérer.
+pub(crate) async fn ensure_quickjs(app: &AppHandle) -> Result<PathBuf, String> {
+    let bin_path = quickjs_bin_path(app)?;
+    if bin_path.exists() {
+        return Ok(bin_path);
+    }
+
+    let _guard = QUICKJS_INSTALL_LOCK.lock().await;
+    if bin_path.exists() {
+        return Ok(bin_path);
+    }
+
+    crate::external_tools::install_executable(
+        &quickjs_asset_url(),
+        &bin_path,
+        // URL épinglée sur v0.16.2 : l'asset ne changera pas, une reprise
+        // après coupure complète bien le même fichier.
+        crate::external_tools::ResumePolicy::Allowed,
+    )
+    .await
+    .map_err(|e| format!("Téléchargement du moteur JavaScript impossible: {e}"))?;
+
+    Ok(bin_path)
+}
+
 /// Résout l'exécutable ffmpeg pour le repli de décodage (issue #10) :
 /// binaire téléchargé au premier usage dans les données de l'app, comme pour
 /// le téléchargement vidéo (`commands::video_download::ensure_ffmpeg`, même
@@ -320,6 +436,13 @@ async fn resolve_ffmpeg(app: &AppHandle) -> Option<PathBuf> {
 /// garde, lui, son nom Unicode — d'où « yt-dlp n'a pas indiqué de fichier …
 /// exploitable » dès qu'un titre de vidéo sortait de l'ASCII. macOS et Linux,
 /// en UTF-8 de bout en bout, n'ont jamais rien vu.
+///
+/// La commande est également armée du moteur JavaScript fourni par
+/// l'application ([`ensure_quickjs`]), sans quoi YouTube est inexploitable.
+/// `--no-js-runtimes` passe en premier : il vide la liste par défaut (`deno`)
+/// pour que le comportement soit identique sur les trois plateformes et ne
+/// dépende pas de ce que l'utilisateur a pu installer — un `deno` trop ancien
+/// ou cassé ne peut pas prendre le pas sur le nôtre.
 pub(crate) async fn resolve_yt_dlp_command(
     app: &AppHandle,
 ) -> Result<tauri_plugin_shell::process::Command, String> {
@@ -334,7 +457,22 @@ pub(crate) async fn resolve_yt_dlp_command(
         .sidecar("yt-dlp")
         .map_err(|e| format!("Sidecar yt-dlp introuvable: {e}"))?;
 
-    Ok(command.args(["--encoding", "UTF-8"]))
+    let command = command.args(["--encoding", "UTF-8"]);
+
+    // Échec non fatal : les sites sans défi JavaScript restent téléchargeables,
+    // et yt-dlp retombe alors sur sa détection par défaut. Seul YouTube en
+    // pâtira, avec son propre message d'erreur.
+    match ensure_quickjs(app).await {
+        Ok(qjs) => Ok(command.args([
+            "--no-js-runtimes",
+            "--js-runtimes",
+            &quickjs_runtime_arg(&qjs),
+        ])),
+        Err(e) => {
+            warn!("Moteur JavaScript indisponible, YouTube va échouer: {e}");
+            Ok(command)
+        }
+    }
 }
 
 /// Ligne de progression émise par yt-dlp via `--progress-template`
@@ -694,6 +832,49 @@ mod tests {
         assert!(validate_media_url("youtube.com/watch?v=abc").is_err());
         assert!(validate_media_url("https://").is_err());
         assert!(validate_media_url("").is_err());
+    }
+
+    /// yt-dlp découpe `RUNTIME[:PATH]` sur le PREMIER `:` seulement
+    /// (`arg.split(':', 1)`), donc un chemin Windows avec lettre de lecteur
+    /// est transmis intact — c'est la plateforme où ça pouvait casser.
+    #[test]
+    fn quickjs_runtime_arg_keeps_full_path() {
+        assert_eq!(
+            quickjs_runtime_arg(Path::new("/Users/moi/Library/bin/qjs")),
+            "quickjs:/Users/moi/Library/bin/qjs"
+        );
+        let arg = quickjs_runtime_arg(Path::new(r"C:\Users\moi\AppData\bin\qjs.exe"));
+        let (runtime, path) = arg.split_once(':').unwrap();
+        assert_eq!(runtime, "quickjs");
+        assert_eq!(path, r"C:\Users\moi\AppData\bin\qjs.exe");
+    }
+
+    /// Le nom de fichier doit rester `qjs`/`qjs.exe` : yt-dlp l'exige sauf à
+    /// pointer le binaire exact — on fait les deux, ceinture et bretelles.
+    #[test]
+    fn quickjs_binary_keeps_its_canonical_name() {
+        assert!(quickjs_bin_name() == "qjs" || quickjs_bin_name() == "qjs.exe");
+    }
+
+    /// L'URL doit viser la release ÉPINGLÉE (pas `latest`, sinon la reprise
+    /// d'un `.part` collerait deux versions) et un asset de la plateforme.
+    #[test]
+    fn quickjs_asset_url_is_pinned_and_platform_specific() {
+        let url = quickjs_asset_url();
+        assert!(url.starts_with("https://github.com/quickjs-ng/quickjs/releases/download/v"));
+        assert!(!url.contains("/latest/"));
+        let asset = url.rsplit('/').next().unwrap();
+        assert!(asset.starts_with("qjs-"));
+        if cfg!(target_os = "windows") {
+            assert!(asset.ends_with(".exe"));
+        } else {
+            let os = if cfg!(target_os = "macos") {
+                "darwin"
+            } else {
+                "linux"
+            };
+            assert!(asset.contains(os), "asset {asset} ne cible pas {os}");
+        }
     }
 
     #[test]
