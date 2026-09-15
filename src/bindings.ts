@@ -1259,6 +1259,46 @@ sha256: string | null } } |
  */
 "Local"
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
+/**
+ * Nature d'une panne réseau, déduite de l'erreur `reqwest` et de sa chaîne de
+ * causes. Tout mettre dans un seul panier « hors ligne » envoyait l'utilisateur
+ * vérifier une connexion qui marchait très bien : chaque cas a sa conduite à
+ * tenir, et le front lui associe son message
+ * (`settings.file.summary.errors.network.*`).
+ */
+export type NetworkFailure = 
+/**
+ * Aucune route ne sort de la machine : interface coupée, Wi-Fi éteint,
+ * mode avion. C'est le seul cas où « connectez-vous à Internet » est le
+ * bon conseil.
+ */
+"offline" | 
+/**
+ * Le nom du serveur n'a pas pu être résolu. Sur Windows, une machine
+ * réellement hors ligne produit la même signature qu'un DNS filtré : le
+ * message couvre donc les deux pistes.
+ */
+"dnsFailed" | 
+/**
+ * Connexion refusée, réinitialisée ou coupée avant la réponse : pare-feu,
+ * proxy d'entreprise ou antivirus filtrant, typiquement.
+ */
+"blocked" | 
+/**
+ * Poignée de main TLS rejetée (certificat non reconnu) : signature d'un
+ * antivirus ou d'un proxy qui inspecte le trafic chiffré.
+ */
+"tlsRejected" | 
+/**
+ * Délai de connexion ou de lecture dépassé : lien très lent, ou paquets
+ * avalés sans réponse par un filtrage.
+ */
+"timeout" | 
+/**
+ * Échec réseau dont la chaîne de causes ne dit rien d'exploitable : seul
+ * le détail technique permet d'avancer.
+ */
+"unknown"
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 export type OverlayPosition = "top" | "bottom"
 /**
@@ -1309,13 +1349,36 @@ export type StreamTextEvent = { committed: string; tentative: string }
  */
 export type StreamWorkKind = "transcribing" | "polishing"
 /**
+ * Ressource téléchargée au premier résumé. Les deux ne viennent pas du même
+ * hébergeur — le moteur de github.com, le modèle de huggingface.co — et un
+ * réseau d'entreprise en filtre souvent une sans l'autre : dire laquelle a
+ * échoué est la première information utile.
+ */
+export type SummaryAsset = 
+/**
+ * Le moteur llama.cpp (quelques dizaines de Mo).
+ */
+"engine" | 
+/**
+ * Le modèle GGUF (environ 2 Go).
+ */
+"model"
+/**
  * Erreurs remontées au front, qui les traduit (`settings.file.summary.errors.*`).
  */
 export type SummaryError = 
 /**
- * Téléchargement impossible faute de réseau (rien n'a été reçu).
+ * Le serveur n'a pas pu être joint : `failure` classe la panne (c'est ce
+ * qui décide du conseil affiché), `asset` et `host` disent quoi et où, et
+ * `detail` porte la chaîne de causes — affichée repliée, et copiable,
+ * pour qu'une capture d'écran du client soit exploitable par le support.
  */
-{ kind: "offline" } | { kind: "diskSpace"; neededBytes: number; freeBytes: number } | { kind: "memory"; neededBytes: number; freeBytes: number } | { kind: "downloadFailed"; detail: string } | { kind: "checksumMismatch" } | { kind: "engineStartFailed"; detail: string } | { kind: "incompleteOutput" } | { kind: "cancelled" } | 
+{ kind: "network"; asset: SummaryAsset; failure: NetworkFailure; host: string; detail: string } | { kind: "diskSpace"; neededBytes: number; freeBytes: number } | { kind: "memory"; neededBytes: number; freeBytes: number } | 
+/**
+ * Le serveur a répondu, mais le fichier n'est pas arrivé complet (statut
+ * HTTP inattendu, flux coupé, taille incohérente, écriture impossible).
+ */
+{ kind: "downloadFailed"; asset: SummaryAsset; host: string; detail: string } | { kind: "checksumMismatch" } | { kind: "engineStartFailed"; detail: string } | { kind: "incompleteOutput" } | { kind: "cancelled" } | 
 /**
  * Un résumé est déjà en cours.
  */

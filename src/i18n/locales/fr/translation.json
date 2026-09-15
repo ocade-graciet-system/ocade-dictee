@@ -576,11 +576,24 @@
         "copy": "Copier le compte-rendu",
         "copyError": "Impossible de copier le compte-rendu",
         "errors": {
-          "offline": "Le résumé nécessite un téléchargement unique d'environ {{size}}. Connectez-vous à Internet puis réessayez.",
-          "offlineNoSize": "Le résumé nécessite un téléchargement unique. Connectez-vous à Internet puis réessayez.",
+          "asset": {
+            "engine": "Le téléchargement du moteur de résumé depuis {{host}} n'a pas abouti.",
+            "model": "Le téléchargement du modèle de résumé depuis {{host}} n'a pas abouti."
+          },
+          "network": {
+            "offline": "Aucune connexion réseau n'est détectée sur cet ordinateur. Vérifiez votre Wi-Fi ou votre câble réseau, puis réessayez.",
+            "dnsFailed": "Le nom de ce serveur n'a pas pu être résolu. Vérifiez votre connexion Internet ; si elle fonctionne, un pare-feu, un proxy ou un antivirus en bloque probablement l'accès.",
+            "blocked": "La connexion a été refusée ou interrompue. Un pare-feu, un proxy d'entreprise ou un antivirus bloque probablement l'accès à ce serveur.",
+            "tlsRejected": "La connexion sécurisée a été rejetée : le certificat du serveur n'est pas reconnu. C'est en général le fait d'un antivirus ou d'un proxy d'entreprise qui inspecte le trafic chiffré.",
+            "timeout": "Le serveur n'a pas répondu dans le délai imparti. Votre connexion est peut-être très lente, ou un filtrage bloque le trafic sans le signaler. Réessayez : le téléchargement reprend où il s'est arrêté.",
+            "unknown": "La connexion a échoué sans cause identifiable. Réessayez ; si le problème persiste, transmettez le détail technique ci-dessous au support."
+          },
+          "detail": "Détail technique",
+          "detailCopy": "Copier le détail technique",
+          "detailCopied": "Détail technique copié",
           "diskSpace": "Espace disque insuffisant : 3 Go libres sont nécessaires ({{free}} disponibles).",
           "memory": "Mémoire insuffisante pour lancer le résumé : fermez d'autres applications puis réessayez.",
-          "downloadFailed": "Le téléchargement a échoué ; réessayez.",
+          "downloadFailed": "Le fichier n'est pas arrivé complet : réponse inattendue du serveur, connexion coupée en cours de route, ou écriture impossible sur le disque. Réessayez : le téléchargement reprend où il s'est arrêté.",
           "checksumMismatch": "Le téléchargement a échoué ; réessayez.",
           "engineStartFailed": "Le moteur de résumé n'a pas pu démarrer. Réessayez ; si le problème persiste, consultez le journal (onglet Débogage).",
           "incompleteOutput": "Le compte-rendu produit est incomplet ; réessayez.",

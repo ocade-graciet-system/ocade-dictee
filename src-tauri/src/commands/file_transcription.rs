@@ -230,8 +230,35 @@ fn validate_media_url(url: &str) -> Result<(), String> {
     }
 }
 
+/// Source du binaire yt-dlp pour macOS. Volontairement « latest » et non une
+/// version épinglée : yt-dlp doit suivre les changements des sites qu'il
+/// télécharge, une version figée cesserait de fonctionner en quelques mois.
+#[cfg(target_os = "macos")]
+const YT_DLP_MACOS_URL: &str =
+    "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos";
+
+/// Verrou d'installation de yt-dlp : sérialise le pré-chargement de démarrage
+/// ([`crate::external_tools`]) et l'appel à la demande. Le second arrivant
+/// attend le premier et repart de son résultat, au lieu de lancer un second
+/// téléchargement dans le même fichier de reprise.
+#[cfg(target_os = "macos")]
+static YT_DLP_INSTALL_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
+    once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
+
+/// macOS uniquement : emplacement de yt-dlp dans les données de l'app, qu'il y
+/// soit ou non. Sert au pré-chargement de démarrage pour savoir s'il reste
+/// quelque chose à télécharger, sans déclencher le téléchargement lui-même.
+#[cfg(target_os = "macos")]
+pub(crate) fn yt_dlp_bin_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(crate::portable::app_data_dir(app)
+        .map_err(|e| format!("Dossier de données inaccessible: {e}"))?
+        .join("bin")
+        .join("yt-dlp"))
+}
+
 /// macOS uniquement : fournit yt-dlp depuis les données de l'app, téléchargé
-/// au premier usage. Impossible de l'embarquer en sidecar sur cette
+/// au premier usage (ou pré-chargé au démarrage, voir
+/// [`crate::external_tools`]). Impossible de l'embarquer en sidecar sur cette
 /// plateforme : Tauri re-signe le bundle en ad-hoc, or yt-dlp_macos
 /// (PyInstaller) extrait au lancement une bibliothèque Python signée avec le
 /// Team ID yt-dlp — dyld refuse alors le chargement (« mapping process and
@@ -239,38 +266,27 @@ fn validate_media_url(url: &str) -> Result<(), String> {
 /// binaire garde sa signature d'origine cohérente et ne porte pas d'attribut
 /// de quarantaine.
 #[cfg(target_os = "macos")]
-async fn ensure_yt_dlp_macos(app: &AppHandle) -> Result<PathBuf, String> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let bin_dir = crate::portable::app_data_dir(app)
-        .map_err(|e| format!("Dossier de données inaccessible: {e}"))?
-        .join("bin");
-    let bin_path = bin_dir.join("yt-dlp");
+pub(crate) async fn ensure_yt_dlp_macos(app: &AppHandle) -> Result<PathBuf, String> {
+    let bin_path = yt_dlp_bin_path(app)?;
     if bin_path.exists() {
         return Ok(bin_path);
     }
 
-    std::fs::create_dir_all(&bin_dir)
-        .map_err(|e| format!("Création du dossier bin impossible: {e}"))?;
+    let _guard = YT_DLP_INSTALL_LOCK.lock().await;
+    if bin_path.exists() {
+        return Ok(bin_path);
+    }
 
-    let url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos";
-    let response = reqwest::get(url)
-        .await
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| format!("Téléchargement de l'outil yt-dlp impossible: {e}"))?;
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("Téléchargement de l'outil yt-dlp interrompu: {e}"))?;
-
-    // Écriture en deux temps (staging + rename atomique) : un téléchargement
-    // interrompu ne laisse jamais un binaire tronqué au chemin final.
-    let staging = bin_dir.join("yt-dlp.download");
-    std::fs::write(&staging, &bytes).map_err(|e| format!("Écriture de yt-dlp impossible: {e}"))?;
-    std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("Permissions de yt-dlp impossibles: {e}"))?;
-    std::fs::rename(&staging, &bin_path)
-        .map_err(|e| format!("Installation de yt-dlp impossible: {e}"))?;
+    crate::external_tools::install_executable(
+        YT_DLP_MACOS_URL,
+        &bin_path,
+        // URL « latest » : compléter un fichier partiel laissé par une session
+        // précédente collerait deux versions de yt-dlp bout à bout, sans
+        // SHA-256 pour s'en apercevoir. On repart de zéro à chaque tentative.
+        crate::external_tools::ResumePolicy::Forbidden,
+    )
+    .await
+    .map_err(|e| format!("Téléchargement de l'outil yt-dlp impossible: {e}"))?;
 
     Ok(bin_path)
 }
@@ -294,20 +310,31 @@ async fn resolve_ffmpeg(app: &AppHandle) -> Option<PathBuf> {
 /// usage sur macOS (voir [`ensure_yt_dlp_macos`]), sidecar embarqué ailleurs
 /// (tauri.{windows,linux}.conf.json). Partagé avec le téléchargement de vidéo
 /// (`commands::video_download`).
+///
+/// `--encoding UTF-8` est posé ici, une fois pour toutes les invocations.
+/// Sans lui, yt-dlp écrit sa sortie avec l'encodage de `sys.stdout` — soit la
+/// page de codes ANSI du système sous Windows, cp1252 en français — et avec
+/// `errors='ignore'` : tout caractère absent de cette page de codes disparaît
+/// purement et simplement. Le chemin imprimé par `--print after_move:filepath`
+/// ne désignait alors plus le fichier réellement écrit sur le disque, qui
+/// garde, lui, son nom Unicode — d'où « yt-dlp n'a pas indiqué de fichier …
+/// exploitable » dès qu'un titre de vidéo sortait de l'ASCII. macOS et Linux,
+/// en UTF-8 de bout en bout, n'ont jamais rien vu.
 pub(crate) async fn resolve_yt_dlp_command(
     app: &AppHandle,
 ) -> Result<tauri_plugin_shell::process::Command, String> {
     #[cfg(target_os = "macos")]
-    {
+    let command = {
         let bin_path = ensure_yt_dlp_macos(app).await?;
-        Ok(app.shell().command(bin_path))
-    }
+        app.shell().command(bin_path)
+    };
     #[cfg(not(target_os = "macos"))]
-    {
-        app.shell()
-            .sidecar("yt-dlp")
-            .map_err(|e| format!("Sidecar yt-dlp introuvable: {e}"))
-    }
+    let command = app
+        .shell()
+        .sidecar("yt-dlp")
+        .map_err(|e| format!("Sidecar yt-dlp introuvable: {e}"))?;
+
+    Ok(command.args(["--encoding", "UTF-8"]))
 }
 
 /// Ligne de progression émise par yt-dlp via `--progress-template`
@@ -316,6 +343,36 @@ pub(crate) fn parse_download_percent(line: &str) -> Option<u32> {
     let rest = line.strip_prefix("HANDY_DL")?.trim();
     let value: f32 = rest.strip_suffix('%')?.trim().parse().ok()?;
     Some(value.clamp(0.0, 100.0).round() as u32)
+}
+
+/// Ce qu'une ligne de stdout de yt-dlp nous apprend.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum YtDlpOutput<'a> {
+    /// Ligne du `--progress-template`, en pourcentage arrondi.
+    Progress(u32),
+    /// Chemin imprimé par `--print after_move:filepath`.
+    Path(&'a str),
+    /// Octets non-UTF-8 : yt-dlp a écrit dans la page de codes du système
+    /// malgré `--encoding UTF-8` (cf. [`resolve_yt_dlp_command`]). Le chemin
+    /// qu'on en tirerait ne désignerait aucun fichier.
+    Undecodable,
+    /// Ligne vide, sans information.
+    Ignored,
+}
+
+/// Classe une ligne de stdout de yt-dlp. Le décodage est strict : un
+/// `from_utf8_lossy` fabriquerait un chemin plausible mais faux, et l'échec
+/// qui s'ensuivait ne disait rien de sa cause.
+pub(crate) fn parse_yt_dlp_stdout(bytes: &[u8]) -> YtDlpOutput<'_> {
+    let Ok(line) = std::str::from_utf8(bytes) else {
+        return YtDlpOutput::Undecodable;
+    };
+    let line = line.trim();
+    match parse_download_percent(line) {
+        Some(percent) => YtDlpOutput::Progress(percent),
+        None if line.is_empty() => YtDlpOutput::Ignored,
+        None => YtDlpOutput::Path(line),
+    }
 }
 
 /// Télécharge la piste audio d'`url` dans `<app_data>/downloads/` via le
@@ -359,6 +416,7 @@ async fn download_media(app: &AppHandle, url: &str) -> Result<PathBuf, String> {
 
     let mut exit_code: Option<i32> = None;
     let mut printed_path: Option<String> = None;
+    let mut undecodable_stdout = false;
     let mut stderr_tail: VecDeque<String> = VecDeque::new();
 
     while let Some(event) = rx.recv().await {
@@ -369,16 +427,15 @@ async fn download_media(app: &AppHandle, url: &str) -> Result<PathBuf, String> {
             return Err("Transcription annulée par l'utilisateur".to_string());
         }
         match event {
-            CommandEvent::Stdout(bytes) => {
-                let line = String::from_utf8_lossy(&bytes);
-                let line = line.trim();
-                if let Some(pct) = parse_download_percent(line) {
-                    emit_progress(app, FileTranscriptionPhase::Download, pct, 100);
-                } else if !line.is_empty() {
-                    // `--print after_move:filepath` : dernière ligne utile.
-                    printed_path = Some(line.to_string());
+            CommandEvent::Stdout(bytes) => match parse_yt_dlp_stdout(&bytes) {
+                YtDlpOutput::Progress(pct) => {
+                    emit_progress(app, FileTranscriptionPhase::Download, pct, 100)
                 }
-            }
+                // `--print after_move:filepath` : dernière ligne utile.
+                YtDlpOutput::Path(path) => printed_path = Some(path.to_string()),
+                YtDlpOutput::Undecodable => undecodable_stdout = true,
+                YtDlpOutput::Ignored => {}
+            },
             CommandEvent::Stderr(bytes) => {
                 let line = String::from_utf8_lossy(&bytes).trim().to_string();
                 if !line.is_empty() {
@@ -407,7 +464,14 @@ async fn download_media(app: &AppHandle, url: &str) -> Result<PathBuf, String> {
     let path = printed_path
         .map(PathBuf::from)
         .filter(|p| p.exists())
-        .ok_or_else(|| "yt-dlp n'a pas indiqué de fichier téléchargé exploitable".to_string())?;
+        .ok_or_else(|| {
+            if undecodable_stdout {
+                "yt-dlp a imprimé le chemin du fichier téléchargé dans un encodage illisible"
+                    .to_string()
+            } else {
+                "yt-dlp n'a pas indiqué de fichier téléchargé exploitable".to_string()
+            }
+        })?;
 
     emit_progress(app, FileTranscriptionPhase::Download, 100, 100);
     Ok(path)
@@ -464,11 +528,14 @@ fn run_pipeline(
     // `PrepareTool` rend ce temps d'attente visible ; le drapeau d'annulation
     // est vérifié juste avant et juste après l'appel, ce qui permet d'honorer
     // une annulation demandée pendant cette phase dès que possible. Le
-    // téléchargement lui-même (`reqwest::get(...).bytes()`, dans
-    // `ensure_ffmpeg`) reste non interruptible pendant son déroulement : il
-    // n'existe pas de point d'annulation à mi-téléchargement (hors périmètre
-    // de cette correction, voir issue #22 pour un suivi en pourcentage qui
-    // permettrait d'y revenir).
+    // téléchargement lui-même (dans `ensure_ffmpeg`) reste non interruptible
+    // pendant son déroulement : il n'existe pas de point d'annulation à
+    // mi-téléchargement (hors périmètre de cette correction, voir issue #22
+    // pour un suivi en pourcentage qui permettrait d'y revenir). Cette phase
+    // couvre aussi l'attente du verrou d'installation quand le
+    // pré-chargement de démarrage (`crate::external_tools`) est déjà en train
+    // de récupérer le même binaire : on attend le sien plutôt que d'en
+    // télécharger un second en parallèle.
     let samples = match decode_to_samples(&source_path) {
         Ok(samples) => samples,
         Err(native_err) => {
@@ -639,5 +706,28 @@ mod tests {
         assert_eq!(parse_download_percent("/tmp/Ma vidéo [abc].m4a"), None);
         assert_eq!(parse_download_percent(""), None);
         assert_eq!(parse_download_percent("HANDY_DL n/a"), None);
+    }
+
+    /// Sous Windows, yt-dlp écrit sa sortie dans la page de codes ANSI du
+    /// système : « é » y tient sur un seul octet (0xE9), invalide en UTF-8, et
+    /// les caractères absents de cette page de codes disparaissent purement et
+    /// simplement (`errors='ignore'`). Un chemin reconstruit à coups de U+FFFD
+    /// ne désigne plus aucun fichier : la ligne doit être signalée illisible,
+    /// jamais « réparée ».
+    #[test]
+    fn stdout_parsing_separates_progress_path_and_undecodable() {
+        assert_eq!(
+            parse_yt_dlp_stdout(b"HANDY_DL  12.3%"),
+            YtDlpOutput::Progress(12)
+        );
+        assert_eq!(
+            parse_yt_dlp_stdout("/tmp/Ma vidéo [abc].m4a".as_bytes()),
+            YtDlpOutput::Path("/tmp/Ma vidéo [abc].m4a")
+        );
+        assert_eq!(
+            parse_yt_dlp_stdout(b"/tmp/Ma vid\xE9o [abc].m4a"),
+            YtDlpOutput::Undecodable
+        );
+        assert_eq!(parse_yt_dlp_stdout(b"   "), YtDlpOutput::Ignored);
     }
 }

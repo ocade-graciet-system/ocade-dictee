@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::assets::{engine_asset, ArchiveKind, EngineAsset, ModelAsset, LLAMA_BUILD, MODEL};
 use super::system::{check_disk_space, free_disk_bytes};
-use super::SummaryError;
+use super::{SummaryAsset, SummaryError};
 use crate::download::{
     download_to_part, download_with_resume, part_path, DownloadError, DownloadEvent,
 };
@@ -69,16 +69,92 @@ const VERSION_CHECK_POLL: Duration = Duration::from_millis(100);
 /// (immédiate pour `llama-server`, qui n'a pas de sous-processus).
 const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
-impl From<DownloadError> for SummaryError {
-    fn from(e: DownloadError) -> Self {
-        match e {
-            DownloadError::Connect(_) => SummaryError::Offline,
-            DownloadError::Failed(detail) => SummaryError::DownloadFailed { detail },
-            DownloadError::ChecksumMismatch { .. } => SummaryError::ChecksumMismatch,
-            DownloadError::Cancelled => SummaryError::Cancelled,
-            DownloadError::Io(e) => SummaryError::DownloadFailed {
-                detail: e.to_string(),
-            },
+/// Hôte visé, pour nommer dans le message le service à débloquer
+/// (github.com, huggingface.co). Une URL illisible se rabat sur l'URL entière
+/// plutôt que de ne rien dire.
+fn host_of(url: &str) -> String {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_string))
+        .unwrap_or_else(|| url.to_string())
+}
+
+/// Un proxy est-il configuré dans l'environnement ? La valeur n'est jamais
+/// recopiée : elle contient souvent un identifiant et un mot de passe
+/// (`http://utilisateur:motdepasse@proxy:8080`). Le support a besoin de savoir
+/// qu'il y en a un — première explication d'un téléchargement filtré sur un
+/// poste d'entreprise — pas de le lire.
+fn proxy_note() -> String {
+    const VARS: [&str; 6] = [
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ];
+    let configured: Vec<&str> = VARS
+        .iter()
+        .copied()
+        .filter(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+        .collect();
+    if configured.is_empty() {
+        String::new()
+    } else {
+        format!(" [proxy configuré via {}]", configured.join(", "))
+    }
+}
+
+/// Seul passage d'une erreur de téléchargement vers une erreur de résumé : la
+/// ressource visée et son hôte y sont rattachés, et la chaîne de causes part
+/// dans le journal. Sans ce point unique, le détail technique se perdait et
+/// toute panne réseau était annoncée comme « hors ligne ».
+fn summary_error(asset: SummaryAsset, url: &str, error: DownloadError) -> SummaryError {
+    let host = host_of(url);
+    match error {
+        DownloadError::Network { failure, detail } => {
+            log::error!(
+                "Téléchargement du {} depuis {host} impossible — {} : {detail}{}",
+                asset.label(),
+                failure.label(),
+                proxy_note()
+            );
+            SummaryError::Network {
+                asset,
+                failure,
+                host,
+                detail,
+            }
+        }
+        DownloadError::Failed(detail) => {
+            log::warn!(
+                "Téléchargement du {} depuis {host} interrompu : {detail}",
+                asset.label()
+            );
+            SummaryError::DownloadFailed {
+                asset,
+                host,
+                detail,
+            }
+        }
+        DownloadError::ChecksumMismatch { expected, actual } => {
+            log::error!(
+                "{} téléchargé depuis {host} corrompu : SHA-256 attendu {expected}, obtenu {actual}",
+                asset.label()
+            );
+            SummaryError::ChecksumMismatch
+        }
+        DownloadError::Cancelled => SummaryError::Cancelled,
+        DownloadError::Io(e) => {
+            log::error!(
+                "Écriture du {} sur le disque impossible : {e}",
+                asset.label()
+            );
+            SummaryError::DownloadFailed {
+                asset,
+                host,
+                detail: format!("écriture sur le disque: {e}"),
+            }
         }
     }
 }
@@ -513,9 +589,8 @@ pub async fn ensure_engine_from(
     if exe.is_file() {
         return Ok(exe);
     }
-    std::fs::create_dir_all(&paths.bin_dir).map_err(|e| SummaryError::DownloadFailed {
-        detail: e.to_string(),
-    })?;
+    std::fs::create_dir_all(&paths.bin_dir)
+        .map_err(|e| summary_error(SummaryAsset::Engine, asset.url, DownloadError::Io(e)))?;
     ensure_disk_space(&paths.bin_dir)?;
 
     let archive = paths.bin_dir.join(asset.file_name);
@@ -542,7 +617,7 @@ pub async fn ensure_engine_from(
                 log::warn!("Archive du moteur corrompue, nouvelle tentative");
                 continue;
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(summary_error(SummaryAsset::Engine, asset.url, e)),
         }
         // Le `.part` est conservé : une reprise le revalidera par son empreinte.
         if cancel.is_cancelled() {
@@ -611,9 +686,8 @@ pub async fn ensure_model_from(
     if dest.is_file() {
         return Ok(dest);
     }
-    std::fs::create_dir_all(&paths.models_dir).map_err(|e| SummaryError::DownloadFailed {
-        detail: e.to_string(),
-    })?;
+    std::fs::create_dir_all(&paths.models_dir)
+        .map_err(|e| summary_error(SummaryAsset::Model, model.url, DownloadError::Io(e)))?;
     ensure_disk_space(&paths.models_dir)?;
     let mut attempts = 0;
     loop {
@@ -637,7 +711,7 @@ pub async fn ensure_model_from(
                 log::warn!("Modèle de résumé corrompu, nouvelle tentative");
                 continue;
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(summary_error(SummaryAsset::Model, model.url, e)),
         }
     }
     on_progress(100);
@@ -691,6 +765,7 @@ mod tests {
 
     use super::test_archives::*;
     use super::*;
+    use crate::download::NetworkFailure;
 
     #[test]
     fn tar_gz_with_root_folder_is_flattened_into_final_dir() {
@@ -964,6 +1039,29 @@ mod tests {
         (url, requests)
     }
 
+    /// Serveur local qui ne répond qu'un statut d'erreur : joignable, mais la
+    /// ressource n'est pas là (404 d'un miroir, 403 d'un filtrage applicatif…).
+    fn serve_status(status: &'static str) -> String {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/asset", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                while reader.read_line(&mut line).unwrap_or(0) > 0 && line != "\r\n" {
+                    line.clear();
+                }
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+            }
+        });
+        url
+    }
+
     fn leak(s: String) -> &'static str {
         Box::leak(s.into_boxed_str())
     }
@@ -1213,8 +1311,11 @@ mod tests {
         assert!(part.is_file(), "téléchargement conservé pour la reprise");
     }
 
+    /// URL vers un port fermé : personne n'écoute, mais la machine est bien en
+    /// ligne. L'erreur doit dire « connexion refusée », nommer la ressource et
+    /// l'hôte, et conserver le détail technique — jamais « hors ligne ».
     #[tokio::test]
-    async fn ensure_model_offline_when_server_unreachable() {
+    async fn ensure_model_reports_a_blocked_host_not_an_offline_machine() {
         let dir = tempfile::tempdir().unwrap();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/model.gguf", listener.local_addr().unwrap());
@@ -1232,7 +1333,85 @@ mod tests {
         let err = ensure_model_from(&model, &paths, &client, &CancellationToken::new(), |_| {})
             .await
             .unwrap_err();
-        assert_eq!(err, SummaryError::Offline);
+        let SummaryError::Network {
+            asset,
+            failure,
+            host,
+            detail,
+        } = &err
+        else {
+            panic!("{err:?}")
+        };
+        assert_eq!(*asset, SummaryAsset::Model);
+        assert_eq!(*failure, NetworkFailure::Blocked);
+        assert_eq!(host, "127.0.0.1");
+        assert!(!detail.is_empty(), "détail technique perdu");
+        // Le journal de l'application passe par `Display` : la cause doit y être.
+        assert!(err.to_string().contains(detail.as_str()), "{err}");
+    }
+
+    /// Même panne, côté moteur : les deux ressources ne viennent pas du même
+    /// hébergeur (github.com et huggingface.co), l'une peut être filtrée sans
+    /// l'autre — le message doit donc dire laquelle a échoué.
+    #[tokio::test]
+    async fn ensure_engine_names_the_engine_asset_on_a_network_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/llama.tar.gz", listener.local_addr().unwrap());
+        drop(listener);
+        let asset = EngineAsset {
+            file_name: "llama-b10930-bin-test.tar.gz",
+            url: leak(url),
+            sha256: "00",
+            size_bytes: 0,
+            kind: ArchiveKind::TarGz,
+            exe_name: "llama-server",
+        };
+        let paths = SummaryPaths::new(&dir.path().join("data"));
+        let client = crate::download::build_client().unwrap();
+        let err = ensure_engine_from(&asset, &paths, &client, &CancellationToken::new(), |_| {})
+            .await
+            .unwrap_err();
+        match err {
+            SummaryError::Network { asset, failure, .. } => {
+                assert_eq!(asset, SummaryAsset::Engine);
+                assert_eq!(failure, NetworkFailure::Blocked);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// Réponse HTTP inattendue : le serveur répond, ce n'est pas une panne
+    /// réseau — mais la ressource et le détail doivent quand même remonter.
+    #[tokio::test]
+    async fn ensure_model_reports_an_unexpected_response_with_its_detail() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = serve_status("404 Not Found");
+        let model = ModelAsset {
+            file_name: "m.gguf",
+            url: leak(url),
+            sha256: "00",
+            size_bytes: 1,
+            model_name: "m",
+            server_args: &[],
+        };
+        let paths = SummaryPaths::new(&dir.path().join("data"));
+        let client = crate::download::build_client().unwrap();
+        let err = ensure_model_from(&model, &paths, &client, &CancellationToken::new(), |_| {})
+            .await
+            .unwrap_err();
+        match err {
+            SummaryError::DownloadFailed {
+                asset,
+                host,
+                detail,
+            } => {
+                assert_eq!(asset, SummaryAsset::Model);
+                assert_eq!(host, "127.0.0.1");
+                assert!(detail.contains("404"), "{detail}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[tokio::test]

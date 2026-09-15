@@ -5,8 +5,11 @@
 //! La transcription, elle, ne télécharge que l'audio (rapide) ; la vidéo n'est
 //! récupérée que si l'utilisateur la demande, une seule fois par entrée.
 
-use crate::commands::file_transcription::{parse_download_percent, resolve_yt_dlp_command};
+use crate::commands::file_transcription::{
+    parse_yt_dlp_stdout, resolve_yt_dlp_command, YtDlpOutput,
+};
 use crate::managers::file_history::FileHistoryManager;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::collections::VecDeque;
@@ -53,7 +56,36 @@ const FFMPEG_ASSET: &str = "ffmpeg-linux-arm64";
 #[cfg(target_os = "windows")]
 const FFMPEG_ASSET: &str = "ffmpeg-win32-x64";
 
-/// Fournit ffmpeg depuis les données de l'app, téléchargé au premier usage.
+/// Verrou d'installation de ffmpeg : sérialise les appels concurrents à
+/// [`ensure_ffmpeg`]. Trois chemins peuvent le demander en même temps au tout
+/// premier lancement — le pré-chargement de démarrage
+/// ([`crate::external_tools`]), le téléchargement de vidéo et le repli de
+/// décodage de l'onglet Fichier — chacun gardé par son propre drapeau de
+/// ré-entrance, aucun ne connaissant les autres. Sans ce verrou, leurs
+/// écritures s'entrelaceraient dans le même fichier de reprise et
+/// corrompraient le binaire final de façon permanente (il existerait, donc
+/// plus jamais retéléchargé ni réparé). Avec lui, un seul télécharge et les
+/// autres repartent de son résultat.
+static FFMPEG_INSTALL_LOCK: Lazy<tokio::sync::Mutex<()>> =
+    Lazy::new(|| tokio::sync::Mutex::new(()));
+
+/// Emplacement de ffmpeg dans les données de l'app, qu'il y soit ou non.
+/// Sert au pré-chargement de démarrage pour savoir s'il reste quelque chose à
+/// télécharger, sans déclencher le téléchargement lui-même.
+pub(crate) fn ffmpeg_bin_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let bin_name = if cfg!(target_os = "windows") {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    Ok(crate::portable::app_data_dir(app)
+        .map_err(|e| format!("Dossier de données inaccessible: {e}"))?
+        .join("bin")
+        .join(bin_name))
+}
+
+/// Fournit ffmpeg depuis les données de l'app, téléchargé au premier usage
+/// (ou pré-chargé au démarrage, voir [`crate::external_tools`]).
 /// Même stratégie que yt-dlp sur macOS : hors du bundle signé (pas de
 /// re-signature ad-hoc qui casse), hors navigateur (pas de quarantaine), et
 /// sans alourdir l'installeur de 45 à 80 Mo selon la plateforme pour une
@@ -63,63 +95,29 @@ const FFMPEG_ASSET: &str = "ffmpeg-win32-x64";
 /// (issue #10, voir `commands::file_transcription::resolve_ffmpeg`) — même
 /// binaire, pas de second téléchargement ni de sidecar dédié.
 pub(crate) async fn ensure_ffmpeg(app: &AppHandle) -> Result<PathBuf, String> {
-    let bin_dir = crate::portable::app_data_dir(app)
-        .map_err(|e| format!("Dossier de données inaccessible: {e}"))?
-        .join("bin");
-    let bin_name = if cfg!(target_os = "windows") {
-        "ffmpeg.exe"
-    } else {
-        "ffmpeg"
-    };
-    let bin_path = bin_dir.join(bin_name);
+    let bin_path = ffmpeg_bin_path(app)?;
     if bin_path.exists() {
         return Ok(bin_path);
     }
 
-    std::fs::create_dir_all(&bin_dir)
-        .map_err(|e| format!("Création du dossier bin impossible: {e}"))?;
+    // Un seul téléchargement pour tous les appelants : le second arrivant
+    // attend ici, puis le contrôle ci-dessous lui rend le binaire installé par
+    // le premier au lieu d'en lancer un deuxième.
+    let _guard = FFMPEG_INSTALL_LOCK.lock().await;
+    if bin_path.exists() {
+        return Ok(bin_path);
+    }
 
     let url = format!("{FFMPEG_BASE_URL}/{FFMPEG_ASSET}");
-    let response = reqwest::get(&url)
-        .await
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| format!("Téléchargement de ffmpeg impossible: {e}"))?;
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("Téléchargement de ffmpeg interrompu: {e}"))?;
-
-    // Nom de staging unique par appel (au lieu d'un nom fixe partagé,
-    // `ffmpeg.download`) : le téléchargement vidéo et le repli de décodage de
-    // l'onglet Fichier appellent tous deux `ensure_ffmpeg`, chacun gardé par
-    // son propre drapeau de ré-entrance (`VIDEO_DOWNLOAD_RUNNING`,
-    // `FILE_TRANSCRIPTION_RUNNING`) : rien n'empêche les deux de démarrer un
-    // téléchargement en parallèle au tout premier lancement (aucun binaire
-    // encore présent pour aucun des deux). Avec un nom de staging fixe,
-    // leurs écritures s'entrelaceraient dans le même fichier et
-    // corrompraient le binaire final de façon permanente (le fichier
-    // existerait désormais, donc plus jamais retéléchargé ni réparé).
-    let staging = tempfile::Builder::new()
-        .prefix("ffmpeg-")
-        .tempfile_in(&bin_dir)
-        .map_err(|e| format!("Fichier temporaire ffmpeg impossible: {e}"))?;
-    std::fs::write(staging.path(), &bytes)
-        .map_err(|e| format!("Écriture de ffmpeg impossible: {e}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(staging.path(), std::fs::Permissions::from_mode(0o755))
-            .map_err(|e| format!("Permissions de ffmpeg impossibles: {e}"))?;
-    }
-
-    // Un appelant concurrent a pu terminer son propre téléchargement entre-
-    // temps (même contenu attendu, même URL) : on ne l'écrase pas.
-    if bin_path.exists() {
-        return Ok(bin_path);
-    }
-    staging
-        .persist(&bin_path)
-        .map_err(|e| format!("Installation de ffmpeg impossible: {e}"))?;
+    crate::external_tools::install_executable(
+        &url,
+        &bin_path,
+        // URL épinglée sur la version b6.0 : l'asset ne changera pas, une
+        // reprise après coupure complète bien le même fichier.
+        crate::external_tools::ResumePolicy::Allowed,
+    )
+    .await
+    .map_err(|e| format!("Téléchargement de ffmpeg impossible: {e}"))?;
 
     Ok(bin_path)
 }
@@ -206,6 +204,7 @@ pub async fn download_entry_video(
 
     let mut exit_code: Option<i32> = None;
     let mut printed_path: Option<String> = None;
+    let mut undecodable_stdout = false;
     let mut stderr_tail: VecDeque<String> = VecDeque::new();
 
     while let Some(event) = rx.recv().await {
@@ -216,18 +215,15 @@ pub async fn download_entry_video(
             return Err("Téléchargement de la vidéo annulé".to_string());
         }
         match event {
-            CommandEvent::Stdout(bytes) => {
-                let line = String::from_utf8_lossy(&bytes);
-                let line = line.trim();
-                if let Some(percent) = parse_download_percent(line) {
-                    emit(percent);
-                } else if !line.is_empty() {
-                    // Deux fichiers transitent (flux vidéo + audio) ; le
-                    // `--print after_move:filepath` du fichier FUSIONNÉ est la
-                    // dernière ligne utile.
-                    printed_path = Some(line.to_string());
-                }
-            }
+            CommandEvent::Stdout(bytes) => match parse_yt_dlp_stdout(&bytes) {
+                YtDlpOutput::Progress(percent) => emit(percent),
+                // Deux fichiers transitent (flux vidéo + audio) ; le
+                // `--print after_move:filepath` du fichier FUSIONNÉ est la
+                // dernière ligne utile.
+                YtDlpOutput::Path(path) => printed_path = Some(path.to_string()),
+                YtDlpOutput::Undecodable => undecodable_stdout = true,
+                YtDlpOutput::Ignored => {}
+            },
             CommandEvent::Stderr(bytes) => {
                 let line = String::from_utf8_lossy(&bytes).trim().to_string();
                 if !line.is_empty() {
@@ -256,7 +252,13 @@ pub async fn download_entry_video(
     let path = printed_path
         .map(PathBuf::from)
         .filter(|p| p.exists())
-        .ok_or_else(|| "yt-dlp n'a pas indiqué de fichier vidéo exploitable".to_string())?;
+        .ok_or_else(|| {
+            if undecodable_stdout {
+                "yt-dlp a imprimé le chemin du fichier vidéo dans un encodage illisible".to_string()
+            } else {
+                "yt-dlp n'a pas indiqué de fichier vidéo exploitable".to_string()
+            }
+        })?;
 
     let path_str = path.to_string_lossy().to_string();
     file_history
