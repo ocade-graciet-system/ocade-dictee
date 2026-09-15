@@ -22,7 +22,9 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt;
 use reqwest::header::{CONTENT_RANGE, RANGE};
 use reqwest::StatusCode;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use specta::Type;
 use tokio_util::sync::CancellationToken;
 
 /// Suffixe du fichier temporaire d'un téléchargement en cours.
@@ -39,11 +41,229 @@ pub enum DownloadEvent {
     Verifying,
 }
 
+/// Nature d'une panne réseau, déduite de l'erreur `reqwest` et de sa chaîne de
+/// causes. Tout mettre dans un seul panier « hors ligne » envoyait l'utilisateur
+/// vérifier une connexion qui marchait très bien : chaque cas a sa conduite à
+/// tenir, et le front lui associe son message
+/// (`settings.file.summary.errors.network.*`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum NetworkFailure {
+    /// Aucune route ne sort de la machine : interface coupée, Wi-Fi éteint,
+    /// mode avion. C'est le seul cas où « connectez-vous à Internet » est le
+    /// bon conseil.
+    Offline,
+    /// Le nom du serveur n'a pas pu être résolu. Sur Windows, une machine
+    /// réellement hors ligne produit la même signature qu'un DNS filtré : le
+    /// message couvre donc les deux pistes.
+    DnsFailed,
+    /// Connexion refusée, réinitialisée ou coupée avant la réponse : pare-feu,
+    /// proxy d'entreprise ou antivirus filtrant, typiquement.
+    Blocked,
+    /// Poignée de main TLS rejetée (certificat non reconnu) : signature d'un
+    /// antivirus ou d'un proxy qui inspecte le trafic chiffré.
+    TlsRejected,
+    /// Délai de connexion ou de lecture dépassé : lien très lent, ou paquets
+    /// avalés sans réponse par un filtrage.
+    Timeout,
+    /// Échec réseau dont la chaîne de causes ne dit rien d'exploitable : seul
+    /// le détail technique permet d'avancer.
+    Unknown,
+}
+
+impl NetworkFailure {
+    /// Étiquette française courte, pour le journal et `Display`.
+    pub fn label(self) -> &'static str {
+        match self {
+            NetworkFailure::Offline => "aucun réseau",
+            NetworkFailure::DnsFailed => "nom du serveur non résolu (DNS)",
+            NetworkFailure::Blocked => "connexion refusée ou interrompue",
+            NetworkFailure::TlsRejected => "connexion sécurisée rejetée (certificat)",
+            NetworkFailure::Timeout => "délai dépassé",
+            NetworkFailure::Unknown => "échec de connexion",
+        }
+    }
+
+    /// Plus le signal est spécifique, plus il prime quand plusieurs maillons
+    /// de la chaîne parlent (« aucune route » l'emporte sur « DNS », qui n'en
+    /// est alors que la conséquence).
+    fn precedence(self) -> u8 {
+        match self {
+            NetworkFailure::Offline => 5,
+            NetworkFailure::DnsFailed => 4,
+            NetworkFailure::TlsRejected => 3,
+            NetworkFailure::Blocked => 2,
+            NetworkFailure::Timeout => 1,
+            NetworkFailure::Unknown => 0,
+        }
+    }
+}
+
+/// Signature système d'une cause, indépendante de la langue : sur un Windows
+/// français les messages d'erreur sont traduits, seuls `ErrorKind` et le code
+/// brut restent lisibles.
+fn classify_io_error(error: &std::io::Error) -> Option<NetworkFailure> {
+    use std::io::ErrorKind;
+    // Codes Winsock de résolution de nom, auxquels `std` n'associe aucun
+    // `ErrorKind` : 11001 WSAHOST_NOT_FOUND, 11002 WSATRY_AGAIN,
+    // 11003 WSANO_RECOVERY, 11004 WSANO_DATA. Aucun errno Unix n'atteint ces
+    // valeurs, la garde est donc sans risque sur les autres plateformes.
+    if matches!(error.raw_os_error(), Some(11001..=11004)) {
+        return Some(NetworkFailure::DnsFailed);
+    }
+    match error.kind() {
+        ErrorKind::NetworkUnreachable | ErrorKind::NetworkDown | ErrorKind::HostUnreachable => {
+            Some(NetworkFailure::Offline)
+        }
+        ErrorKind::ConnectionRefused
+        | ErrorKind::ConnectionReset
+        | ErrorKind::ConnectionAborted
+        | ErrorKind::BrokenPipe => Some(NetworkFailure::Blocked),
+        ErrorKind::TimedOut => Some(NetworkFailure::Timeout),
+        _ => None,
+    }
+}
+
+/// Signature textuelle, pour ce qu'aucun `ErrorKind` ne couvre : la résolution
+/// de nom (message de `std`, en anglais sur toutes les plateformes) et le rejet
+/// TLS (message de la bibliothèque TLS). Les marqueurs restent volontairement
+/// spécifiques : un mot trop courant classerait à tort une erreur quelconque.
+fn classify_message(message: &str) -> Option<NetworkFailure> {
+    const OFFLINE: [&str; 3] = [
+        "network is unreachable",
+        "réseau est inaccessible",
+        "no route to host",
+    ];
+    const DNS: [&str; 6] = [
+        "failed to lookup address information",
+        "dns error",
+        "name or service not known",
+        "nodename nor servname",
+        "temporary failure in name resolution",
+        "no such host",
+    ];
+    const TLS: [&str; 7] = [
+        "certificate",
+        "certificat",
+        "handshake",
+        "self-signed",
+        "self signed",
+        "untrusted",
+        "ssl routines",
+    ];
+    let lower = message.to_lowercase();
+    let matches_any = |markers: &[&str]| markers.iter().any(|marker| lower.contains(marker));
+    // L'ordre compte : « failed to lookup address information: Network is
+    // unreachable » est une absence de réseau, pas un DNS en panne.
+    if matches_any(&OFFLINE) {
+        Some(NetworkFailure::Offline)
+    } else if matches_any(&DNS) {
+        Some(NetworkFailure::DnsFailed)
+    } else if matches_any(&TLS) {
+        Some(NetworkFailure::TlsRejected)
+    } else {
+        None
+    }
+}
+
+/// Classe une erreur et toute sa chaîne de causes en retenant le signal le plus
+/// spécifique. `reqwest` empile plusieurs couches (sa propre erreur, celle de
+/// `hyper`, enfin l'erreur système) : la cause utile n'est jamais la première.
+pub fn classify_error_chain(error: &(dyn std::error::Error + 'static)) -> NetworkFailure {
+    let mut found = NetworkFailure::Unknown;
+    let mut link = Some(error);
+    while let Some(current) = link {
+        let candidate = current
+            .downcast_ref::<std::io::Error>()
+            .and_then(classify_io_error)
+            .or_else(|| classify_message(&current.to_string()));
+        if let Some(candidate) = candidate {
+            if candidate.precedence() > found.precedence() {
+                found = candidate;
+            }
+        }
+        link = current.source();
+    }
+    found
+}
+
+/// Classe une erreur `reqwest`. La chaîne de causes dit *pourquoi* ; à défaut,
+/// `is_timeout` et `is_connect` disent au moins *quand* la requête a échoué.
+/// Une erreur de requête sans cause lisible (`is_request` seul) reste
+/// `Unknown` : mieux vaut afficher le détail technique qu'inventer un diagnostic.
+pub fn classify_request_error(error: &reqwest::Error) -> NetworkFailure {
+    match classify_error_chain(error) {
+        NetworkFailure::Unknown if error.is_timeout() => NetworkFailure::Timeout,
+        NetworkFailure::Unknown if error.is_connect() => NetworkFailure::Blocked,
+        failure => failure,
+    }
+}
+
+/// Masque les identifiants qu'une URL citée dans un message d'erreur pourrait
+/// porter (`http://utilisateur:motdepasse@proxy:8080`) : c'est la forme sous
+/// laquelle un proxy d'entreprise est souvent configuré, et ce détail-là est
+/// fait pour être affiché, copié et envoyé au support.
+fn redact_credentials(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(position) = rest.find("://") {
+        let (before, after) = rest.split_at(position + 3);
+        out.push_str(before);
+        let authority_end = after
+            .find(|c: char| c.is_whitespace() || matches!(c, '/' | ')' | '"' | '\'' | ','))
+            .unwrap_or(after.len());
+        let (authority, tail) = after.split_at(authority_end);
+        match authority.rfind('@') {
+            Some(at) => {
+                out.push_str("***");
+                out.push_str(&authority[at..]);
+            }
+            None => out.push_str(authority),
+        }
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Message technique complet d'une erreur et de ses causes. `reqwest` n'affiche
+/// que sa propre couche (« error sending request for url … ») : sans ce
+/// parcours, la cause réelle — refus, certificat, DNS — est perdue. Les
+/// maillons qui répètent ce qui précède sont sautés et l'ensemble est borné :
+/// ce texte finit dans le journal et, replié, dans l'interface.
+pub fn describe_error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    const MAX_CHARS: usize = 400;
+    let mut parts: Vec<String> = Vec::new();
+    let mut link = Some(error);
+    while let Some(current) = link {
+        let text = current.to_string().trim().to_string();
+        if !text.is_empty() && !parts.iter().any(|previous| previous.contains(&text)) {
+            parts.push(text);
+        }
+        link = current.source();
+    }
+    let mut joined = redact_credentials(&parts.join(" → "));
+    if joined.chars().count() > MAX_CHARS {
+        let cut = joined
+            .char_indices()
+            .nth(MAX_CHARS - 1)
+            .map(|(index, _)| index)
+            .unwrap_or(joined.len());
+        joined.truncate(cut);
+        joined.push('…');
+    }
+    joined
+}
+
 #[derive(Debug)]
 pub enum DownloadError {
-    /// La requête n'a même pas pu partir (pas de réseau, DNS, connexion
-    /// refusée, délai de connexion) : rien n'a été reçu.
-    Connect(String),
+    /// La requête n'a pas abouti : rien n'a été reçu. `failure` porte la
+    /// classification (elle décide du message affiché), `detail` la chaîne de
+    /// causes complète, qui ne doit jamais se perdre en route.
+    Network {
+        failure: NetworkFailure,
+        detail: String,
+    },
     /// Réponse HTTP inattendue, flux interrompu ou taille incohérente. Le
     /// fichier partiel est conservé pour une reprise ultérieure.
     Failed(String),
@@ -61,7 +281,9 @@ pub enum DownloadError {
 impl std::fmt::Display for DownloadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DownloadError::Connect(e) => write!(f, "connexion impossible: {e}"),
+            DownloadError::Network { failure, detail } => {
+                write!(f, "{} ({detail})", failure.label())
+            }
             DownloadError::Failed(e) => write!(f, "téléchargement échoué: {e}"),
             DownloadError::ChecksumMismatch { expected, actual } => {
                 write!(f, "SHA-256 inattendu (attendu {expected}, obtenu {actual})")
@@ -143,10 +365,23 @@ async fn send_request(
     if resume_from > 0 {
         request = request.header(RANGE, format!("bytes={resume_from}-"));
     }
-    request
-        .send()
-        .await
-        .map_err(|e| DownloadError::Connect(e.to_string()))
+    request.send().await.map_err(|e| DownloadError::Network {
+        failure: classify_request_error(&e),
+        detail: describe_error_chain(&e),
+    })
+}
+
+/// Coupure en cours de réception. La variante reste `Failed` quelle que soit la
+/// cause : les octets déjà reçus sont conservés et la conduite à tenir est
+/// toujours la même — réessayer, la reprise repart du dernier octet. Un
+/// diagnostic « pare-feu » à cet endroit ferait croire à l'utilisateur qu'il a
+/// tout perdu. La cause reconnue passe en tête du détail, pour le journal.
+fn stream_error(error: reqwest::Error) -> DownloadError {
+    let detail = describe_error_chain(&error);
+    DownloadError::Failed(match classify_request_error(&error) {
+        NetworkFailure::Unknown => format!("flux interrompu: {detail}"),
+        failure => format!("flux interrompu ({}): {detail}", failure.label()),
+    })
 }
 
 /// Télécharge `url` dans `part` (reprise si `part` existe déjà), vérifie le
@@ -246,7 +481,7 @@ pub async fn download_to_part(
             chunk = stream.next() => chunk,
         };
         let Some(chunk) = next else { break };
-        let chunk = chunk.map_err(|e| DownloadError::Failed(format!("flux interrompu: {e}")))?;
+        let chunk = chunk.map_err(stream_error)?;
         file.write_all(&chunk)?;
         downloaded += chunk.len() as u64;
         if last_emit.elapsed() >= Duration::from_millis(100) {
@@ -345,6 +580,14 @@ mod tests {
         TruncateAfter(usize),
         /// Envoie le corps par blocs de 16 octets espacés de 50 ms.
         Slow,
+        /// Répond 404 : le serveur est joignable, la ressource non.
+        NotFound,
+        /// Envoie l'en-tête et `n` octets, puis se tait sans fermer : le
+        /// téléchargement reste suspendu jusqu'à l'échéance de lecture.
+        StallAfter(usize),
+        /// Accepte la connexion, lit la requête, puis ne répond jamais : le
+        /// client doit abandonner sur son échéance (filtrage silencieux).
+        Stall,
     }
 
     struct TestServer {
@@ -394,6 +637,16 @@ mod tests {
                 let total = body.len() as u64;
                 let announces_size = !matches!(behaviour, Behaviour::NoContentLength);
                 let (status, from) = match (behaviour, start) {
+                    (Behaviour::Stall, _) => {
+                        std::thread::sleep(Duration::from_secs(2));
+                        continue;
+                    }
+                    (Behaviour::NotFound, _) => {
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                        continue;
+                    }
                     (Behaviour::RejectRange, Some(_)) => {
                         let head = format!(
                             "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{total}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
@@ -427,6 +680,11 @@ mod tests {
                     Behaviour::TruncateAfter(n) => {
                         let _ = stream.write_all(&payload[..n.min(payload.len())]);
                         let _ = stream.shutdown(std::net::Shutdown::Both);
+                    }
+                    Behaviour::StallAfter(n) => {
+                        let _ = stream.write_all(&payload[..n.min(payload.len())]);
+                        let _ = stream.flush();
+                        std::thread::sleep(Duration::from_secs(2));
                     }
                     Behaviour::Slow => {
                         for block in payload.chunks(16) {
@@ -886,8 +1144,10 @@ mod tests {
         assert!(!dest.exists());
     }
 
+    /// Connexion refusée (port fermé) : c'est un filtrage/refus, pas une
+    /// absence de réseau — et le détail technique doit accompagner l'erreur.
     #[tokio::test]
-    async fn unreachable_server_is_a_connect_error() {
+    async fn refused_connection_is_classified_as_blocked_with_a_detail() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/file.bin", listener.local_addr().unwrap());
         drop(listener);
@@ -903,6 +1163,238 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(matches!(err, DownloadError::Connect(_)), "{err}");
+        let DownloadError::Network { failure, detail } = &err else {
+            panic!("{err}")
+        };
+        assert_eq!(*failure, NetworkFailure::Blocked);
+        assert!(
+            detail.contains(&url),
+            "l'URL visée doit rester dans le détail: {detail}"
+        );
+        assert!(
+            detail.len() > url.len() + 10,
+            "la cause système doit accompagner le message reqwest: {detail}"
+        );
+    }
+
+    /// Serveur qui accepte puis ne répond jamais : délai dépassé, pas « hors
+    /// ligne » (c'est la signature d'un filtrage silencieux).
+    #[tokio::test]
+    async fn a_server_that_never_answers_is_a_timeout() {
+        let server = start_server(body(), vec![Behaviour::Stall]);
+        let dir = tempfile::tempdir().unwrap();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(300))
+            .build()
+            .unwrap();
+        let err = download_with_resume(
+            &client,
+            &server.url,
+            &dir.path().join("f"),
+            None,
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                DownloadError::Network {
+                    failure: NetworkFailure::Timeout,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    /// Flux qui s'arrête en cours de route : quelle que soit la cause reconnue
+    /// (ici l'échéance de lecture), les octets reçus sont conservés et une
+    /// reprise termine le travail. La cause est nommée dans le détail, pour le
+    /// journal, mais l'utilisateur n'est pas envoyé chercher un pare-feu.
+    #[tokio::test]
+    async fn a_stalled_stream_keeps_its_bytes_and_names_the_cause() {
+        let data = body();
+        let server = start_server(data.clone(), vec![Behaviour::StallAfter(1000)]);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("file.bin");
+        let client = reqwest::Client::builder()
+            .read_timeout(Duration::from_millis(300))
+            .build()
+            .unwrap();
+        let err = download_with_resume(
+            &client,
+            &server.url,
+            &dest,
+            Some(&sha_hex(&data)),
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .await
+        .unwrap_err();
+        let DownloadError::Failed(detail) = &err else {
+            panic!("une coupure de flux reste réparable par une reprise: {err}")
+        };
+        assert!(detail.contains("délai dépassé"), "{detail}");
+        // Les octets reçus sont conservés : la reprise (couverte par
+        // `truncated_stream_keeps_partial_then_resumes`) repartira de là.
+        assert_eq!(std::fs::metadata(part_path(&dest)).unwrap().len(), 1000);
+        assert!(!dest.exists());
+    }
+
+    /// Réponse HTTP inattendue : le serveur a répondu, ce n'est donc jamais
+    /// une panne réseau.
+    #[tokio::test]
+    async fn unexpected_http_status_is_not_a_network_failure() {
+        let server = start_server(body(), vec![Behaviour::NotFound]);
+        let dir = tempfile::tempdir().unwrap();
+        let client = build_client().unwrap();
+        let err = download_with_resume(
+            &client,
+            &server.url,
+            &dir.path().join("f"),
+            None,
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&err, DownloadError::Failed(detail) if detail.contains("404")),
+            "{err}"
+        );
+    }
+
+    /// Maillon de chaîne de causes factice : `reqwest::Error` n'a pas de
+    /// constructeur public, mais la classification ne lit que `source()`.
+    #[derive(Debug)]
+    struct Chained {
+        message: &'static str,
+        source: std::io::Error,
+    }
+
+    impl std::fmt::Display for Chained {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.message)
+        }
+    }
+
+    impl std::error::Error for Chained {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.source)
+        }
+    }
+
+    fn chained(source: std::io::Error) -> Chained {
+        Chained {
+            message: "error sending request for url (https://huggingface.co/x.gguf)",
+            source,
+        }
+    }
+
+    /// Chaque signature système connue tombe dans sa catégorie : c'est ce qui
+    /// remplace le fourre-tout « hors ligne » d'origine.
+    #[test]
+    fn classifies_known_system_causes() {
+        use std::io::{Error, ErrorKind};
+        let cases: Vec<(Error, NetworkFailure)> = vec![
+            (
+                Error::from(ErrorKind::NetworkUnreachable),
+                NetworkFailure::Offline,
+            ),
+            (Error::from(ErrorKind::NetworkDown), NetworkFailure::Offline),
+            (
+                Error::from(ErrorKind::HostUnreachable),
+                NetworkFailure::Offline,
+            ),
+            // Résolution de nom : message de `std` (identique partout) sur
+            // Unix, code Winsock sur Windows.
+            (
+                Error::other("failed to lookup address information: nodename nor servname provided, or not known"),
+                NetworkFailure::DnsFailed,
+            ),
+            (Error::from_raw_os_error(11001), NetworkFailure::DnsFailed),
+            (
+                Error::from(ErrorKind::ConnectionRefused),
+                NetworkFailure::Blocked,
+            ),
+            (
+                Error::from(ErrorKind::ConnectionReset),
+                NetworkFailure::Blocked,
+            ),
+            (
+                Error::from(ErrorKind::ConnectionAborted),
+                NetworkFailure::Blocked,
+            ),
+            (
+                Error::other("invalid peer certificate: UnknownIssuer"),
+                NetworkFailure::TlsRejected,
+            ),
+            (
+                Error::other("the certificate chain was issued by an authority that is not trusted"),
+                NetworkFailure::TlsRejected,
+            ),
+            (Error::from(ErrorKind::TimedOut), NetworkFailure::Timeout),
+            (
+                Error::other("quelque chose d'inattendu"),
+                NetworkFailure::Unknown,
+            ),
+        ];
+        for (source, expected) in cases {
+            let described = source.to_string();
+            let classified = classify_error_chain(&chained(source));
+            assert_eq!(classified, expected, "cause: {described}");
+        }
+    }
+
+    /// Le détail remonté doit porter toute la chaîne : `reqwest` n'affiche que
+    /// sa propre couche, la cause système n'est que dans `source()`.
+    #[test]
+    fn describes_the_whole_cause_chain() {
+        let detail = describe_error_chain(&chained(std::io::Error::from(
+            std::io::ErrorKind::ConnectionRefused,
+        )));
+        assert!(detail.contains("huggingface.co"), "{detail}");
+        assert!(detail.contains("refused"), "{detail}");
+    }
+
+    /// Le détail s'affiche et se copie : les identifiants qu'une URL de proxy
+    /// peut porter ne doivent pas partir avec lui.
+    #[test]
+    fn hides_credentials_an_url_could_carry() {
+        let detail = describe_error_chain(&Chained {
+            message: "error sending request",
+            source: std::io::Error::other(
+                "invalid URL: http://utilisateur:motdepasse@proxy.local:8080/ rejected",
+            ),
+        });
+        assert!(detail.contains("http://***@proxy.local:8080/"), "{detail}");
+        assert!(!detail.contains("motdepasse"), "{detail}");
+        assert!(!detail.contains("utilisateur"), "{detail}");
+        // Une URL sans identifiant reste intacte.
+        assert!(describe_error_chain(&chained(std::io::Error::other("x")))
+            .contains("https://huggingface.co/x.gguf"),);
+    }
+
+    /// Un maillon qui répète le message de son parent n'est pas recopié, et le
+    /// détail reste court : il part dans une bulle d'interface.
+    #[test]
+    fn the_detail_stays_short_and_free_of_repetitions() {
+        let repeated = Chained {
+            message: "error sending request for url (https://huggingface.co/x.gguf)",
+            source: std::io::Error::other(
+                "error sending request for url (https://huggingface.co/x.gguf)",
+            ),
+        };
+        assert_eq!(
+            describe_error_chain(&repeated),
+            "error sending request for url (https://huggingface.co/x.gguf)"
+        );
+        let long = Chained {
+            message: "erreur",
+            source: std::io::Error::other("x".repeat(1000)),
+        };
+        assert!(describe_error_chain(&long).chars().count() <= 400);
     }
 }

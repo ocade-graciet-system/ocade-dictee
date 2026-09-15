@@ -23,7 +23,7 @@ import {
   UploadCloud,
   X,
 } from "lucide-react";
-import type { SummaryError } from "@/bindings";
+import type { NetworkFailure, SummaryAsset, SummaryError } from "@/bindings";
 import {
   SUMMARY_ACTIVE_STATUSES,
   useFileTranscriptionStore,
@@ -238,6 +238,18 @@ export const FileTranscription: React.FC = () => {
     flashCopied("summary");
   };
 
+  // Le détail technique doit pouvoir partir au support en un clic : c'est
+  // souvent la seule trace exploitable d'une panne qui ne se reproduit pas.
+  const handleCopyErrorDetail = async (detail: string) => {
+    try {
+      await writeText(detail);
+      toast.success(t("settings.file.summary.errors.detailCopied"));
+    } catch (error) {
+      console.error("Failed to copy summary error detail:", error);
+      toast.error(t("settings.file.summary.copyError"));
+    }
+  };
+
   const handleSaveAs = async () => {
     if (!markdown) return;
     setSaving(true);
@@ -349,17 +361,40 @@ export const FileTranscription: React.FC = () => {
   const downloadSizeLabel =
     summaryDownloadBytes > 0 ? formatGigabytes(summaryDownloadBytes) : null;
 
+  // Quelle ressource a échoué, et chez quel hébergeur : le moteur vient de
+  // github.com, le modèle de huggingface.co, et un réseau filtré laisse
+  // souvent passer l'un sans l'autre.
+  const describeSummaryAsset = (asset: SummaryAsset, host: string): string =>
+    asset === "engine"
+      ? t("settings.file.summary.errors.asset.engine", { host })
+      : t("settings.file.summary.errors.asset.model", { host });
+
+  // Une conduite à tenir par nature de panne : c'est tout l'intérêt de la
+  // classification faite côté Rust (`NetworkFailure`). « Connectez-vous à
+  // Internet » ne vaut que pour `offline`.
+  const describeNetworkFailure = (failure: NetworkFailure): string => {
+    switch (failure) {
+      case "offline":
+        return t("settings.file.summary.errors.network.offline");
+      case "dnsFailed":
+        return t("settings.file.summary.errors.network.dnsFailed");
+      case "blocked":
+        return t("settings.file.summary.errors.network.blocked");
+      case "tlsRejected":
+        return t("settings.file.summary.errors.network.tlsRejected");
+      case "timeout":
+        return t("settings.file.summary.errors.network.timeout");
+      case "unknown":
+        return t("settings.file.summary.errors.network.unknown");
+    }
+  };
+
   // Chaque variante de `SummaryError` a son message (spec plan 09, §5) ;
   // `cancelled` n'en a pas (retour silencieux).
   const describeSummaryError = (error: SummaryError): string => {
     switch (error.kind) {
-      case "offline":
-        // Même taille que l'encart de progression : une seule vérité.
-        return downloadSizeLabel
-          ? t("settings.file.summary.errors.offline", {
-              size: downloadSizeLabel,
-            })
-          : t("settings.file.summary.errors.offlineNoSize");
+      case "network":
+        return `${describeSummaryAsset(error.asset, error.host)} ${describeNetworkFailure(error.failure)}`;
       case "diskSpace":
         return t("settings.file.summary.errors.diskSpace", {
           free: formatGigabytes(error.freeBytes),
@@ -367,7 +402,7 @@ export const FileTranscription: React.FC = () => {
       case "memory":
         return t("settings.file.summary.errors.memory");
       case "downloadFailed":
-        return t("settings.file.summary.errors.downloadFailed");
+        return `${describeSummaryAsset(error.asset, error.host)} ${t("settings.file.summary.errors.downloadFailed")}`;
       case "checksumMismatch":
         return t("settings.file.summary.errors.checksumMismatch");
       case "engineStartFailed":
@@ -378,6 +413,20 @@ export const FileTranscription: React.FC = () => {
         return t("settings.file.summary.errors.busy");
       case "cancelled":
         return "";
+    }
+  };
+
+  // Détail technique (chaîne de causes réseau, sortie du moteur…) : replié
+  // sous le message et copiable, pour qu'une capture d'écran ou un
+  // copier-coller du client suffise au support.
+  const summaryErrorDetail = (error: SummaryError): string | null => {
+    switch (error.kind) {
+      case "network":
+      case "downloadFailed":
+      case "engineStartFailed":
+        return error.detail.trim() === "" ? null : error.detail;
+      default:
+        return null;
     }
   };
 
@@ -406,6 +455,13 @@ export const FileTranscription: React.FC = () => {
   const summaryDownloading =
     summaryProgress !== null &&
     (summaryProgress.phase === "engine" || summaryProgress.phase === "model");
+
+  const summaryErrorMessage = summaryError
+    ? describeSummaryError(summaryError)
+    : "";
+  const summaryErrorTechnicalDetail = summaryError
+    ? summaryErrorDetail(summaryError)
+    : null;
 
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
@@ -678,10 +734,34 @@ export const FileTranscription: React.FC = () => {
                 </div>
               )}
 
-              {summaryStatus === "error" && summaryError && (
-                <Alert variant="error">
-                  {describeSummaryError(summaryError)}
-                </Alert>
+              {summaryStatus === "error" && summaryErrorMessage && (
+                <div className="space-y-2">
+                  <Alert variant="error">{summaryErrorMessage}</Alert>
+                  {summaryErrorTechnicalDetail && (
+                    <details className="rounded-lg border border-mid-gray/20 bg-mid-gray/5 px-3 py-2">
+                      <summary className="cursor-pointer select-none text-xs text-text/50">
+                        {t("settings.file.summary.errors.detail")}
+                      </summary>
+                      <div className="mt-2 flex items-start gap-2">
+                        <p className="flex-1 select-text break-all font-mono text-[11px] leading-relaxed text-text/60">
+                          {summaryErrorTechnicalDetail}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleCopyErrorDetail(
+                              summaryErrorTechnicalDetail,
+                            )
+                          }
+                          title={t("settings.file.summary.errors.detailCopy")}
+                          className="shrink-0 rounded p-1.5 text-text/40 transition-colors hover:bg-logo-primary/10 hover:text-logo-primary"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </details>
+                  )}
+                </div>
               )}
 
               {summaryMarkdown === null ? (
