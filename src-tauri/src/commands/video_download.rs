@@ -5,7 +5,9 @@
 //! La transcription, elle, ne télécharge que l'audio (rapide) ; la vidéo n'est
 //! récupérée que si l'utilisateur la demande, une seule fois par entrée.
 
-use crate::commands::file_transcription::{parse_download_percent, resolve_yt_dlp_command};
+use crate::commands::file_transcription::{
+    parse_yt_dlp_stdout, resolve_yt_dlp_command, YtDlpOutput,
+};
 use crate::managers::file_history::FileHistoryManager;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -206,6 +208,7 @@ pub async fn download_entry_video(
 
     let mut exit_code: Option<i32> = None;
     let mut printed_path: Option<String> = None;
+    let mut undecodable_stdout = false;
     let mut stderr_tail: VecDeque<String> = VecDeque::new();
 
     while let Some(event) = rx.recv().await {
@@ -216,18 +219,15 @@ pub async fn download_entry_video(
             return Err("Téléchargement de la vidéo annulé".to_string());
         }
         match event {
-            CommandEvent::Stdout(bytes) => {
-                let line = String::from_utf8_lossy(&bytes);
-                let line = line.trim();
-                if let Some(percent) = parse_download_percent(line) {
-                    emit(percent);
-                } else if !line.is_empty() {
-                    // Deux fichiers transitent (flux vidéo + audio) ; le
-                    // `--print after_move:filepath` du fichier FUSIONNÉ est la
-                    // dernière ligne utile.
-                    printed_path = Some(line.to_string());
-                }
-            }
+            CommandEvent::Stdout(bytes) => match parse_yt_dlp_stdout(&bytes) {
+                YtDlpOutput::Progress(percent) => emit(percent),
+                // Deux fichiers transitent (flux vidéo + audio) ; le
+                // `--print after_move:filepath` du fichier FUSIONNÉ est la
+                // dernière ligne utile.
+                YtDlpOutput::Path(path) => printed_path = Some(path.to_string()),
+                YtDlpOutput::Undecodable => undecodable_stdout = true,
+                YtDlpOutput::Ignored => {}
+            },
             CommandEvent::Stderr(bytes) => {
                 let line = String::from_utf8_lossy(&bytes).trim().to_string();
                 if !line.is_empty() {
@@ -256,7 +256,13 @@ pub async fn download_entry_video(
     let path = printed_path
         .map(PathBuf::from)
         .filter(|p| p.exists())
-        .ok_or_else(|| "yt-dlp n'a pas indiqué de fichier vidéo exploitable".to_string())?;
+        .ok_or_else(|| {
+            if undecodable_stdout {
+                "yt-dlp a imprimé le chemin du fichier vidéo dans un encodage illisible".to_string()
+            } else {
+                "yt-dlp n'a pas indiqué de fichier vidéo exploitable".to_string()
+            }
+        })?;
 
     let path_str = path.to_string_lossy().to_string();
     file_history

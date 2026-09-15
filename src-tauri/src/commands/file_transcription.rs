@@ -294,20 +294,31 @@ async fn resolve_ffmpeg(app: &AppHandle) -> Option<PathBuf> {
 /// usage sur macOS (voir [`ensure_yt_dlp_macos`]), sidecar embarqué ailleurs
 /// (tauri.{windows,linux}.conf.json). Partagé avec le téléchargement de vidéo
 /// (`commands::video_download`).
+///
+/// `--encoding UTF-8` est posé ici, une fois pour toutes les invocations.
+/// Sans lui, yt-dlp écrit sa sortie avec l'encodage de `sys.stdout` — soit la
+/// page de codes ANSI du système sous Windows, cp1252 en français — et avec
+/// `errors='ignore'` : tout caractère absent de cette page de codes disparaît
+/// purement et simplement. Le chemin imprimé par `--print after_move:filepath`
+/// ne désignait alors plus le fichier réellement écrit sur le disque, qui
+/// garde, lui, son nom Unicode — d'où « yt-dlp n'a pas indiqué de fichier …
+/// exploitable » dès qu'un titre de vidéo sortait de l'ASCII. macOS et Linux,
+/// en UTF-8 de bout en bout, n'ont jamais rien vu.
 pub(crate) async fn resolve_yt_dlp_command(
     app: &AppHandle,
 ) -> Result<tauri_plugin_shell::process::Command, String> {
     #[cfg(target_os = "macos")]
-    {
+    let command = {
         let bin_path = ensure_yt_dlp_macos(app).await?;
-        Ok(app.shell().command(bin_path))
-    }
+        app.shell().command(bin_path)
+    };
     #[cfg(not(target_os = "macos"))]
-    {
-        app.shell()
-            .sidecar("yt-dlp")
-            .map_err(|e| format!("Sidecar yt-dlp introuvable: {e}"))
-    }
+    let command = app
+        .shell()
+        .sidecar("yt-dlp")
+        .map_err(|e| format!("Sidecar yt-dlp introuvable: {e}"))?;
+
+    Ok(command.args(["--encoding", "UTF-8"]))
 }
 
 /// Ligne de progression émise par yt-dlp via `--progress-template`
@@ -316,6 +327,36 @@ pub(crate) fn parse_download_percent(line: &str) -> Option<u32> {
     let rest = line.strip_prefix("HANDY_DL")?.trim();
     let value: f32 = rest.strip_suffix('%')?.trim().parse().ok()?;
     Some(value.clamp(0.0, 100.0).round() as u32)
+}
+
+/// Ce qu'une ligne de stdout de yt-dlp nous apprend.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum YtDlpOutput<'a> {
+    /// Ligne du `--progress-template`, en pourcentage arrondi.
+    Progress(u32),
+    /// Chemin imprimé par `--print after_move:filepath`.
+    Path(&'a str),
+    /// Octets non-UTF-8 : yt-dlp a écrit dans la page de codes du système
+    /// malgré `--encoding UTF-8` (cf. [`resolve_yt_dlp_command`]). Le chemin
+    /// qu'on en tirerait ne désignerait aucun fichier.
+    Undecodable,
+    /// Ligne vide, sans information.
+    Ignored,
+}
+
+/// Classe une ligne de stdout de yt-dlp. Le décodage est strict : un
+/// `from_utf8_lossy` fabriquerait un chemin plausible mais faux, et l'échec
+/// qui s'ensuivait ne disait rien de sa cause.
+pub(crate) fn parse_yt_dlp_stdout(bytes: &[u8]) -> YtDlpOutput<'_> {
+    let Ok(line) = std::str::from_utf8(bytes) else {
+        return YtDlpOutput::Undecodable;
+    };
+    let line = line.trim();
+    match parse_download_percent(line) {
+        Some(percent) => YtDlpOutput::Progress(percent),
+        None if line.is_empty() => YtDlpOutput::Ignored,
+        None => YtDlpOutput::Path(line),
+    }
 }
 
 /// Télécharge la piste audio d'`url` dans `<app_data>/downloads/` via le
@@ -359,6 +400,7 @@ async fn download_media(app: &AppHandle, url: &str) -> Result<PathBuf, String> {
 
     let mut exit_code: Option<i32> = None;
     let mut printed_path: Option<String> = None;
+    let mut undecodable_stdout = false;
     let mut stderr_tail: VecDeque<String> = VecDeque::new();
 
     while let Some(event) = rx.recv().await {
@@ -369,16 +411,15 @@ async fn download_media(app: &AppHandle, url: &str) -> Result<PathBuf, String> {
             return Err("Transcription annulée par l'utilisateur".to_string());
         }
         match event {
-            CommandEvent::Stdout(bytes) => {
-                let line = String::from_utf8_lossy(&bytes);
-                let line = line.trim();
-                if let Some(pct) = parse_download_percent(line) {
-                    emit_progress(app, FileTranscriptionPhase::Download, pct, 100);
-                } else if !line.is_empty() {
-                    // `--print after_move:filepath` : dernière ligne utile.
-                    printed_path = Some(line.to_string());
+            CommandEvent::Stdout(bytes) => match parse_yt_dlp_stdout(&bytes) {
+                YtDlpOutput::Progress(pct) => {
+                    emit_progress(app, FileTranscriptionPhase::Download, pct, 100)
                 }
-            }
+                // `--print after_move:filepath` : dernière ligne utile.
+                YtDlpOutput::Path(path) => printed_path = Some(path.to_string()),
+                YtDlpOutput::Undecodable => undecodable_stdout = true,
+                YtDlpOutput::Ignored => {}
+            },
             CommandEvent::Stderr(bytes) => {
                 let line = String::from_utf8_lossy(&bytes).trim().to_string();
                 if !line.is_empty() {
@@ -407,7 +448,14 @@ async fn download_media(app: &AppHandle, url: &str) -> Result<PathBuf, String> {
     let path = printed_path
         .map(PathBuf::from)
         .filter(|p| p.exists())
-        .ok_or_else(|| "yt-dlp n'a pas indiqué de fichier téléchargé exploitable".to_string())?;
+        .ok_or_else(|| {
+            if undecodable_stdout {
+                "yt-dlp a imprimé le chemin du fichier téléchargé dans un encodage illisible"
+                    .to_string()
+            } else {
+                "yt-dlp n'a pas indiqué de fichier téléchargé exploitable".to_string()
+            }
+        })?;
 
     emit_progress(app, FileTranscriptionPhase::Download, 100, 100);
     Ok(path)
@@ -639,5 +687,28 @@ mod tests {
         assert_eq!(parse_download_percent("/tmp/Ma vidéo [abc].m4a"), None);
         assert_eq!(parse_download_percent(""), None);
         assert_eq!(parse_download_percent("HANDY_DL n/a"), None);
+    }
+
+    /// Sous Windows, yt-dlp écrit sa sortie dans la page de codes ANSI du
+    /// système : « é » y tient sur un seul octet (0xE9), invalide en UTF-8, et
+    /// les caractères absents de cette page de codes disparaissent purement et
+    /// simplement (`errors='ignore'`). Un chemin reconstruit à coups de U+FFFD
+    /// ne désigne plus aucun fichier : la ligne doit être signalée illisible,
+    /// jamais « réparée ».
+    #[test]
+    fn stdout_parsing_separates_progress_path_and_undecodable() {
+        assert_eq!(
+            parse_yt_dlp_stdout(b"HANDY_DL  12.3%"),
+            YtDlpOutput::Progress(12)
+        );
+        assert_eq!(
+            parse_yt_dlp_stdout("/tmp/Ma vidéo [abc].m4a".as_bytes()),
+            YtDlpOutput::Path("/tmp/Ma vidéo [abc].m4a")
+        );
+        assert_eq!(
+            parse_yt_dlp_stdout(b"/tmp/Ma vid\xE9o [abc].m4a"),
+            YtDlpOutput::Undecodable
+        );
+        assert_eq!(parse_yt_dlp_stdout(b"   "), YtDlpOutput::Ignored);
     }
 }
