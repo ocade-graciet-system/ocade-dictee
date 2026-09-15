@@ -241,32 +241,141 @@ const YT_DLP_MACOS_URL: &str =
 /// ([`crate::external_tools`]) et l'appel à la demande. Le second arrivant
 /// attend le premier et repart de son résultat, au lieu de lancer un second
 /// téléchargement dans le même fichier de reprise.
-#[cfg(target_os = "macos")]
 static YT_DLP_INSTALL_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
     once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
 
-/// macOS uniquement : emplacement de yt-dlp dans les données de l'app, qu'il y
-/// soit ou non. Sert au pré-chargement de démarrage pour savoir s'il reste
-/// quelque chose à télécharger, sans déclencher le téléchargement lui-même.
-#[cfg(target_os = "macos")]
+/// Nom du binaire yt-dlp sur disque.
+fn yt_dlp_bin_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "yt-dlp.exe"
+    } else {
+        "yt-dlp"
+    }
+}
+
+/// Emplacement de yt-dlp dans les données de l'app, qu'il y soit ou non.
+/// Sert au pré-chargement de démarrage pour savoir s'il reste quelque chose à
+/// installer, sans déclencher l'installation elle-même.
 pub(crate) fn yt_dlp_bin_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(crate::portable::app_data_dir(app)
         .map_err(|e| format!("Dossier de données inaccessible: {e}"))?
         .join("bin")
-        .join("yt-dlp"))
+        .join(yt_dlp_bin_name()))
 }
 
-/// macOS uniquement : fournit yt-dlp depuis les données de l'app, téléchargé
-/// au premier usage (ou pré-chargé au démarrage, voir
-/// [`crate::external_tools`]). Impossible de l'embarquer en sidecar sur cette
-/// plateforme : Tauri re-signe le bundle en ad-hoc, or yt-dlp_macos
-/// (PyInstaller) extrait au lancement une bibliothèque Python signée avec le
-/// Team ID yt-dlp — dyld refuse alors le chargement (« mapping process and
-/// mapped file have different Team IDs »). Téléchargé ici hors navigateur, le
-/// binaire garde sa signature d'origine cohérente et ne porte pas d'attribut
-/// de quarantaine.
-#[cfg(target_os = "macos")]
-pub(crate) async fn ensure_yt_dlp_macos(app: &AppHandle) -> Result<PathBuf, String> {
+/// Emplacement du sidecar yt-dlp embarqué dans le bundle (Windows, Linux).
+/// Reproduit la résolution de `tauri_plugin_shell` : le binaire est déposé à
+/// côté de l'exécutable principal.
+#[cfg(not(target_os = "macos"))]
+fn yt_dlp_sidecar_path() -> Result<PathBuf, String> {
+    let exe = tauri::utils::platform::current_exe()
+        .map_err(|e| format!("Exécutable courant introuvable: {e}"))?;
+    let dir = exe
+        .parent()
+        .ok_or_else(|| "Exécutable courant sans dossier parent".to_string())?;
+    Ok(dir.join(yt_dlp_bin_name()))
+}
+
+/// Âge au-delà duquel la copie de yt-dlp est retéléchargée.
+///
+/// yt-dlp est le seul de nos outils externes qui doit suivre des cibles
+/// mouvantes : les sites vidéo changent leur extraction sans prévenir, et une
+/// copie figée finit par ne plus rien savoir extraire — c'est exactement ce
+/// qui s'est produit avec le défi JavaScript de YouTube.
+///
+/// Sept jours : assez court pour qu'une panne d'extraction se répare d'elle-
+/// même en une semaine, assez long pour ne pas transformer chaque démarrage en
+/// requête réseau.
+pub(crate) const YT_DLP_MAX_AGE: std::time::Duration =
+    std::time::Duration::from_secs(7 * 24 * 3600);
+
+/// Témoin de la dernière vérification de mise à jour : un fichier vide dont
+/// seule la date compte.
+///
+/// C'est bien la date de *vérification* qu'il faut mesurer, pas celle du
+/// binaire : un `yt-dlp -U` qui ne trouve rien de plus récent ne réécrit pas
+/// le fichier, et s'y fier relancerait la vérification à chaque démarrage
+/// jusqu'à la fin des temps.
+fn yt_dlp_checked_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(crate::portable::app_data_dir(app)
+        .map_err(|e| format!("Dossier de données inaccessible: {e}"))?
+        .join("bin")
+        .join("yt-dlp.checked"))
+}
+
+/// Note que yt-dlp vient d'être vérifié (ou installé, ce qui vaut vérification
+/// puisque l'URL visée est « latest »).
+fn mark_yt_dlp_checked(app: &AppHandle) {
+    if let Ok(path) = yt_dlp_checked_path(app) {
+        if let Err(e) = std::fs::write(&path, b"") {
+            warn!("Témoin de vérification de yt-dlp non écrit: {e}");
+        }
+    }
+}
+
+/// Temps écoulé depuis la dernière vérification. `None` quand rien n'est
+/// lisible — cas d'une installation antérieure à ce mécanisme, ou d'un système
+/// de fichiers qui refuse la date.
+pub(crate) fn yt_dlp_age(app: &AppHandle) -> Option<std::time::Duration> {
+    // Repli sur le binaire lui-même : les installations d'avant le témoin
+    // n'en ont pas, et leur date de téléchargement est la bonne réponse.
+    let path = yt_dlp_checked_path(app)
+        .ok()
+        .filter(|p| p.exists())
+        .or_else(|| yt_dlp_bin_path(app).ok())?;
+    let modified = std::fs::metadata(&path).ok()?.modified().ok()?;
+    std::time::SystemTime::now().duration_since(modified).ok()
+}
+
+/// Met à jour la copie de yt-dlp via son propre `-U`.
+///
+/// `-U` plutôt qu'un retéléchargement par [`crate::external_tools`] :
+/// `install_part` refuse délibérément d'écraser un binaire déjà en place, qui
+/// peut être en cours d'exécution. yt-dlp, lui, sait se remplacer lui-même
+/// sans danger, y compris sous Windows où l'on ne peut pas supprimer un
+/// exécutable ouvert.
+pub(crate) async fn refresh_yt_dlp(app: &AppHandle) -> Result<(), String> {
+    let bin_path = ensure_yt_dlp(app).await?;
+    let _guard = YT_DLP_INSTALL_LOCK.lock().await;
+
+    let output = app
+        .shell()
+        .command(&bin_path)
+        .args(["-U"])
+        .output()
+        .await
+        .map_err(|e| format!("Lancement de la mise à jour impossible: {e}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "yt-dlp -U a échoué (code {:?}): {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    mark_yt_dlp_checked(app);
+    Ok(())
+}
+
+/// Fournit yt-dlp depuis les données de l'application, que l'application
+/// possède et peut donc mettre à jour (voir [`refresh_yt_dlp`]).
+///
+/// Sur macOS, le binaire est téléchargé : impossible de l'embarquer en sidecar
+/// sur cette plateforme, car Tauri re-signe le bundle en ad-hoc, or
+/// yt-dlp_macos (PyInstaller) extrait au lancement une bibliothèque Python
+/// signée avec le Team ID yt-dlp — dyld refuse alors le chargement (« mapping
+/// process and mapped file have different Team IDs »). Téléchargé ici hors
+/// navigateur, le binaire garde sa signature d'origine cohérente et ne porte
+/// pas d'attribut de quarantaine.
+///
+/// Sur Windows et Linux, la copie est amorcée depuis le sidecar embarqué :
+/// instantané, hors ligne, et sans les 37 Mo d'un téléchargement pour un
+/// binaire déjà présent sur le disque. On ne se contente pas d'exécuter le
+/// sidecar en place parce qu'il n'est pas modifiable — `Program Files` et
+/// l'image AppImage sont en lecture seule — et qu'il resterait donc figé à la
+/// version du jour du build, alors que yt-dlp doit suivre les sites.
+pub(crate) async fn ensure_yt_dlp(app: &AppHandle) -> Result<PathBuf, String> {
     let bin_path = yt_dlp_bin_path(app)?;
     if bin_path.exists() {
         return Ok(bin_path);
@@ -277,6 +386,12 @@ pub(crate) async fn ensure_yt_dlp_macos(app: &AppHandle) -> Result<PathBuf, Stri
         return Ok(bin_path);
     }
 
+    if let Some(dir) = bin_path.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("Création du dossier bin impossible: {e}"))?;
+    }
+
+    #[cfg(target_os = "macos")]
     crate::external_tools::install_executable(
         YT_DLP_MACOS_URL,
         &bin_path,
@@ -288,6 +403,22 @@ pub(crate) async fn ensure_yt_dlp_macos(app: &AppHandle) -> Result<PathBuf, Stri
     .await
     .map_err(|e| format!("Téléchargement de l'outil yt-dlp impossible: {e}"))?;
 
+    #[cfg(not(target_os = "macos"))]
+    {
+        let sidecar = yt_dlp_sidecar_path()?;
+        // Copie en deux temps comme les téléchargements : une copie coupée ne
+        // laisse jamais un binaire tronqué au chemin final.
+        let staging = bin_path.with_extension("seeding");
+        std::fs::copy(&sidecar, &staging).map_err(|e| {
+            format!(
+                "Copie du sidecar yt-dlp impossible ({}): {e}",
+                sidecar.display()
+            )
+        })?;
+        crate::external_tools::install_part(&staging, &bin_path)?;
+    }
+
+    mark_yt_dlp_checked(app);
     Ok(bin_path)
 }
 
@@ -422,10 +553,10 @@ async fn resolve_ffmpeg(app: &AppHandle) -> Option<PathBuf> {
     }
 }
 
-/// Résout la commande yt-dlp de la plateforme : binaire téléchargé au premier
-/// usage sur macOS (voir [`ensure_yt_dlp_macos`]), sidecar embarqué ailleurs
-/// (tauri.{windows,linux}.conf.json). Partagé avec le téléchargement de vidéo
-/// (`commands::video_download`).
+/// Résout la commande yt-dlp : toujours la copie que l'application possède
+/// dans ses données (voir [`ensure_yt_dlp`]), sur les trois plateformes, pour
+/// qu'elle soit modifiable et donc tenue à jour. Partagé avec le
+/// téléchargement de vidéo (`commands::video_download`).
 ///
 /// `--encoding UTF-8` est posé ici, une fois pour toutes les invocations.
 /// Sans lui, yt-dlp écrit sa sortie avec l'encodage de `sys.stdout` — soit la
@@ -446,18 +577,8 @@ async fn resolve_ffmpeg(app: &AppHandle) -> Option<PathBuf> {
 pub(crate) async fn resolve_yt_dlp_command(
     app: &AppHandle,
 ) -> Result<tauri_plugin_shell::process::Command, String> {
-    #[cfg(target_os = "macos")]
-    let command = {
-        let bin_path = ensure_yt_dlp_macos(app).await?;
-        app.shell().command(bin_path)
-    };
-    #[cfg(not(target_os = "macos"))]
-    let command = app
-        .shell()
-        .sidecar("yt-dlp")
-        .map_err(|e| format!("Sidecar yt-dlp introuvable: {e}"))?;
-
-    let command = command.args(["--encoding", "UTF-8"]);
+    let bin_path = ensure_yt_dlp(app).await?;
+    let command = app.shell().command(bin_path).args(["--encoding", "UTF-8"]);
 
     // Échec non fatal : les sites sans défi JavaScript restent téléchargeables,
     // et yt-dlp retombe alors sur sa détection par défaut. Seul YouTube en

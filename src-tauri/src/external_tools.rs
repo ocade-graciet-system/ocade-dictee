@@ -115,7 +115,14 @@ impl ExternalTool {
     /// tout de suite ce qui passe sur le lien.
     fn approx_size_mb(self) -> u32 {
         match self {
-            ExternalTool::YtDlp => 37,
+            // macOS télécharge ; ailleurs c'est une copie locale du sidecar.
+            ExternalTool::YtDlp => {
+                if cfg!(target_os = "macos") {
+                    37
+                } else {
+                    0
+                }
+            }
             ExternalTool::Ffmpeg => 80,
             ExternalTool::QuickJs => 1,
         }
@@ -131,9 +138,7 @@ pub(crate) struct PreloadContext {
     pub headless: bool,
     /// Pré-chargement désactivé par l'environnement.
     pub disabled: bool,
-    /// yt-dlp est embarqué en sidecar (Windows, Linux) : rien à télécharger.
-    pub yt_dlp_bundled: bool,
-    /// yt-dlp est déjà dans les données de l'application (macOS).
+    /// yt-dlp est déjà dans les données de l'application.
     pub yt_dlp_installed: bool,
     /// ffmpeg est déjà dans les données de l'application.
     pub ffmpeg_installed: bool,
@@ -156,13 +161,27 @@ pub(crate) fn preload_plan(ctx: &PreloadContext) -> Vec<ExternalTool> {
     if !ctx.quickjs_installed {
         plan.push(ExternalTool::QuickJs);
     }
-    if !ctx.yt_dlp_bundled && !ctx.yt_dlp_installed {
+    if !ctx.yt_dlp_installed {
         plan.push(ExternalTool::YtDlp);
     }
     if !ctx.ffmpeg_installed {
         plan.push(ExternalTool::Ffmpeg);
     }
     plan
+}
+
+/// Faut-il tenter une mise à jour de yt-dlp ?
+///
+/// `age` est le temps écoulé depuis la dernière vérification, `None` quand
+/// rien n'est lisible (installation antérieure à ce mécanisme, système de
+/// fichiers sans date). Dans ce cas on tente : ne jamais se mettre à jour est
+/// le défaut qu'on corrige, et le pré-chargement n'essaie qu'une fois par
+/// session — aucune boucle possible.
+pub(crate) fn yt_dlp_refresh_due(age: Option<Duration>) -> bool {
+    match age {
+        Some(age) => age >= crate::commands::file_transcription::YT_DLP_MAX_AGE,
+        None => true,
+    }
 }
 
 /// Conduite à tenir avant de lancer le premier téléchargement.
@@ -380,19 +399,7 @@ async fn install_tool(app: &AppHandle, tool: ExternalTool) -> Result<PathBuf, St
     match tool {
         ExternalTool::Ffmpeg => crate::commands::video_download::ensure_ffmpeg(app).await,
         ExternalTool::QuickJs => crate::commands::file_transcription::ensure_quickjs(app).await,
-        ExternalTool::YtDlp => {
-            #[cfg(target_os = "macos")]
-            {
-                crate::commands::file_transcription::ensure_yt_dlp_macos(app).await
-            }
-            // Hors macOS, yt-dlp est embarqué : `preload_plan` ne le met jamais
-            // au plan, ce bras n'existe que pour la complétude du `match`.
-            #[cfg(not(target_os = "macos"))]
-            {
-                let _ = app;
-                Err("yt-dlp est embarqué en sidecar sur cette plateforme".to_string())
-            }
-        }
+        ExternalTool::YtDlp => crate::commands::file_transcription::ensure_yt_dlp(app).await,
     }
 }
 
@@ -407,17 +414,13 @@ pub(crate) fn spawn_preload(app: &AppHandle, headless: bool) {
 }
 
 async fn preload_task(app: AppHandle, headless: bool) {
-    #[cfg(target_os = "macos")]
     let yt_dlp_installed = crate::commands::file_transcription::yt_dlp_bin_path(&app)
         .map(|path| path.exists())
         .unwrap_or(false);
-    #[cfg(not(target_os = "macos"))]
-    let yt_dlp_installed = false;
 
     let ctx = PreloadContext {
         headless,
         disabled: flag_enabled(std::env::var(DISABLE_ENV).ok().as_deref()),
-        yt_dlp_bundled: !cfg!(target_os = "macos"),
         yt_dlp_installed,
         ffmpeg_installed: crate::commands::video_download::ffmpeg_bin_path(&app)
             .map(|path| path.exists())
@@ -428,7 +431,15 @@ async fn preload_task(app: AppHandle, headless: bool) {
     };
 
     let plan = preload_plan(&ctx);
-    if plan.is_empty() {
+
+    // La mise à jour se décide à part : elle porte sur un outil déjà installé,
+    // donc absent du plan, et c'est justement le cas courant.
+    let refresh = !ctx.headless
+        && !ctx.disabled
+        && ctx.yt_dlp_installed
+        && yt_dlp_refresh_due(crate::commands::file_transcription::yt_dlp_age(&app));
+
+    if plan.is_empty() && !refresh {
         debug!("Pré-chargement des outils : rien à faire ({ctx:?})");
         return;
     }
@@ -457,6 +468,18 @@ async fn preload_task(app: AppHandle, headless: bool) {
     })
     .await;
 
+    if refresh {
+        info!("Mise à jour de yt-dlp (copie datant de plus de 7 jours)…");
+        match crate::commands::file_transcription::refresh_yt_dlp(&app).await {
+            Ok(()) => info!("yt-dlp à jour"),
+            // Silencieux pour l'utilisateur : la copie en place continue de
+            // fonctionner, elle est seulement plus ancienne que souhaité.
+            Err(e) => {
+                warn!("Mise à jour de yt-dlp impossible, la copie en place est conservée: {e}")
+            }
+        }
+    }
+
     let failed = outcomes
         .iter()
         .filter(|outcome| matches!(outcome, PreloadOutcome::Failed { .. }))
@@ -475,13 +498,11 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    /// Installation neuve sur macOS : aucun des outils n'est là, et yt-dlp
-    /// n'y est pas embarqué en sidecar.
+    /// Installation neuve : aucun des outils n'est là.
     fn fresh_macos() -> PreloadContext {
         PreloadContext {
             headless: false,
             disabled: false,
-            yt_dlp_bundled: false,
             yt_dlp_installed: false,
             ffmpeg_installed: false,
             quickjs_installed: false,
@@ -519,31 +540,6 @@ mod tests {
     }
 
     #[test]
-    fn a_bundled_yt_dlp_leaves_quickjs_and_ffmpeg_to_preload() {
-        let ctx = PreloadContext {
-            yt_dlp_bundled: true,
-            ..fresh_macos()
-        };
-        assert_eq!(
-            preload_plan(&ctx),
-            vec![ExternalTool::QuickJs, ExternalTool::Ffmpeg]
-        );
-    }
-
-    /// QuickJS est nécessaire partout, y compris là où yt-dlp est embarqué en
-    /// sidecar (Windows, Linux) : c'est justement le cas où l'absence de
-    /// moteur JavaScript était la seule chose qui manquait pour YouTube.
-    #[test]
-    fn quickjs_is_preloaded_even_where_yt_dlp_is_bundled() {
-        let ctx = PreloadContext {
-            yt_dlp_bundled: true,
-            ffmpeg_installed: true,
-            ..fresh_macos()
-        };
-        assert_eq!(preload_plan(&ctx), vec![ExternalTool::QuickJs]);
-    }
-
-    #[test]
     fn tools_already_on_disk_are_not_downloaded_again() {
         let ctx = PreloadContext {
             yt_dlp_installed: true,
@@ -555,6 +551,48 @@ mod tests {
         let ctx = PreloadContext {
             ffmpeg_installed: true,
             quickjs_installed: true,
+            ..fresh_macos()
+        };
+        assert_eq!(preload_plan(&ctx), vec![ExternalTool::YtDlp]);
+    }
+
+    /// yt-dlp doit suivre les changements des sites : une copie qui ne se
+    /// rafraîchit jamais finit par ne plus rien savoir extraire.
+    #[test]
+    fn a_recent_yt_dlp_is_left_alone() {
+        assert!(!yt_dlp_refresh_due(Some(Duration::from_secs(0))));
+        assert!(!yt_dlp_refresh_due(Some(Duration::from_secs(
+            6 * 24 * 3600
+        ))));
+    }
+
+    #[test]
+    fn a_yt_dlp_older_than_the_window_is_refreshed() {
+        assert!(yt_dlp_refresh_due(Some(
+            crate::commands::file_transcription::YT_DLP_MAX_AGE
+        )));
+        assert!(yt_dlp_refresh_due(Some(Duration::from_secs(
+            365 * 24 * 3600
+        ))));
+    }
+
+    /// Date de fichier illisible : on tente une fois cette session plutôt que
+    /// de ne jamais se mettre à jour. Le pré-chargement n'essaie qu'une fois,
+    /// donc aucune boucle possible.
+    #[test]
+    fn an_unreadable_date_attempts_the_refresh_rather_than_never() {
+        assert!(yt_dlp_refresh_due(None));
+    }
+
+    /// yt-dlp est désormais une copie que l'application possède sur les trois
+    /// plateformes : sur Windows et Linux elle est amorcée depuis le sidecar
+    /// (copie locale, instantanée), mais elle doit exister pour être
+    /// modifiable — donc pour pouvoir être tenue à jour.
+    #[test]
+    fn yt_dlp_is_planned_on_every_platform() {
+        let ctx = PreloadContext {
+            quickjs_installed: true,
+            ffmpeg_installed: true,
             ..fresh_macos()
         };
         assert_eq!(preload_plan(&ctx), vec![ExternalTool::YtDlp]);
