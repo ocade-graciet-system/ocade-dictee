@@ -920,7 +920,11 @@ pub fn run(cli_args: CliArgs) {
                     .inner_size(1100.0, 720.0)
                     .min_inner_size(680.0, 570.0)
                     .resizable(true)
-                    .maximizable(false)
+                    // Agrandissement autorisé : hérité du fork amont, le refus
+                    // grisait le bouton vert de macOS et « Agrandir » sur
+                    // Windows sans raison — l'onglet Fichier et l'historique
+                    // gagnent à disposer de la hauteur de l'écran.
+                    .maximizable(true)
                     .visible(false);
 
             if let Some(data_dir) = portable::data_dir() {
