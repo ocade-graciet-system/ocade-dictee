@@ -262,6 +262,93 @@ fn get_filler_words_for_language(lang: &str) -> &'static [&'static str] {
 
 static MULTI_SPACE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s{2,}").unwrap());
 
+/// Suite de lettres isolées séparées par des points (« D.E.E.E.E », « E. E. E. »),
+/// avec l'espace qui la précède : l'emporter avec la suite évite de laisser
+/// une ponctuation orpheline (« je vais , et »). Candidate seulement — voir
+/// [`SPELLED_LOOP_MIN_REPEAT`] pour le critère qui distingue une boucle d'un
+/// vrai sigle.
+static SPELLED_RUN_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\s*\b\p{L}(?:\.\s?\p{L}\b)+\.?").unwrap());
+
+/// Nombre de lettres identiques consécutives à partir duquel une suite de
+/// lettres pointées est une boucle et non un sigle.
+///
+/// Quand Whisper entend un son non vocal (notification, bip, clic), il tente
+/// parfois de « l'épeler » et reste coincé sur la même lettre jusqu'au retour
+/// de la voix : « D.E.E.E.E.E.E ». Un vrai sigle ne répète pratiquement jamais
+/// la même lettre trois fois de suite (S.N.C.F., R.A.T.P., U.S.A.) : c'est
+/// cette signature qui sert de critère, pas la simple présence de points.
+const SPELLED_LOOP_MIN_REPEAT: usize = 3;
+
+/// Supprime les boucles d'épellation de Whisper (voir [`SPELLED_LOOP_MIN_REPEAT`]).
+fn remove_spelled_loops(text: &str) -> String {
+    SPELLED_RUN_PATTERN
+        .replace_all(text, |caps: &regex::Captures| {
+            let run = &caps[0];
+            let letters: Vec<char> = build_match_key(run).chars().collect();
+            let is_loop = letters
+                .chunk_by(|a, b| a == b)
+                .any(|same| same.len() >= SPELLED_LOOP_MIN_REPEAT);
+            if is_loop {
+                String::new()
+            } else {
+                run.to_string()
+            }
+        })
+        .into_owned()
+}
+
+/// Nombre de répétitions consécutives d'un même groupe de mots à partir
+/// duquel il s'agit d'une boucle de décodage.
+///
+/// Deux, c'est une hésitation humaine banale (« et qu'il s'est, et qu'il
+/// s'est, et qu'il y a ») que le filtre ne doit pas réécrire. Les boucles du
+/// modèle, elles, s'emballent bien au-delà.
+const PHRASE_LOOP_MIN_REPEAT: usize = 3;
+
+/// Longueur maximale, en mots, d'un groupe répété que l'on sait réduire.
+const PHRASE_LOOP_MAX_WORDS: usize = 8;
+
+/// Réduit à un seul exemplaire un groupe de 2 mots ou plus répété au moins
+/// [`PHRASE_LOOP_MIN_REPEAT`] fois de suite. Les répétitions d'un mot seul
+/// restent l'affaire de [`collapse_stutters`] : les étendre ici réduirait
+/// aussi « Non, non, non », tic de langage courant.
+///
+/// Les mots sont comparés sans casse ni ponctuation ([`build_match_key`]) ;
+/// c'est le dernier exemplaire qui est conservé, parce que sa ponctuation est
+/// celle qui enchaîne sur la suite.
+fn collapse_phrase_loops(text: &str) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let keys: Vec<String> = words.iter().map(|w| build_match_key(w)).collect();
+
+    let mut result: Vec<&str> = Vec::with_capacity(words.len());
+    let mut i = 0;
+    while i < words.len() {
+        // Plus petit groupe commençant ici qui se répète assez de fois.
+        let repeated = (2..=PHRASE_LOOP_MAX_WORDS).find_map(|n| {
+            let group = keys.get(i..i + n)?;
+            let count = keys[i..]
+                .chunks_exact(n)
+                .take_while(|chunk| *chunk == group)
+                .count();
+            (count >= PHRASE_LOOP_MIN_REPEAT).then_some((n, count))
+        });
+        match repeated {
+            Some((n, count)) => {
+                let last = i + (count - 1) * n;
+                result.extend_from_slice(&words[last..last + n]);
+                i += count * n;
+            }
+            None => {
+                result.push(words[i]);
+                i += 1;
+            }
+        }
+    }
+
+    result.join(" ")
+}
+
 /// Collapses repeated words (3+ repetitions) to a single instance.
 /// E.g., "wh wh wh wh" -> "wh", "I I I I" -> "I"
 fn collapse_stutters(text: &str) -> String {
@@ -305,8 +392,10 @@ fn collapse_stutters(text: &str) -> String {
 ///
 /// This function cleans up raw transcription text by:
 /// 1. Removing filler words based on the app language (or custom list)
-/// 2. Collapsing repeated word stutters (e.g., "wh wh wh" -> "wh")
-/// 3. Cleaning up excess whitespace
+/// 2. Removing Whisper's spelling loops on non-speech sounds ("D.E.E.E.E")
+/// 3. Collapsing repeated word stutters (e.g., "wh wh wh" -> "wh")
+/// 4. Collapsing phrases the model looped on 3+ times
+/// 5. Cleaning up excess whitespace
 ///
 /// # Arguments
 /// * `text` - The raw transcription text to filter
@@ -340,8 +429,14 @@ pub fn filter_transcription_output(
         filtered = pattern.replace_all(&filtered, "").to_string();
     }
 
+    // Boucles de décodage de Whisper sur un son non vocal : d'abord les
+    // épellations (« D.E.E.E.E »), puis les groupes de mots qui tournent en rond.
+    filtered = remove_spelled_loops(&filtered);
+
     // Collapse repeated 1-2 letter words (stutter artifacts like "wh wh wh wh")
     filtered = collapse_stutters(&filtered);
+
+    filtered = collapse_phrase_loops(&filtered);
 
     // Clean up multiple spaces to single space
     filtered = MULTI_SPACE_PATTERN.replace_all(&filtered, " ").to_string();
@@ -618,5 +713,74 @@ mod tests {
         let custom_words = vec!["R&D".to_string()];
         let result = apply_custom_words(text, &custom_words, 0.18);
         assert_eq!(result, "send it to R&D for review");
+    }
+
+    // ── Boucles de décodage de Whisper sur un son non vocal ──────────────
+    //
+    // Chaînes relevées telles quelles dans une dictée réelle : une
+    // notification pendant la parole fait « épeler » le son au modèle, qui
+    // boucle jusqu'au retour de la voix.
+
+    #[test]
+    fn a_spelled_loop_from_a_notification_is_removed() {
+        assert_eq!(
+            filter_transcription_output(
+                "Bonjour je suis Valentin Charrier et je vais D.E.E.E.E.E.E et ca reprend bien la suite.",
+                "fr",
+                &None
+            ),
+            "Bonjour je suis Valentin Charrier et je vais et ca reprend bien la suite."
+        );
+    }
+
+    #[test]
+    fn a_spaced_spelled_loop_is_removed_too() {
+        assert_eq!(
+            filter_transcription_output("E. E. E. E. voilà la suite", "fr", &None),
+            "voilà la suite"
+        );
+    }
+
+    /// Le passage supprimé ne doit pas laisser une virgule orpheline derrière
+    /// un espace (« je vais , et »), faute que ni le français ni l'anglais
+    /// n'admettent.
+    #[test]
+    fn removing_a_spelled_loop_leaves_no_orphan_punctuation() {
+        assert_eq!(
+            filter_transcription_output("je vais D.E.E.E.E, et la suite", "fr", &None),
+            "je vais, et la suite"
+        );
+    }
+
+    /// Un vrai sigle n'a pas de lettre répétée trois fois de suite : c'est
+    /// cette signature, pas la simple présence de points, qui trahit la boucle.
+    #[test]
+    fn real_dotted_acronyms_are_kept() {
+        let text = "La S.N.C.F. et la R.A.T.P. sont en grève aux U.S.A. aussi";
+        assert_eq!(filter_transcription_output(text, "fr", &None), text);
+    }
+
+    #[test]
+    fn a_phrase_looping_three_times_or_more_is_collapsed() {
+        assert_eq!(
+            filter_transcription_output(
+                "et qu'il s'est, et qu'il s'est, et qu'il s'est, et qu'il y a",
+                "fr",
+                &None
+            ),
+            "et qu'il s'est, et qu'il y a"
+        );
+        assert_eq!(
+            filter_transcription_output("je vais je vais je vais je vais partir", "fr", &None),
+            "je vais partir"
+        );
+    }
+
+    /// Répéter un groupe de mots une fois est une hésitation humaine banale :
+    /// le filtre ne doit pas réécrire ce que la personne a vraiment dit.
+    #[test]
+    fn a_phrase_repeated_only_twice_is_a_human_hesitation_and_is_kept() {
+        let text = "et qui, et qu'il s'est, et qu'il s'est, et qu'il y a";
+        assert_eq!(filter_transcription_output(text, "fr", &None), text);
     }
 }
