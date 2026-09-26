@@ -1,13 +1,15 @@
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::apple_intelligence;
-use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, SoundType};
+use crate::audio_feedback::{play_feedback_sound, SoundType};
 use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error, VadPolicy};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::TranscriptionManager;
-use crate::settings::{get_settings, AppSettings, OverlayStyle, APPLE_INTELLIGENCE_PROVIDER_ID};
+use crate::settings::{
+    get_settings, AppSettings, OverlayStyle, PasteMethod, APPLE_INTELLIGENCE_PROVIDER_ID,
+};
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
 use crate::utils::{
@@ -470,6 +472,9 @@ impl ShortcutAction for TranscribeAction {
         let start_time = Instant::now();
         debug!("TranscribeAction::start called for binding: {}", binding_id);
 
+        // En tout premier, avant qu'une fenêtre n'ait pu s'interposer.
+        crate::focus::remember_dictation_target();
+
         // Load model in the background
         let tm = app.state::<Arc<TranscriptionManager>>();
         let rm = app.state::<Arc<AudioRecordingManager>>();
@@ -538,56 +543,33 @@ impl ShortcutAction for TranscribeAction {
         debug!("Microphone mode - always_on: {}", is_always_on);
 
         let mut recording_error: Option<String> = None;
-        if is_always_on {
-            // Always-on mode: Play audio feedback immediately, then apply mute after sound finishes
-            debug!("Always-on mode: Playing audio feedback immediately");
-            let rm_clone = Arc::clone(&rm);
-            let app_clone = app.clone();
-            // The blocking helper exits immediately if audio feedback is disabled,
-            // so we can always reuse this thread to ensure mute happens right after playback.
-            std::thread::spawn(move || {
-                play_feedback_sound_blocking(&app_clone, SoundType::Start);
-                rm_clone.apply_mute();
-            });
-
-            match rm.try_start_recording(&binding_id, vad_policy) {
-                Ok(()) => {
-                    // Synchronous + gated on start success — see apply_comm_mute doc
-                    // (must not be delayed like apply_mute, else a quick tap can
-                    // strand a held key).
-                    rm.apply_comm_mute();
-                }
-                Err(e) => {
-                    debug!("Recording failed: {}", e);
-                    recording_error = Some(e);
-                }
-            }
-        } else {
-            // On-demand mode: Start recording first, then play audio feedback, then apply mute
-            // This allows the microphone to be activated before playing the sound
-            debug!("On-demand mode: Starting recording first, then audio feedback");
-            let recording_start_time = Instant::now();
-            match rm.try_start_recording(&binding_id, vad_policy) {
-                Ok(()) => {
-                    debug!("Recording started in {:?}", recording_start_time.elapsed());
-                    // Synchronous, before the delayed apply_mute — see apply_comm_mute doc.
-                    rm.apply_comm_mute();
-                    // Small delay to ensure microphone stream is active
-                    let app_clone = app.clone();
-                    let rm_clone = Arc::clone(&rm);
-                    std::thread::spawn(move || {
+        // Capture armée d'abord, bip ensuite, dans les deux modes : le bip doit
+        // se repérer sur le compteur de cette capture (voir
+        // AudioRecordingManager::play_start_feedback_then_mute), et il n'a pas
+        // lieu d'être si l'enregistrement n'a pas démarré.
+        let recording_start_time = Instant::now();
+        match rm.try_start_recording(&binding_id, vad_policy) {
+            Ok(()) => {
+                debug!(
+                    "Recording started in {:?} (always_on: {})",
+                    recording_start_time.elapsed(),
+                    is_always_on
+                );
+                // Synchronous, before the delayed apply_mute — see apply_comm_mute doc.
+                rm.apply_comm_mute();
+                let rm_clone = Arc::clone(&rm);
+                std::thread::spawn(move || {
+                    if !is_always_on {
+                        // Micro à peine ouvert : on lui laisse le temps de
+                        // délivrer, pour que le bip signale bien « prêt ».
                         std::thread::sleep(std::time::Duration::from_millis(100));
-                        debug!("Handling delayed audio feedback/mute sequence");
-                        // Helper handles disabled audio feedback by returning early, so we reuse it
-                        // to keep mute sequencing consistent in every mode.
-                        play_feedback_sound_blocking(&app_clone, SoundType::Start);
-                        rm_clone.apply_mute();
-                    });
-                }
-                Err(e) => {
-                    debug!("Failed to start recording: {}", e);
-                    recording_error = Some(e);
-                }
+                    }
+                    rm_clone.play_start_feedback_then_mute();
+                });
+            }
+            Err(e) => {
+                debug!("Failed to start recording: {}", e);
+                recording_error = Some(e);
             }
         }
 
@@ -816,6 +798,15 @@ impl ShortcutAction for TranscribeAction {
                                 utils::hide_recording_overlay(&ah);
                                 change_tray_icon(&ah, TrayIconState::Idle);
                             } else {
+                                // Si une fenêtre a pris le focus pendant la dictée, rendre
+                                // la main à l'application d'origine (voir focus.rs). Inutile
+                                // quand aucune saisie ne sera envoyée.
+                                if get_settings(&ah).paste_method != PasteMethod::None {
+                                    let _ = tauri::async_runtime::spawn_blocking(
+                                        crate::focus::restore_dictation_target,
+                                    )
+                                    .await;
+                                }
                                 let ah_clone = ah.clone();
                                 let paste_time = Instant::now();
                                 let final_text = processed.final_text;
