@@ -1,3 +1,4 @@
+use crate::audio_feedback::{play_feedback_sound_blocking, SoundType};
 use crate::audio_toolkit::{
     list_input_devices,
     vad::{
@@ -11,8 +12,9 @@ use crate::managers::transcription::StreamRouter;
 use crate::settings::{get_settings, AppSettings};
 use crate::utils;
 use log::{debug, error, info, warn};
+use std::ops::Range;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::Manager;
@@ -109,7 +111,34 @@ fn set_mute(mute: bool) {
     }
 }
 
-const WHISPER_SAMPLE_RATE: usize = 16000;
+const WHISPER_SAMPLE_RATE: usize = crate::audio_toolkit::constants::WHISPER_SAMPLE_RATE as usize;
+
+/// Marges effacées autour du bip de démarrage, en échantillons à 16 kHz.
+///
+/// La position du bip est lue sur le compteur de la capture, qui retarde un
+/// peu sur le temps réel (tampon du micro, rééchantillonnage) : le son arrive
+/// donc toujours *après* la position notée. Avant, une marge minime suffit ;
+/// après, il faut couvrir ce retard, la latence de la sortie audio et la
+/// queue de résonance du son. Au pire, cela rogne l'attaque d'une syllabe
+/// prononcée pile à la fin du bip — une syllabe qu'il recouvrait de toute façon.
+const START_FEEDBACK_MARGIN_BEFORE: usize = 20 * WHISPER_SAMPLE_RATE / 1000;
+const START_FEEDBACK_MARGIN_AFTER: usize = 120 * WHISPER_SAMPLE_RATE / 1000;
+
+fn duration_to_samples(duration: Duration) -> usize {
+    (duration.as_secs_f64() * WHISPER_SAMPLE_RATE as f64).round() as usize
+}
+
+/// Portion de la capture à effacer pour une fenêtre de bip donnée (positions
+/// d'échantillons), marges comprises et bornée au tampon. `None` s'il ne
+/// reste rien à effacer.
+fn start_feedback_sample_range(
+    feedback: Range<usize>,
+    sample_count: usize,
+) -> Option<Range<usize>> {
+    let first = feedback.start.saturating_sub(START_FEEDBACK_MARGIN_BEFORE);
+    let last = (feedback.end + START_FEEDBACK_MARGIN_AFTER).min(sample_count);
+    (first < last).then_some(first..last)
+}
 
 /* ──────────────────────────────────────────────────────────────── */
 
@@ -132,6 +161,7 @@ fn create_audio_recorder(
     vad_path: &Path,
     app_handle: &tauri::AppHandle,
     stream_router: Arc<StreamRouter>,
+    captured_samples: Arc<AtomicUsize>,
 ) -> Result<AudioRecorder, anyhow::Error> {
     // A single Silero engine covers both the offline and streaming policies (never
     // active at once within a recording), so the recorder reconfigures its
@@ -163,7 +193,11 @@ fn create_audio_recorder(
         })
         .with_audio_callback({
             let router = stream_router;
+            // Chaque échantillon capturé passe par ce rappel, exactement comme il
+            // entre dans le tampon de la dictée : ce compteur vaut donc la
+            // position courante dans ce tampon.
             move |frame| {
+                captured_samples.fetch_add(frame.len(), Ordering::Release);
                 router.feed(frame);
             }
         });
@@ -194,6 +228,20 @@ pub struct AudioRecordingManager {
     /// so the retry re-enumerates. The system-default case is never cached —
     /// the recorder resolves the current default itself, cheaply.
     cached_device: Arc<Mutex<Option<(String, cpal::Device)>>>,
+    /// Nombre d'échantillons (16 kHz) capturés depuis le début de la dictée en
+    /// cours, soit la position courante dans son tampon.
+    captured_samples: Arc<AtomicUsize>,
+    /// Place du bip de démarrage dans la capture en cours (positions
+    /// d'échantillons), s'il a été joué. Le micro est ouvert avant le bip,
+    /// pour que celui-ci signale « prêt » sans rogner les premiers mots : le
+    /// son se retrouve donc dans la capture, et on l'y efface à l'arrêt. Sans
+    /// cela il arrive au modèle en tête de chaque dictée — un son non vocal,
+    /// exactement ce qui le fait dérailler — et abîme le début de la phrase
+    /// quand on parle tôt.
+    ///
+    /// Limite : les modèles en streaming reçoivent l'audio au fil de l'eau,
+    /// avant cet effacement ; eux entendent encore le bip.
+    start_feedback: Arc<Mutex<Option<Range<usize>>>>,
 }
 
 impl AudioRecordingManager {
@@ -224,6 +272,8 @@ impl AudioRecordingManager {
             cancel_generation: Arc::new(AtomicU64::new(0)),
             stream_router,
             cached_device: Arc::new(Mutex::new(None)),
+            captured_samples: Arc::new(AtomicUsize::new(0)),
+            start_feedback: Arc::new(Mutex::new(None)),
         };
 
         // Always-on?  Open immediately.
@@ -433,6 +483,7 @@ impl AudioRecordingManager {
                 &vad_path,
                 &self.app_handle,
                 Arc::clone(&self.stream_router),
+                Arc::clone(&self.captured_samples),
             )?);
         }
         Ok(())
@@ -550,6 +601,27 @@ impl AudioRecordingManager {
 
     /* ---------- recording --------------------------------------------------- */
 
+    /// Joue le bip de démarrage, note sa place dans la capture, puis coupe le
+    /// son système. À appeler une fois la capture armée : la place du bip se
+    /// lit sur le compteur de cette capture.
+    pub fn play_start_feedback_then_mute(&self) {
+        play_feedback_sound_blocking(&self.app_handle, SoundType::Start, |duration| {
+            // Publiée dès le début du son, pour qu'une dictée arrêtée pendant le
+            // bip (appui bref) soit nettoyée elle aussi.
+            let start = self.captured_samples.load(Ordering::Acquire);
+            let len = duration.map_or(0, duration_to_samples);
+            *self.start_feedback.lock().unwrap() = Some(start..start + len);
+        });
+        // Durée non déclarée ou lecture plus longue que prévu : la fin réelle
+        // est ce que la capture a reçu pendant la lecture.
+        if let Some(window) = self.start_feedback.lock().unwrap().as_mut() {
+            window.end = window
+                .end
+                .max(self.captured_samples.load(Ordering::Acquire));
+        }
+        self.apply_mute();
+    }
+
     pub fn try_start_recording(
         &self,
         binding_id: &str,
@@ -570,7 +642,11 @@ impl AudioRecordingManager {
             }
 
             if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+                // Rien n'est émis entre deux dictées : le compteur repart de zéro
+                // en même temps que le tampon.
+                self.captured_samples.store(0, Ordering::Release);
                 if rec.start(vad_policy).is_ok() {
+                    *self.start_feedback.lock().unwrap() = None;
                     *self.is_recording.lock().unwrap() = true;
                     *state = RecordingState::Recording {
                         binding_id: binding_id.to_string(),
@@ -639,7 +715,7 @@ impl AudioRecordingManager {
                     }
                 }
 
-                let samples = if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+                let mut samples = if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
                     match rec.stop() {
                         Ok(buf) => buf,
                         Err(e) => {
@@ -651,6 +727,10 @@ impl AudioRecordingManager {
                     error!("Recorder not available");
                     Vec::new()
                 };
+
+                // Retirée dans tous les cas, annulation comprise, pour qu'aucune
+                // marque ne survive à sa dictée.
+                let start_feedback = self.start_feedback.lock().unwrap().take();
 
                 *self.is_recording.lock().unwrap() = false;
                 *self.state.lock().unwrap() = RecordingState::Idle;
@@ -667,6 +747,19 @@ impl AudioRecordingManager {
                 if self.was_cancelled_since(cancel_generation) {
                     debug!("Recording stop cancelled; discarding captured samples");
                     return None;
+                }
+
+                // Silence plutôt que coupe : la chronologie reste intacte, et un
+                // silence en tête est ce que Whisper voit d'ordinaire (ses
+                // fenêtres de 30 s sont complétées par des zéros).
+                if let Some(range) =
+                    start_feedback.and_then(|w| start_feedback_sample_range(w, samples.len()))
+                {
+                    debug!(
+                        "Bip de démarrage effacé de la capture : échantillons {range:?} ({} ms)",
+                        range.len() * 1000 / WHISPER_SAMPLE_RATE
+                    );
+                    samples[range].fill(0.0);
                 }
 
                 // Pad if very short
@@ -720,5 +813,54 @@ impl AudioRecordingManager {
             }
             RecordingState::Idle => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MS: usize = WHISPER_SAMPLE_RATE / 1000;
+
+    /// Bip noté de 100 ms à 680 ms de capture : la plage effacée le couvre,
+    /// élargie de ses marges (20 ms avant, 120 ms après).
+    #[test]
+    fn the_start_chime_window_is_widened_by_its_margins() {
+        let range = start_feedback_sample_range(100 * MS..680 * MS, 10_000 * MS).unwrap();
+        assert_eq!(range, 80 * MS..800 * MS);
+    }
+
+    /// Bip lancé à l'instant même où la capture démarre.
+    #[test]
+    fn a_chime_at_the_very_start_is_clamped_to_the_first_sample() {
+        let range = start_feedback_sample_range(0..580 * MS, 10_000 * MS).unwrap();
+        assert_eq!(range, 0..700 * MS);
+    }
+
+    /// Appui bref : la dictée s'arrête avant la fin du bip. On efface ce qui
+    /// existe, sans sortir du tampon.
+    #[test]
+    fn a_dictation_stopped_during_the_chime_is_cleaned_without_overflow() {
+        let range = start_feedback_sample_range(100 * MS..680 * MS, 300 * MS).unwrap();
+        assert_eq!(range, 80 * MS..300 * MS);
+    }
+
+    #[test]
+    fn nothing_is_silenced_in_an_empty_capture() {
+        assert_eq!(start_feedback_sample_range(100 * MS..680 * MS, 0), None);
+    }
+
+    /// Marque au-delà du tampon (capture plus courte que la position notée).
+    #[test]
+    fn a_chime_past_the_end_of_the_capture_silences_nothing() {
+        assert_eq!(
+            start_feedback_sample_range(900 * MS..1_500 * MS, 500 * MS),
+            None
+        );
+    }
+
+    #[test]
+    fn a_duration_converts_to_whisper_samples() {
+        assert_eq!(duration_to_samples(Duration::from_millis(580)), 580 * MS);
     }
 }

@@ -2,11 +2,12 @@ use crate::settings::SoundTheme;
 use crate::settings::{self, AppSettings};
 use cpal::traits::{DeviceTrait, HostTrait};
 use log::{debug, error, warn};
-use rodio::OutputStreamBuilder;
+use rodio::{OutputStreamBuilder, Source};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::thread;
+use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 pub enum SoundType {
@@ -55,49 +56,62 @@ pub fn play_feedback_sound(app: &AppHandle, sound_type: SoundType) {
     }
 }
 
-pub fn play_feedback_sound_blocking(app: &AppHandle, sound_type: SoundType) {
+/// Joue le son et rend la main à la fin de sa lecture. `on_start` est appelé
+/// au moment où le son commence effectivement, avec sa durée si le fichier la
+/// déclare ; il ne l'est jamais si rien n'est joué (retour sonore désactivé,
+/// fichier introuvable, périphérique en échec).
+pub fn play_feedback_sound_blocking(
+    app: &AppHandle,
+    sound_type: SoundType,
+    on_start: impl FnOnce(Option<Duration>),
+) {
     let settings = settings::get_settings(app);
     if !settings.audio_feedback {
         return;
     }
     if let Some(path) = resolve_sound_path(app, &settings, sound_type) {
-        play_sound_blocking(app, &path);
+        play_sound_blocking(app, &path, on_start);
     }
 }
 
 pub fn play_test_sound(app: &AppHandle, sound_type: SoundType) {
     let settings = settings::get_settings(app);
     if let Some(path) = resolve_sound_path(app, &settings, sound_type) {
-        play_sound_blocking(app, &path);
+        play_sound_blocking(app, &path, |_| {});
     }
 }
 
 fn play_sound_async(app: &AppHandle, path: PathBuf) {
     let app_handle = app.clone();
     thread::spawn(move || {
-        if let Err(e) = play_sound_at_path(&app_handle, path.as_path()) {
+        if let Err(e) = play_sound_at_path(&app_handle, path.as_path(), |_| {}) {
             error!("Failed to play sound '{}': {}", path.display(), e);
         }
     });
 }
 
-fn play_sound_blocking(app: &AppHandle, path: &Path) {
-    if let Err(e) = play_sound_at_path(app, path) {
+fn play_sound_blocking(app: &AppHandle, path: &Path, on_start: impl FnOnce(Option<Duration>)) {
+    if let Err(e) = play_sound_at_path(app, path, on_start) {
         error!("Failed to play sound '{}': {}", path.display(), e);
     }
 }
 
-fn play_sound_at_path(app: &AppHandle, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn play_sound_at_path(
+    app: &AppHandle,
+    path: &Path,
+    on_start: impl FnOnce(Option<Duration>),
+) -> Result<(), Box<dyn std::error::Error>> {
     let settings = settings::get_settings(app);
     let volume = settings.audio_feedback_volume;
     let selected_device = settings.selected_output_device.clone();
-    play_audio_file(path, selected_device, volume)
+    play_audio_file(path, selected_device, volume, on_start)
 }
 
 fn play_audio_file(
     path: &std::path::Path,
     selected_device: Option<String>,
     volume: f32,
+    on_start: impl FnOnce(Option<Duration>),
 ) -> Result<(), Box<dyn std::error::Error>> {
     let stream_builder = if let Some(device_name) = selected_device {
         if device_name == "Default" {
@@ -134,8 +148,14 @@ fn play_audio_file(
     let file = File::open(path)?;
     let buf_reader = BufReader::new(file);
 
-    let sink = rodio::play(mixer, buf_reader)?;
+    // Équivalent de `rodio::play`, décomposé pour lire la durée du son avant
+    // de le lancer.
+    let source = rodio::Decoder::new(buf_reader)?;
+    let duration = source.total_duration();
+    let sink = rodio::Sink::connect_new(mixer);
     sink.set_volume(volume);
+    sink.append(source);
+    on_start(duration);
     sink.sleep_until_end();
 
     Ok(())
