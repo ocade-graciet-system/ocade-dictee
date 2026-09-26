@@ -9,6 +9,7 @@ mod clipboard;
 mod commands;
 pub mod download;
 mod external_tools;
+mod focus;
 mod helpers;
 mod input;
 mod llm_client;
