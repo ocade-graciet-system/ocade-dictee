@@ -210,7 +210,7 @@
         "rejections": {
           "empty": "combinaison non reconnue",
           "unparseable": "combinaison non reconnue",
-          "noModifier": "il doit comporter au moins une touche de modification (⌃ ⌥ ⇧ ⌘) en plus d'une touche",
+          "noModifier": "il doit comporter au moins une touche de modification (⌃ ⌥ ⇧ ⌘) en plus d'une touche, ou être une touche de fonction (F1 à F24) ou la touche micro seule",
           "noKey": "il doit comporter une touche en plus des modificateurs",
           "multipleKeys": "une seule touche est possible en plus des modificateurs",
           "shiftOnlyWithPrintable": "Maj + un caractère empêcherait de taper les majuscules",

@@ -295,6 +295,39 @@ fn is_mouse_button(key: Key) -> bool {
     )
 }
 
+/// Touche acceptée sans modificateur : F1–F24 et la touche micro/dictée des
+/// claviers Apple (position F5). Aucune ne produit de caractère.
+fn is_standalone_key(key: Key) -> bool {
+    matches!(
+        key,
+        Key::F1
+            | Key::F2
+            | Key::F3
+            | Key::F4
+            | Key::F5
+            | Key::F6
+            | Key::F7
+            | Key::F8
+            | Key::F9
+            | Key::F10
+            | Key::F11
+            | Key::F12
+            | Key::F13
+            | Key::F14
+            | Key::F15
+            | Key::F16
+            | Key::F17
+            | Key::F18
+            | Key::F19
+            | Key::F20
+            | Key::F21
+            | Key::F22
+            | Key::F23
+            | Key::F24
+            | Key::Dictation
+    )
+}
+
 /// Applique les contrôles de la spec §3, dans l'ordre : le premier refus
 /// l'emporte.
 pub fn validate_custom_shortcut(raw: &str, os: TargetOs) -> Result<(), ShortcutRejection> {
@@ -324,9 +357,11 @@ pub fn validate_custom_shortcut(raw: &str, os: TargetOs) -> Result<(), ShortcutR
         return Err(ShortcutRejection::MultipleKeys);
     }
 
-    // 5. Aucun modificateur (`fn` seul ne compte pas).
+    // 5. Aucun modificateur (`fn` seul ne compte pas), sauf touche de fonction
+    // ou touche micro : elles n'écrivent rien, donc seules elles ne gênent pas
+    // la frappe.
     let real_modifiers = Modifiers::CTRL | Modifiers::OPT | Modifiers::SHIFT | Modifiers::CMD;
-    if !parsed.modifiers.intersects(real_modifiers) {
+    if !parsed.modifiers.intersects(real_modifiers) && !is_standalone_key(key) {
         return Err(ShortcutRejection::NoModifier);
     }
 
@@ -385,6 +420,15 @@ mod tests {
     ];
 
     #[test]
+    fn function_and_dictation_keys_are_accepted_alone() {
+        for os in ALL_OS {
+            for raw in ["f5", "f1", "f13", "f24", "dictation", "fn+f5"] {
+                assert_eq!(validate_custom_shortcut(raw, os), Ok(()), "{raw} {os:?}");
+            }
+        }
+    }
+
+    #[test]
     fn one_case_per_rejection_variant() {
         // (raccourci, OS, refus attendu) — un cas au moins par variante,
         // dans l'ordre des contrôles de la spec §3.
@@ -394,7 +438,7 @@ mod tests {
             ("ctrl+option", TargetOs::MacOs, ShortcutRejection::NoKey),
             ("shift", TargetOs::Windows, ShortcutRejection::NoKey),
             ("ctrl+a+b", TargetOs::MacOs, ShortcutRejection::MultipleKeys),
-            ("f13", TargetOs::MacOs, ShortcutRejection::NoModifier),
+            ("home", TargetOs::MacOs, ShortcutRejection::NoModifier),
             ("space", TargetOs::Windows, ShortcutRejection::NoModifier),
             // `fn` seul n'est pas un modificateur au sens de la règle 5.
             ("fn+d", TargetOs::MacOs, ShortcutRejection::NoModifier),
