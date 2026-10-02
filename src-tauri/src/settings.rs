@@ -858,9 +858,11 @@ pub fn apply_v1_locks(settings: &mut AppSettings) -> bool {
     settings.mute_while_recording = true;
     settings.mute_others_while_recording = LOCK_MUTE_OTHERS_WHILE_RECORDING;
     settings.translate_to_english = false;
-    // Modèle unique proposé par l'app (voir `default_model`) : un store hérité
-    // ne doit pas pouvoir réactiver un autre modèle que le FR.
-    settings.selected_model = crate::managers::model::DEFAULT_FR_MODEL_ID.to_string();
+    // Seuls les modèles FR du sélecteur sont autorisés (le dernier choix est
+    // conservé) : un store hérité ne peut pas réactiver un autre modèle.
+    if !crate::managers::model::SELECTABLE_MODEL_IDS.contains(&settings.selected_model.as_str()) {
+        settings.selected_model = crate::managers::model::DEFAULT_FR_MODEL_ID.to_string();
+    }
     settings.selected_language = "fr".to_string();
     settings.app_language = "fr".to_string();
     settings.overlay_style = OverlayStyle::Live;
@@ -1660,6 +1662,17 @@ mod tests {
         assert!(
             !apply_v1_locks(&mut s),
             "idempotent : rien à changer au 2e passage"
+        );
+    }
+
+    #[test]
+    fn v1_locks_keep_a_selectable_model() {
+        let mut s = get_default_settings();
+        s.selected_model = crate::managers::model::RECOMMENDED_FR_MODEL_ID.to_string();
+        apply_v1_locks(&mut s);
+        assert_eq!(
+            s.selected_model,
+            crate::managers::model::RECOMMENDED_FR_MODEL_ID
         );
     }
 
