@@ -262,6 +262,18 @@ fn get_filler_words_for_language(lang: &str) -> &'static [&'static str] {
 
 static MULTI_SPACE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s{2,}").unwrap());
 
+/// Subtitle-credit lines that ASR models trained on subtitled video emit on
+/// near-silent audio (a breath or click that slipped past the VAD). They are
+/// never genuine dictation, so they are stripped wherever they appear.
+/// Measured locally: Cohere Transcribe outputs the Radio-Canada line on 2 s of
+/// silence or pink noise; Whisper-family models emit the Amara variants.
+static SUBTITLE_HALLUCINATION_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)(sous-titrage\s+(st'?\s*\d+|soci[ée]t[ée]\s+radio[\s-]canada|fr\s*:?\s*[\w.-]+)|sous-titres?\s+(r[ée]alis[ée]s\s+)?par\s+(la\s+communaut[ée]\s+d'?\s*)?amara\.org|subtitles\s+by\s+the\s+amara\.org\s+community)[\s.!]*",
+    )
+    .unwrap()
+});
+
 /// Suite de lettres isolées séparées par des points (« D.E.E.E.E », « E. E. E. »),
 /// avec l'espace qui la précède : l'emporter avec la suite évite de laisser
 /// une ponctuation orpheline (« je vais , et »). Candidate seulement — voir
@@ -410,7 +422,9 @@ pub fn filter_transcription_output(
     lang: &str,
     custom_filler_words: &Option<Vec<String>>,
 ) -> String {
-    let mut filtered = text.to_string();
+    let mut filtered = SUBTITLE_HALLUCINATION_PATTERN
+        .replace_all(text, "")
+        .to_string();
 
     // Build filler patterns from custom list or language defaults
     let patterns: Vec<Regex> = match custom_filler_words {
@@ -492,6 +506,28 @@ mod tests {
         let text = "So uhm I was thinking uh about this";
         let result = filter_transcription_output(text, "en", &None);
         assert_eq!(result, "So I was thinking about this");
+    }
+
+    #[test]
+    fn test_filter_subtitle_hallucinations() {
+        for text in [
+            "Sous-titrage Société Radio-Canada",
+            "Sous-titres réalisés par la communauté d'Amara.org",
+            "Sous-titrage ST' 501",
+            "Subtitles by the Amara.org community",
+        ] {
+            assert_eq!(filter_transcription_output(text, "fr", &None), "", "{text}");
+        }
+        assert_eq!(
+            filter_transcription_output(
+                "D'accord, on fait comme ça. Sous-titrage Société Radio-Canada.",
+                "fr",
+                &None
+            ),
+            "D'accord, on fait comme ça."
+        );
+        // Genuine short answers are kept.
+        assert_eq!(filter_transcription_output("Merci.", "fr", &None), "Merci.");
     }
 
     #[test]

@@ -85,6 +85,21 @@ const CHINESE_LANGUAGE_CODE: &str = "zh";
 /// l'entrée injectée dans le catalogue plus bas.
 pub const DEFAULT_FR_MODEL_ID: &str = "whisper-distil-fr-dec2-q5_0";
 
+/// Cohere Transcribe (GGUF du catalogue, accéléré Metal/Vulkan). Meilleur modèle
+/// du comparatif FR local (bench-fr, oct. 2026) : WER 3,8 % contre 5,3 % pour
+/// dec2, et plus rapide (190 ms vs 303 ms par phrase sur M4 Max). Badge
+/// « recommandé » dans le sélecteur du pied de page.
+pub const RECOMMENDED_FR_MODEL_ID: &str =
+    "handy-computer/cohere-transcribe-03-2026-gguf/cohere-transcribe-03-2026-Q5_K_M.gguf";
+
+/// Modèles que l'utilisateur peut choisir (sélecteur du pied de page). Tout
+/// autre identifiant dans le store est ramené à `DEFAULT_FR_MODEL_ID`.
+pub const SELECTABLE_MODEL_IDS: &[&str] = &[
+    RECOMMENDED_FR_MODEL_ID,
+    DEFAULT_FR_MODEL_ID,
+    "whisper-distil-fr-dec16-q5_0",
+];
+
 /// Taille exacte du fichier `whisper-distil-fr-dec2-q5_0.bin` (sha256 e41b30e8…).
 pub const DEFAULT_FR_MODEL_SIZE_BYTES: u64 = 537_819_875;
 
@@ -1208,13 +1223,18 @@ impl ModelManager {
     }
 
     pub fn get_available_models(&self) -> Vec<ModelInfo> {
-        // v1 clé en main (issue #2) : un seul modèle existe pour l'utilisateur.
+        // v1 clé en main (issue #2) : seuls les modèles FR retenus sont exposés,
+        // et le badge « recommandé » ne va qu'au meilleur du comparatif.
         let mut list: Vec<ModelInfo> = {
             let models = self.available_models.lock().unwrap();
             models
                 .values()
-                .filter(|m| m.id == DEFAULT_FR_MODEL_ID)
+                .filter(|m| SELECTABLE_MODEL_IDS.contains(&m.id.as_str()))
                 .cloned()
+                .map(|mut m| {
+                    m.is_recommended = m.id == RECOMMENDED_FR_MODEL_ID;
+                    m
+                })
                 .collect()
         };
         // Stable, reasonable order: catalog editorial rank first (lower = higher
