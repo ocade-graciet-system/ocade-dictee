@@ -205,3 +205,5 @@ Installation and troubleshooting procedures per OS live in `docs/installation/` 
 - **Full contributor workflow:** [CONTRIBUTING.md](CONTRIBUTING.md).
 
 **Commits:** Use conventional commit prefixes (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`). Focus the message on _why_, not _what_.
+
+**Releases:** Every merge into `main` publishes a new version automatically (`.github/workflows/release.yml`), and installed apps update themselves. Do not push a version tag or a `chore(version)` commit for a routine fix: the workflow publishes the last tag + 1 patch. For a minor or major bump, set the new version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` within the PR; the workflow uses it when it is higher than the last tag. Docs-only changes (`**.md`, `docs/**`) do not trigger a release.

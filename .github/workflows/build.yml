@@ -16,6 +16,13 @@ on:
       release-id:
         required: false
         type: string
+      # Version à publier, calculée par release.yml (main n'est pas modifiée) :
+      # elle remplace celle de tauri.conf.json, qui fait foi pour l'app et
+      # l'updater. Vide = version du fichier.
+      version:
+        required: false
+        type: string
+        default: ""
       asset-prefix:
         required: false
         type: string
@@ -88,7 +95,18 @@ jobs:
       - name: Get version from tauri.conf.json
         id: get-version
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
+          if [[ -n "$RELEASE_VERSION" ]]; then
+            node -e '
+              const fs = require("fs");
+              const p = "src-tauri/tauri.conf.json";
+              const conf = JSON.parse(fs.readFileSync(p, "utf8"));
+              conf.version = process.env.RELEASE_VERSION;
+              fs.writeFileSync(p, JSON.stringify(conf, null, 2) + "\n");
+            '
+          fi
           VERSION=$(grep -o '"version": "[^"]*"' src-tauri/tauri.conf.json | cut -d'"' -f4)
           echo "Application version from tauri.conf.json: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
