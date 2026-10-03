@@ -1,10 +1,26 @@
 name: "Release"
 
+# Chaque fusion sur main publie une nouvelle version : les apps installées la
+# récupèrent toutes seules (ForcedUpdater). Pousser un tag vX.Y.Z reste possible
+# pour forcer un numéro précis.
 on:
   workflow_dispatch:
   push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - "LICENSE"
     tags:
       - "v*"
+
+# Une release à la fois : la version suivante se calcule d'après les tags
+# existants, deux runs parallèles prendraient le même numéro. Une fusion arrivée
+# pendant un run attend son tour (seule la plus récente en attente est gardée).
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   create-release:
@@ -17,13 +33,37 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
-      - name: Get version from tauri.conf.json
+      # main est protégée : aucun commit de version n'y est poussé. Le numéro
+      # est calculé ici puis injecté dans tauri.conf.json au moment du build
+      # (input `version` de build.yml) :
+      #   - tag poussé à la main      → le numéro du tag ;
+      #   - commit déjà tagué (relance) → ce même numéro ;
+      #   - version du fichier > dernier tag → celle du fichier (montée de
+      #     version mineure/majeure faite à la main dans une PR) ;
+      #   - sinon                     → dernier tag + 1 en patch.
+      - name: Compute version
         id: get-version
         shell: bash
         run: |
-          VERSION=$(grep -o '"version": "[^"]*"' src-tauri/tauri.conf.json | cut -d'"' -f4)
-          echo "Application version from tauri.conf.json: $VERSION"
+          FILE_VERSION=$(grep -o '"version": "[^"]*"' src-tauri/tauri.conf.json | cut -d'"' -f4)
+          LAST=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1 || true)
+          HEAD_TAG=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          elif [[ -n "$HEAD_TAG" ]]; then
+            VERSION="${HEAD_TAG#v}"
+          elif [[ -z "$LAST" ]]; then
+            VERSION="$FILE_VERSION"
+          elif [[ "$FILE_VERSION" != "$LAST" && "$(printf '%s\n%s\n' "$LAST" "$FILE_VERSION" | sort -V | tail -1)" == "$FILE_VERSION" ]]; then
+            VERSION="$FILE_VERSION"
+          else
+            IFS=. read -r MAJOR MINOR PATCH <<< "$LAST"
+            VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+          fi
+          echo "Fichier : $FILE_VERSION — dernier tag : ${LAST:-aucun} — version publiée : $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Create Draft Release
@@ -31,13 +71,20 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            // Déclenché par un tag (refs/tags/vX.Y.Z) : on reprend le nom du tag.
-            // Déclenché manuellement : on retombe sur la version de tauri.conf.json.
-            const tagName = context.ref.startsWith('refs/tags/')
-              ? context.ref.slice('refs/tags/'.length)
-              : `v${{ steps.get-version.outputs.version }}`;
+            const tagName = `v${{ steps.get-version.outputs.version }}`;
             const owner = context.repo.owner;
             const repo = context.repo.repo;
+            // Tag posé tout de suite sur le commit construit : la version
+            // suivante se calcule d'après lui. Un tag créé avec GITHUB_TOKEN ne
+            // redéclenche pas ce workflow.
+            try {
+              await github.rest.git.getRef({ owner, repo, ref: `tags/${tagName}` });
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              await github.rest.git.createRef({
+                owner, repo, ref: `refs/tags/${tagName}`, sha: context.sha,
+              });
+            }
             // Idempotent : réutilise la release existante pour ce tag — y compris
             // en BROUILLON (getReleaseByTag ignore les drafts, ce qui empilait un
             // brouillon par re-run). Les drafts en double du même tag sont purgés.
@@ -102,6 +149,7 @@ jobs:
       platform: ${{ matrix.platform }}
       target: ${{ matrix.target }}
       build-args: ${{ matrix.args }}
+      version: ${{ needs.create-release.outputs.version }}
       sign-binaries: ${{ vars.SIGN_BINARIES == 'true' }}
       sign-macos: ${{ vars.SIGN_MACOS == 'true' }}
       asset-prefix: "handy"
