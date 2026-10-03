@@ -5,9 +5,10 @@ on:
     branches: [main]
     paths:
       - "src-tauri/**"
+  # Sur toutes les PR (sans filtre de chemins) : `rust-tests` est un contrôle
+  # obligatoire de main, dont dépend la fusion automatique. Un contrôle filtré
+  # resterait « en attente » sur une PR sans code Rust et la bloquerait.
   pull_request:
-    paths:
-      - "src-tauri/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

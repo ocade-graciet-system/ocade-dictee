@@ -1617,8 +1617,9 @@ mod tests {
         s.selected_model = "whisper-large-v3-turbo".to_string();
         s.overlay_style = OverlayStyle::None;
         s.model_unload_timeout = ModelUnloadTimeout::Min5;
-        // Touche seule : refusée par `NoModifier` sur les 3 OS → repli préréglage n° 1.
-        s.bindings.get_mut("transcribe").unwrap().current_binding = "f13".to_string();
+        // Touche de navigation seule : refusée par `NoModifier` sur les 3 OS →
+        // repli préréglage n° 1 (une touche F seule est, elle, acceptée).
+        s.bindings.get_mut("transcribe").unwrap().current_binding = "home".to_string();
         s.post_process_enabled = true;
         s.always_on_microphone = true;
         s.mute_others_while_recording = true;
