@@ -115,6 +115,13 @@ fn show_main_window(app: &AppHandle) {
                 log::error!("Failed to set activation policy to Regular: {}", e);
             }
         }
+        // L'app tourne en arrière-plan dès l'ouverture de session : la rouvrir
+        // (Dock, Applications, barre des menus) ne relance pas le processus.
+        // Sans ce signal, une nouvelle version n'était vue qu'au tick de 24 h.
+        // `ForcedUpdater` ignore l'appel si une vérification est déjà en cours.
+        if let Err(e) = app.emit("check-for-updates", ()) {
+            log::error!("Failed to request an update check: {}", e);
+        }
         return;
     }
 
