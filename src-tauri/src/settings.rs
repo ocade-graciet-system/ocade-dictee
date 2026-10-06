@@ -357,7 +357,7 @@ pub struct AppSettings {
     pub bindings: HashMap<String, ShortcutBinding>,
     #[serde(default = "default_push_to_talk")]
     pub push_to_talk: bool,
-    #[serde(default)]
+    #[serde(default = "default_audio_feedback")]
     pub audio_feedback: bool,
     #[serde(default = "default_audio_feedback_volume")]
     pub audio_feedback_volume: f32,
@@ -499,6 +499,12 @@ fn default_settings_schema_version() -> u32 {
 }
 
 fn default_push_to_talk() -> bool {
+    true
+}
+
+/// Bip de début et de fin de dictée : actif par défaut, désactivable dans
+/// Réglages → Son (il n'est plus imposé par `apply_v1_locks`).
+fn default_audio_feedback() -> bool {
     true
 }
 
@@ -853,7 +859,8 @@ pub fn apply_v1_locks(settings: &mut AppSettings) -> bool {
 
     settings.push_to_talk = true;
     settings.always_on_microphone = false;
-    settings.audio_feedback = true;
+    // `audio_feedback` n'est plus imposé : le bip se coupe dans Réglages → Son
+    // (gênant sur les PC Windows, issue terrain 10/2026). Le volume, lui, reste fixé.
     settings.audio_feedback_volume = 1.0;
     settings.mute_while_recording = true;
     settings.mute_others_while_recording = LOCK_MUTE_OTHERS_WHILE_RECORDING;
@@ -935,7 +942,7 @@ pub fn get_default_settings() -> AppSettings {
         settings_schema_version: default_settings_schema_version(),
         bindings,
         push_to_talk: default_push_to_talk(),
-        audio_feedback: false,
+        audio_feedback: default_audio_feedback(),
         audio_feedback_volume: default_audio_feedback_volume(),
         sound_theme: default_sound_theme(),
         start_hidden: default_start_hidden(),
@@ -1243,7 +1250,7 @@ mod tests {
         let settings: AppSettings = serde_json::from_value(serde_json::json!({}))
             .expect("all AppSettings fields need serde defaults");
         assert!(settings.push_to_talk);
-        assert!(!settings.audio_feedback);
+        assert!(settings.audio_feedback);
         // Bindings default to empty; the load path merges the real defaults in.
         assert!(settings.bindings.is_empty());
     }
@@ -1610,7 +1617,6 @@ mod tests {
     fn v1_locks_force_imposed_values() {
         let mut s = get_default_settings();
         s.push_to_talk = false;
-        s.audio_feedback = false;
         s.audio_feedback_volume = 0.3;
         s.history_limit = 5;
         s.selected_language = "auto".to_string();
@@ -1640,7 +1646,7 @@ mod tests {
             s.recording_retention_period,
             RecordingRetentionPeriod::PreserveLimit
         );
-        assert!(s.push_to_talk && s.audio_feedback && s.mute_while_recording);
+        assert!(s.push_to_talk && s.mute_while_recording);
         assert_eq!(s.audio_feedback_volume, 1.0);
         assert_eq!(s.history_limit, 0);
         assert_eq!(s.selected_language, "fr");
@@ -1664,6 +1670,15 @@ mod tests {
             !apply_v1_locks(&mut s),
             "idempotent : rien à changer au 2e passage"
         );
+    }
+
+    #[test]
+    fn v1_locks_keep_audio_feedback_off_once_disabled() {
+        let mut s = get_default_settings();
+        assert!(s.audio_feedback, "bip actif par défaut");
+        s.audio_feedback = false;
+        apply_v1_locks(&mut s);
+        assert!(!s.audio_feedback, "le verrou ne doit pas réactiver le bip");
     }
 
     #[test]
