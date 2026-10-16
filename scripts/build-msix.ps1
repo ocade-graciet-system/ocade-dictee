@@ -35,7 +35,11 @@ param(
   # Dossier de sortie du .msix.
   [string]$OutDir = "",
   # Test local : certificat auto-signé + signature du package.
-  [switch]$SelfSign
+  [switch]$SelfSign,
+  # 4e composant de la version MSIX (0 en production). À incrémenter pour
+  # réinstaller un package de test : Windows refuse un package de même version
+  # au contenu différent.
+  [int]$Revision = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,7 +54,7 @@ if (-not $Version) {
   $Version = $conf.version
 }
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version attendue au format x.y.z, reçu « $Version »." }
-$msixVersion = "$Version.0"
+$msixVersion = "$Version.$Revision"
 if (-not $OutDir) { $OutDir = Join-Path $tauriDir "target\$Profile\bundle\msix" }
 
 # --- Outils du SDK Windows --------------------------------------------------

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { CircleAlert, CircleCheck, Loader2 } from "lucide-react";
 import HandyTextLogo from "../icons/HandyTextLogo";
 import { commands, type StoreLicenseStatus } from "@/bindings";
 
@@ -75,8 +76,12 @@ const LicenseGate: React.FC<LicenseGateProps> = ({
   };
 
   // Licence illisible (installation hors Store, API absente) : on l'explique
-  // plutôt que de parler d'un abonnement expiré.
+  // plutôt que de parler d'un abonnement.
   const unreadable = status.detail !== null;
+  // Abonnement déjà souscrit puis arrivé à échéance (le Store a communiqué une
+  // date passée) : on le dit ; sinon, premier abonnement, message neutre.
+  const lapsed =
+    status.expires_at !== null && status.expires_at * 1000 < Date.now();
 
   const feedbackText =
     feedback === "not_purchased"
@@ -89,16 +94,23 @@ const LicenseGate: React.FC<LicenseGateProps> = ({
             ? t("license.unavailable")
             : null;
 
-  // Abonnement déjà souscrit puis arrivé à échéance (le Store a communiqué une
-  // date passée) : on le dit ; sinon, premier abonnement, message neutre.
-  const lapsed =
-    status.expires_at !== null && status.expires_at * 1000 < Date.now();
+  const benefits = [
+    t("license.benefits.offline"),
+    t("license.benefits.updates"),
+    t("license.benefits.renewal"),
+  ];
 
   return (
-    <div className="h-screen w-screen flex items-center justify-center p-8 select-none">
-      <div className="w-full max-w-[26rem] flex flex-col items-center text-center">
-        <HandyTextLogo width={180} />
-        <h1 className="mt-10 text-xl font-semibold">{t("license.title")}</h1>
+    <div className="h-screen w-screen flex items-center justify-center p-6 select-none">
+      <div className="w-full max-w-[28rem] rounded-2xl border border-mid-gray/20 bg-background-ui/40 shadow-2xl px-10 py-10 flex flex-col items-center text-center">
+        <HandyTextLogo width={150} />
+
+        <span className="mt-8 text-[11px] font-semibold uppercase tracking-[0.22em] text-logo-primary">
+          {t("license.badge")}
+        </span>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight">
+          {t("license.title")}
+        </h1>
         <p className="mt-3 text-sm leading-relaxed text-text/70 text-pretty">
           {unreadable
             ? t("license.unavailable")
@@ -107,12 +119,26 @@ const LicenseGate: React.FC<LicenseGateProps> = ({
               : t("license.subtitle")}
         </p>
 
+        {!unreadable && (
+          <ul className="mt-7 w-full space-y-3 text-left text-sm text-text/85">
+            {benefits.map((benefit) => (
+              <li key={benefit} className="flex items-start gap-3">
+                <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-logo-primary" />
+                <span className="text-pretty">{benefit}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+
         <button
           type="button"
           disabled={busy !== null}
           onClick={() => void purchase()}
-          className="mt-8 w-56 px-5 py-2.5 rounded-md bg-logo-primary text-white font-medium hover:bg-logo-primary/80 transition-colors disabled:opacity-60 disabled:cursor-default"
+          className="mt-8 w-full inline-flex items-center justify-center gap-2 rounded-lg bg-logo-primary px-5 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-logo-primary/85 disabled:opacity-60 disabled:cursor-default"
         >
+          {busy === "purchase" && (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          )}
           {busy === "purchase"
             ? t("license.purchasing")
             : t("license.subscribe")}
@@ -121,22 +147,32 @@ const LicenseGate: React.FC<LicenseGateProps> = ({
           type="button"
           disabled={busy !== null}
           onClick={() => void recheck()}
-          className="mt-3 text-xs text-text/60 underline underline-offset-2 hover:text-text transition-colors disabled:cursor-default"
+          className="mt-3 inline-flex items-center gap-2 text-xs font-medium text-text/60 transition-colors hover:text-text disabled:cursor-default"
         >
+          {busy === "check" && (
+            <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+          )}
           {busy === "check" ? t("license.checking") : t("license.recheck")}
         </button>
 
-        <div className="mt-6 min-h-10 flex flex-col items-center gap-2">
-          {feedbackText && (
-            <p className="text-sm text-red-500 text-pretty">{feedbackText}</p>
-          )}
-          <p className="text-xs text-text/45 text-pretty">
-            {t("license.signedIn")}
+        {feedbackText && (
+          <div
+            role="alert"
+            className="mt-6 flex w-full items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-left text-xs text-red-400"
+          >
+            <CircleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
+            <span className="text-pretty">{feedbackText}</span>
+          </div>
+        )}
+
+        <p className="mt-6 text-xs leading-relaxed text-text/45 text-pretty">
+          {t("license.signedIn")}
+        </p>
+        {status.detail && (
+          <p className="mt-2 text-[11px] text-text/35 break-words">
+            {status.detail}
           </p>
-          {status.detail && (
-            <p className="text-xs text-text/35 break-words">{status.detail}</p>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );

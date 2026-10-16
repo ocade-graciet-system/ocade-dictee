@@ -758,8 +758,14 @@
   },
   "license": {
     "checking": "Vérification de votre abonnement…",
+    "badge": "Abonnement annuel",
     "title": "Abonnement requis",
-    "subtitle": "OCADE Dictée fonctionne avec un abonnement annuel souscrit via le Microsoft Store. Il se renouvelle automatiquement et se gère depuis votre compte Microsoft.",
+    "subtitle": "Pour utiliser OCADE Dictée, souscrivez l'abonnement annuel via le Microsoft Store. Il se gère depuis votre compte Microsoft.",
+    "benefits": {
+      "offline": "Dictée entièrement hors ligne : votre voix et vos textes restent sur votre poste.",
+      "updates": "Mises à jour automatiques par le Microsoft Store.",
+      "renewal": "Renouvellement automatique, résiliable à tout moment depuis votre compte Microsoft."
+    },
     "expired": "Votre abonnement n'est plus actif. Renouvelez-le pour continuer à dicter.",
     "subscribe": "S'abonner",
     "purchasing": "Ouverture du Microsoft Store…",
