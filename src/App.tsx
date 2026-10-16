@@ -341,7 +341,11 @@ function App() {
   return (
     <>
       {toaster}
-      <ForcedUpdater />
+      {/* En mode développement (`tauri dev`), la mise à jour forcée verrait la
+          release publiée comme plus récente que le build local, l'installerait
+          et relancerait l'application installée à la place de celle en cours
+          de développement. */}
+      {!import.meta.env.DEV && <ForcedUpdater />}
       {content}
     </>
   );

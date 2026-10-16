@@ -35,6 +35,23 @@ pub async fn rescan_local_models(
         .map_err(|e| e.to_string())
 }
 
+/// Importe un fichier de modèle choisi par l'utilisateur (chemin absolu renvoyé
+/// par la boîte de dialogue) dans le dossier `models`, puis renvoie son
+/// identifiant — à passer ensuite à `set_active_model`. La copie (jusqu'à
+/// plusieurs centaines de Mo) tourne hors du runtime async.
+#[tauri::command]
+#[specta::specta]
+pub async fn import_model_file(
+    model_manager: State<'_, Arc<ModelManager>>,
+    path: String,
+) -> Result<String, String> {
+    let mm = model_manager.inner().clone();
+    tokio::task::spawn_blocking(move || mm.import_model_file(std::path::Path::new(&path)))
+        .await
+        .map_err(|e| format!("import task panicked: {e}"))?
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn download_model(

@@ -92,13 +92,97 @@ pub const DEFAULT_FR_MODEL_ID: &str = "whisper-distil-fr-dec2-q5_0";
 pub const RECOMMENDED_FR_MODEL_ID: &str =
     "handy-computer/cohere-transcribe-03-2026-gguf/cohere-transcribe-03-2026-Q5_K_M.gguf";
 
-/// Modèles que l'utilisateur peut choisir (sélecteur du pied de page). Tout
-/// autre identifiant dans le store est ramené à `DEFAULT_FR_MODEL_ID`.
+/// Modèles du catalogue que l'utilisateur peut choisir (sélecteur du pied de
+/// page). S'y ajoutent les modèles importés par l'utilisateur (voir
+/// [`IMPORTED_MODEL_ID_PREFIX`]). Tout autre identifiant dans le store est
+/// ramené à `DEFAULT_FR_MODEL_ID`.
 pub const SELECTABLE_MODEL_IDS: &[&str] = &[
     RECOMMENDED_FR_MODEL_ID,
     DEFAULT_FR_MODEL_ID,
     "whisper-distil-fr-dec16-q5_0",
 ];
+
+/// Préfixe du nom de fichier (donc de l'identifiant) des modèles importés par
+/// l'utilisateur via « Importer un fichier de modèle… ». Il distingue ces
+/// fichiers des modèles du catalogue et permet au verrou v1 des réglages
+/// (`settings::apply_v1_locks`) de les reconnaître sans accès au gestionnaire
+/// de modèles. Un fichier déposé à la main dans le dossier `models` sans ce
+/// préfixe reste, comme avant, invisible dans l'interface.
+pub const IMPORTED_MODEL_ID_PREFIX: &str = "import-";
+
+/// Un identifiant que l'utilisateur a le droit d'activer : un des modèles FR
+/// du catalogue, ou un modèle importé par lui.
+pub fn is_selectable_model_id(model_id: &str) -> bool {
+    SELECTABLE_MODEL_IDS.contains(&model_id) || model_id.starts_with(IMPORTED_MODEL_ID_PREFIX)
+}
+
+/// Nom de fichier sous lequel un modèle importé est copié dans le dossier
+/// `models` : préfixe [`IMPORTED_MODEL_ID_PREFIX`], radical nettoyé (lettres,
+/// chiffres, `-`, `_`, `.` ; tout le reste devient `-`), extension d'origine.
+/// Renvoie `None` si le fichier n'a pas une extension prise en charge
+/// (`.bin` GGML ou `.gguf`).
+pub fn imported_model_filename(source: &Path) -> Option<String> {
+    let ext = source.extension()?.to_str()?.to_ascii_lowercase();
+    if ext != "bin" && ext != "gguf" {
+        return None;
+    }
+    let stem = source.file_stem()?.to_str()?;
+    let cleaned: String = stem
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let cleaned = cleaned.trim_matches(|c: char| c == '-' || c == '.');
+    if cleaned.is_empty() {
+        return None;
+    }
+    // Un fichier déjà nommé `import-…` (export d'une autre installation) ne
+    // reçoit pas un second préfixe.
+    let stem = cleaned
+        .strip_prefix(IMPORTED_MODEL_ID_PREFIX)
+        .unwrap_or(cleaned);
+    Some(format!("{}{}.{}", IMPORTED_MODEL_ID_PREFIX, stem, ext))
+}
+
+/// Nombre magique en tête d'un fichier GGML hérité (`.bin`) : « lmgg » en
+/// petit-boutiste, soit `0x67676d6c`.
+const GGML_MAGIC: &[u8; 4] = b"lmgg";
+/// Nombre magique en tête d'un fichier GGUF.
+const GGUF_MAGIC: &[u8; 4] = b"GGUF";
+
+/// Vérifie qu'un fichier importé ressemble bien à un modèle transcribe-cpp :
+/// extension `.bin` avec en-tête GGML, ou `.gguf` avec en-tête GGUF. Évite de
+/// copier 500 Mo d'un fichier quelconque avant que le chargement n'échoue.
+fn check_imported_model_header(source: &Path) -> Result<()> {
+    use std::io::Read;
+    let mut file = File::open(source)
+        .map_err(|e| anyhow::anyhow!("Impossible d'ouvrir le fichier : {}", e))?;
+    let mut magic = [0u8; 4];
+    file.read_exact(&mut magic)
+        .map_err(|_| anyhow::anyhow!("Le fichier est vide ou tronqué."))?;
+    let ext = source
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    let ok = match ext.as_str() {
+        "gguf" => &magic == GGUF_MAGIC,
+        "bin" => &magic == GGML_MAGIC,
+        _ => false,
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "Ce fichier n'est pas un modèle reconnu (attendu : GGML .bin ou GGUF)."
+        ))
+    }
+}
 
 /// Taille exacte du fichier `whisper-distil-fr-dec2-q5_0.bin` (sha256 e41b30e8…).
 pub const DEFAULT_FR_MODEL_SIZE_BYTES: u64 = 537_819_875;
@@ -1223,13 +1307,14 @@ impl ModelManager {
     }
 
     pub fn get_available_models(&self) -> Vec<ModelInfo> {
-        // v1 clé en main (issue #2) : seuls les modèles FR retenus sont exposés,
-        // et le badge « recommandé » ne va qu'au meilleur du comparatif.
+        // v1 clé en main (issue #2) : seuls les modèles FR retenus et les
+        // modèles importés par l'utilisateur sont exposés, et le badge
+        // « recommandé » ne va qu'au meilleur du comparatif.
         let mut list: Vec<ModelInfo> = {
             let models = self.available_models.lock().unwrap();
             models
                 .values()
-                .filter(|m| SELECTABLE_MODEL_IDS.contains(&m.id.as_str()))
+                .filter(|m| is_selectable_model_id(&m.id))
                 .cloned()
                 .map(|mut m| {
                     m.is_recommended = m.id == RECOMMENDED_FR_MODEL_ID;
@@ -1338,6 +1423,72 @@ impl ModelManager {
     pub fn get_model_info(&self, model_id: &str) -> Option<ModelInfo> {
         let models = self.available_models.lock().unwrap();
         models.get(model_id).cloned()
+    }
+
+    /// Importe un fichier de modèle choisi par l'utilisateur (`.bin` GGML ou
+    /// `.gguf`) : copie dans le dossier `models` sous un nom préfixé
+    /// [`IMPORTED_MODEL_ID_PREFIX`], puis nouveau scan local pour qu'il
+    /// apparaisse dans le sélecteur. Renvoie l'identifiant du modèle importé
+    /// (le nom de fichier sans extension), prêt pour `set_active_model`.
+    ///
+    /// La copie passe par un `.partial` renommé à la fin : une coupure en
+    /// plein milieu ne laisse pas un fichier tronqué que le scan prendrait
+    /// pour un modèle. Si un fichier de même nom et de même taille est déjà en
+    /// place, rien n'est recopié.
+    pub fn import_model_file(&self, source: &Path) -> Result<String> {
+        if !source.is_file() {
+            return Err(anyhow::anyhow!("Le fichier n'existe pas."));
+        }
+        let filename = imported_model_filename(source).ok_or_else(|| {
+            anyhow::anyhow!("Seuls les fichiers de modèle .bin (GGML) ou .gguf sont acceptés.")
+        })?;
+        check_imported_model_header(source)?;
+
+        let model_id = Path::new(&filename)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(str::to_string)
+            .ok_or_else(|| anyhow::anyhow!("Nom de fichier invalide."))?;
+
+        let target = self.models_dir.join(&filename);
+        let source_len = source.metadata()?.len();
+        let already_there = target
+            .metadata()
+            .map(|m| m.is_file() && m.len() == source_len)
+            .unwrap_or(false);
+
+        if already_there {
+            info!(
+                "Modèle importé déjà en place, pas de recopie : {}",
+                target.display()
+            );
+        } else {
+            let partial = self.models_dir.join(format!("{}.partial", filename));
+            info!(
+                "Import du modèle {} ({} Mo) vers {}",
+                source.display(),
+                source_len / (1024 * 1024),
+                target.display()
+            );
+            if let Err(e) = fs::copy(source, &partial) {
+                let _ = fs::remove_file(&partial);
+                return Err(anyhow::anyhow!("La copie du fichier a échoué : {}", e));
+            }
+            if let Err(e) = fs::rename(&partial, &target) {
+                let _ = fs::remove_file(&partial);
+                return Err(anyhow::anyhow!("La copie du fichier a échoué : {}", e));
+            }
+        }
+
+        // Le scan est additif : un identifiant déjà connu (ré-import du même
+        // fichier) garde son entrée, un nouveau est inséré avec `is_custom`.
+        self.rescan_local_models()?;
+        if self.get_model_info(&model_id).is_none() {
+            return Err(anyhow::anyhow!(
+                "Le fichier a été copié mais n'a pas été reconnu comme modèle."
+            ));
+        }
+        Ok(model_id)
     }
 
     /// Reconcile a model's advertised capabilities with the ground truth from the
@@ -1574,8 +1725,12 @@ impl ModelManager {
                 continue;
             }
 
-            // Generate display name: replace - and _ with space, capitalize words
+            // Generate display name: replace - and _ with space, capitalize words.
+            // Le préfixe technique des modèles importés (`import-`) n'a rien à
+            // faire dans le nom affiché.
             let fallback_display_name = model_id
+                .strip_prefix(IMPORTED_MODEL_ID_PREFIX)
+                .unwrap_or(&model_id)
                 .replace(['-', '_'], " ")
                 .split_whitespace()
                 .map(|word| {
@@ -2434,6 +2589,10 @@ mod tests {
         let mut another_file = File::create(models_dir.join("whisper_medical_v2.bin")).unwrap();
         another_file.write_all(b"another fake model").unwrap();
 
+        // Modèle importé via l'interface : le préfixe reste dans l'identifiant,
+        // pas dans le nom affiché.
+        File::create(models_dir.join("import-ggml-tiny.bin")).unwrap();
+
         // Custom GGUF model (also supported by transcribe-cpp)
         let mut gguf_file = File::create(models_dir.join("my-gguf-model.gguf")).unwrap();
         gguf_file
@@ -2491,6 +2650,10 @@ mod tests {
         assert!(models.contains_key("whisper_medical_v2"));
 
         // Verify custom model properties
+        let imported = models.get("import-ggml-tiny").unwrap();
+        assert_eq!(imported.name, "Ggml Tiny");
+        assert!(imported.is_custom);
+
         let custom = models.get("my-custom-model").unwrap();
         assert_eq!(custom.name, "My Custom Model");
         assert_eq!(custom.filename, "my-custom-model.bin");
@@ -2745,5 +2908,57 @@ mod tests {
             "sans certitude sur le fichier en place, on ne supprime rien"
         );
         assert!(target.exists());
+    }
+
+    #[test]
+    fn selectable_ids_cover_catalog_and_imported_models() {
+        assert!(is_selectable_model_id(DEFAULT_FR_MODEL_ID));
+        assert!(is_selectable_model_id(RECOMMENDED_FR_MODEL_ID));
+        assert!(is_selectable_model_id("import-mon-modele"));
+        assert!(!is_selectable_model_id("small"));
+        assert!(!is_selectable_model_id("mon-modele-depose-a-la-main"));
+    }
+
+    #[test]
+    fn imported_filename_is_prefixed_cleaned_and_keeps_extension() {
+        assert_eq!(
+            imported_model_filename(Path::new("/x/Mon Modèle v2.GGUF")).as_deref(),
+            Some("import-Mon-Mod-le-v2.gguf")
+        );
+        assert_eq!(
+            imported_model_filename(Path::new("ggml-model-q5_0.bin")).as_deref(),
+            Some("import-ggml-model-q5_0.bin")
+        );
+        // Pas de double préfixe pour un fichier exporté d'une autre installation.
+        assert_eq!(
+            imported_model_filename(Path::new("import-deja.bin")).as_deref(),
+            Some("import-deja.bin")
+        );
+        assert_eq!(imported_model_filename(Path::new("modele.onnx")), None);
+        assert_eq!(imported_model_filename(Path::new("sans-extension")), None);
+        assert_eq!(imported_model_filename(Path::new("---.bin")), None);
+    }
+
+    #[test]
+    fn imported_header_check_accepts_ggml_and_gguf_only() {
+        let dir = TempDir::new().unwrap();
+        let ggml = dir.path().join("a.bin");
+        std::fs::write(&ggml, b"lmggrest").unwrap();
+        assert!(check_imported_model_header(&ggml).is_ok());
+
+        let gguf = dir.path().join("b.gguf");
+        std::fs::write(&gguf, b"GGUF\x03\x00\x00\x00").unwrap();
+        assert!(check_imported_model_header(&gguf).is_ok());
+
+        let wrong = dir.path().join("c.bin");
+        std::fs::write(&wrong, b"GGUF....").unwrap();
+        assert!(
+            check_imported_model_header(&wrong).is_err(),
+            "un .bin doit porter l'en-tête GGML"
+        );
+
+        let empty = dir.path().join("d.gguf");
+        std::fs::write(&empty, b"").unwrap();
+        assert!(check_imported_model_header(&empty).is_err());
     }
 }

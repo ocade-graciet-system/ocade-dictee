@@ -865,9 +865,10 @@ pub fn apply_v1_locks(settings: &mut AppSettings) -> bool {
     settings.mute_while_recording = true;
     settings.mute_others_while_recording = LOCK_MUTE_OTHERS_WHILE_RECORDING;
     settings.translate_to_english = false;
-    // Seuls les modèles FR du sélecteur sont autorisés (le dernier choix est
-    // conservé) : un store hérité ne peut pas réactiver un autre modèle.
-    if !crate::managers::model::SELECTABLE_MODEL_IDS.contains(&settings.selected_model.as_str()) {
+    // Seuls les modèles FR du sélecteur et les modèles importés par
+    // l'utilisateur sont autorisés (le dernier choix est conservé) : un store
+    // hérité ne peut pas réactiver un autre modèle.
+    if !crate::managers::model::is_selectable_model_id(&settings.selected_model) {
         settings.selected_model = crate::managers::model::DEFAULT_FR_MODEL_ID.to_string();
     }
     settings.selected_language = "fr".to_string();
@@ -1689,6 +1690,21 @@ mod tests {
         assert_eq!(
             s.selected_model,
             crate::managers::model::RECOMMENDED_FR_MODEL_ID
+        );
+    }
+
+    #[test]
+    fn v1_locks_keep_an_imported_model_and_reset_unknown_ids() {
+        let mut s = get_default_settings();
+        s.selected_model = "import-mon-modele".to_string();
+        apply_v1_locks(&mut s);
+        assert_eq!(s.selected_model, "import-mon-modele");
+
+        s.selected_model = "small".to_string();
+        apply_v1_locks(&mut s);
+        assert_eq!(
+            s.selected_model,
+            crate::managers::model::DEFAULT_FR_MODEL_ID
         );
     }
 

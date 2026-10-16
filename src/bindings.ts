@@ -692,6 +692,20 @@ async rescanLocalModels() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Importe un fichier de modèle choisi par l'utilisateur (chemin absolu renvoyé
+ * par la boîte de dialogue) dans le dossier `models`, puis renvoie son
+ * identifiant — à passer ensuite à `set_active_model`. La copie (jusqu'à
+ * plusieurs centaines de Mo) tourne hors du runtime async.
+ */
+async importModelFile(path: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("import_model_file", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async updateMicrophoneMode(alwaysOn: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("update_microphone_mode", { alwaysOn }) };
