@@ -1725,8 +1725,12 @@ impl ModelManager {
                 continue;
             }
 
-            // Generate display name: replace - and _ with space, capitalize words
+            // Generate display name: replace - and _ with space, capitalize words.
+            // Le préfixe technique des modèles importés (`import-`) n'a rien à
+            // faire dans le nom affiché.
             let fallback_display_name = model_id
+                .strip_prefix(IMPORTED_MODEL_ID_PREFIX)
+                .unwrap_or(&model_id)
                 .replace(['-', '_'], " ")
                 .split_whitespace()
                 .map(|word| {
@@ -2585,6 +2589,10 @@ mod tests {
         let mut another_file = File::create(models_dir.join("whisper_medical_v2.bin")).unwrap();
         another_file.write_all(b"another fake model").unwrap();
 
+        // Modèle importé via l'interface : le préfixe reste dans l'identifiant,
+        // pas dans le nom affiché.
+        File::create(models_dir.join("import-ggml-tiny.bin")).unwrap();
+
         // Custom GGUF model (also supported by transcribe-cpp)
         let mut gguf_file = File::create(models_dir.join("my-gguf-model.gguf")).unwrap();
         gguf_file
@@ -2642,6 +2650,10 @@ mod tests {
         assert!(models.contains_key("whisper_medical_v2"));
 
         // Verify custom model properties
+        let imported = models.get("import-ggml-tiny").unwrap();
+        assert_eq!(imported.name, "Ggml Tiny");
+        assert!(imported.is_custom);
+
         let custom = models.get("my-custom-model").unwrap();
         assert_eq!(custom.name, "My Custom Model");
         assert_eq!(custom.filename, "my-custom-model.bin");
