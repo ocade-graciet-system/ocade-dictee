@@ -178,7 +178,22 @@
     "model": {
       "switch": "Changer de modèle de transcription",
       "recommended": "Recommandé : le plus précis et le plus rapide du comparatif",
-      "loading": "Chargement…"
+      "loading": "Chargement…",
+      "imported": "Modèle importé par vous",
+      "size": "{{size}} Mo",
+      "download": "Télécharger",
+      "downloading": "Téléchargement… {{percentage}} %",
+      "verifying": "Vérification…",
+      "cancel": "Annuler le téléchargement",
+      "downloadFailed": "Le téléchargement de « {{name}} » a échoué. Vérifiez la connexion Internet puis réessayez.",
+      "downloadDone": "« {{name}} » est téléchargé. Sélectionnez-le pour l'activer.",
+      "import": "Importer un fichier de modèle…",
+      "importHint": "Fichier .bin (GGML) ou .gguf compatible Whisper / transcribe-cpp",
+      "importDialogFilter": "Modèle de transcription",
+      "importing": "Import du modèle…",
+      "importDone": "« {{name}} » est importé et activé.",
+      "importFailed": "L'import du modèle a échoué.",
+      "activateFailed": "Le modèle « {{name}} » n'a pas pu être activé."
     }
   },
   "settings": {

@@ -38,6 +38,8 @@ interface ModelsStore {
   loadCurrentModel: () => Promise<void>;
   rescanLocalModels: () => Promise<void>;
   selectModel: (modelId: string) => Promise<boolean>;
+  /** Copie un fichier de modèle dans l'installation ; renvoie son id, ou null en cas d'échec (`error` est renseigné). */
+  importModelFile: (path: string) => Promise<string | null>;
   downloadModel: (modelId: string) => Promise<boolean>;
   cancelDownload: (modelId: string) => Promise<boolean>;
   getModelInfo: (modelId: string) => ModelInfo | undefined;
@@ -154,6 +156,24 @@ export const useModelStore = create<ModelsStore>()(
       } catch (err) {
         set({ error: `Failed to switch to model: ${err}` });
         return false;
+      }
+    },
+
+    importModelFile: async (path: string) => {
+      try {
+        set({ error: null });
+        const result = await commands.importModelFile(path);
+        if (result.status === "ok") {
+          // Le backend a déjà émis `models-updated` (rescan) ; on recharge
+          // quand même pour que l'appelant trouve le modèle dès le retour.
+          await get().loadModels();
+          return result.data;
+        }
+        set({ error: `Failed to import model: ${result.error}` });
+        return null;
+      } catch (err) {
+        set({ error: `Failed to import model: ${err}` });
+        return null;
       }
     },
 
