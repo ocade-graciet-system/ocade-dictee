@@ -61,6 +61,17 @@ on:
         required: false
         type: boolean
         default: false
+      # Build « Microsoft Store » (Windows x64 uniquement) : compile avec la
+      # feature Cargo `store`, assemble le package MSIX (scripts/build-msix.ps1)
+      # et l'ajoute à la release. Les bundles Tauri (NSIS) de ce build ne sont
+      # PAS publiés : l'installeur GitHub reste celui du build sans la feature.
+      # Identité du produit : variables de dépôt OCADE_STORE_IDENTITY_NAME,
+      # OCADE_STORE_PUBLISHER, OCADE_STORE_PUBLISHER_DISPLAY_NAME,
+      # OCADE_STORE_SUBSCRIPTION_ID (voir docs/microsoft-store.md).
+      msix:
+        required: false
+        type: boolean
+        default: false
 
 env:
   TSC_VERSION: "0.9.0"
@@ -575,10 +586,15 @@ jobs:
           # la mise à jour in-app ne fonctionne pas.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Build Store : identifiant Store de l'add-on « abonnement annuel »,
+          # lu à la compilation (option_env!, store_channel.rs).
+          OCADE_STORE_SUBSCRIPTION_ID: ${{ inputs.msix && vars.OCADE_STORE_SUBSCRIPTION_ID || '' }}
         with:
-          tagName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
-          releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
-          releaseId: ${{ inputs.release-id }}
+          # Build Store : tauri-action ne publie rien (le MSIX est ajouté à la
+          # release par l'étape dédiée plus bas), d'où tagName/releaseId vides.
+          tagName: ${{ inputs.release-id && !inputs.msix && format('v{0}', steps.get-version.outputs.version) || '' }}
+          releaseName: ${{ inputs.release-id && !inputs.msix && format('v{0}', steps.get-version.outputs.version) || '' }}
+          releaseId: ${{ !inputs.msix && inputs.release-id || '' }}
           assetNamePattern: ${{ steps.patch-release-name.outputs.platform }}
           args: ${{ inputs.build-args }}
 
@@ -810,7 +826,8 @@ jobs:
 
       # Run on Windows releases too; upload-artifacts only controls retention.
       - name: Audit Windows package runtime contents
-        if: contains(inputs.platform, 'windows')
+        # Le build MSIX (--no-bundle) ne produit pas d'installeur NSIS/MSI à auditer.
+        if: contains(inputs.platform, 'windows') && !inputs.msix
         shell: pwsh
         run: |
           $profile = "${{ steps.build-profile.outputs.profile }}"
@@ -907,11 +924,64 @@ jobs:
           }
 
       - name: Upload artifacts (Windows)
-        if: inputs.upload-artifacts && contains(inputs.platform, 'windows')
+        if: inputs.upload-artifacts && contains(inputs.platform, 'windows') && !inputs.msix
         uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.asset-prefix }}-${{ inputs.target }}
           path: |
             src-tauri/target/${{ inputs.target != '' && inputs.target != 'x86_64-pc-windows-msvc' && format('{0}/{1}', inputs.target, steps.build-profile.outputs.profile) || steps.build-profile.outputs.profile }}/bundle/msi/*.msi
             src-tauri/target/${{ inputs.target != '' && inputs.target != 'x86_64-pc-windows-msvc' && format('{0}/{1}', inputs.target, steps.build-profile.outputs.profile) || steps.build-profile.outputs.profile }}/bundle/nsis/*.exe
+          retention-days: 30
+
+      # --- Microsoft Store : package MSIX --------------------------------------
+      # Même binaire et mêmes fichiers que l'installeur, assemblés par
+      # scripts/build-msix.ps1 avec le manifeste src-tauri/msix/AppxManifest.xml.
+      # Non signé : le Store signe lui-même à la soumission.
+      - name: Build MSIX package (Microsoft Store)
+        if: inputs.msix && contains(inputs.platform, 'windows')
+        shell: pwsh
+        env:
+          OCADE_STORE_IDENTITY_NAME: ${{ vars.OCADE_STORE_IDENTITY_NAME }}
+          OCADE_STORE_PUBLISHER: ${{ vars.OCADE_STORE_PUBLISHER }}
+          OCADE_STORE_PUBLISHER_DISPLAY_NAME: ${{ vars.OCADE_STORE_PUBLISHER_DISPLAY_NAME }}
+        run: |
+          if (-not $env:OCADE_STORE_IDENTITY_NAME -or -not $env:OCADE_STORE_PUBLISHER) {
+            # Tant que le produit n'existe pas dans Partner Center, pas de
+            # package : on ne bloque pas la release pour autant.
+            Write-Warning "Variables de dépôt OCADE_STORE_IDENTITY_NAME / OCADE_STORE_PUBLISHER absentes (identité Partner Center) : package MSIX non produit."
+            exit 0
+          }
+          ./scripts/build-msix.ps1 -Version "${{ steps.get-version.outputs.version }}" -Profile "${{ steps.build-profile.outputs.profile }}" -OutDir "msix-out"
+          Get-ChildItem msix-out
+
+      - name: Upload MSIX to release
+        if: inputs.msix && contains(inputs.platform, 'windows') && inputs.release-id != '' && hashFiles('msix-out/*.msix') != ''
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require("fs");
+            const path = require("path");
+            const dir = "msix-out";
+            for (const name of fs.readdirSync(dir).filter((n) => n.endsWith(".msix"))) {
+              const file = path.join(dir, name);
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: Number("${{ inputs.release-id }}"),
+                name,
+                data: fs.readFileSync(file),
+                headers: {
+                  "content-type": "application/msix",
+                  "content-length": fs.statSync(file).size,
+                },
+              });
+              core.info(`Uploaded ${name}`);
+            }
+
+      - name: Upload artifacts (MSIX)
+        if: inputs.upload-artifacts && inputs.msix && contains(inputs.platform, 'windows') && hashFiles('msix-out/*.msix') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.asset-prefix }}-msix-${{ inputs.target }}
+          path: msix-out/*.msix
           retention-days: 30

@@ -3,6 +3,7 @@ pub mod file_history;
 pub mod file_transcription;
 pub mod history;
 pub mod models;
+pub mod store;
 pub mod transcription;
 pub mod video_download;
 

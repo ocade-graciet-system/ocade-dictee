@@ -23,6 +23,13 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # name = "cli"
 # path = "src/audio_toolkit/bin/cli.rs"
 
+[features]
+# Build « Microsoft Store » : package MSIX, abonnement vérifié via l'API de
+# licence du Store au démarrage, mises à jour et démarrage automatique confiés
+# à Windows. Sans cette feature : build « GitHub » (installeur NSIS, updater
+# in-app, aucune vérification de licence). Voir docs/microsoft-store.md.
+store = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 serde_json = "1"
@@ -127,6 +134,13 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Variant",
   "Win32_Foundation",
   "Win32_UI_WindowsAndMessaging",
+  # Build Store (feature `store`, src/store_channel.rs) : licence et achat
+  # via Windows.Services.Store, démarrage automatique via StartupTask,
+  # IInitializeWithWindow pour rattacher la fenêtre d'achat à la nôtre.
+  "Services_Store",
+  "ApplicationModel",
+  "Win32_UI_Shell",
+  "Win32_System_Com",
 ] }
 winreg = "0.55"
 
