@@ -756,6 +756,22 @@
     "downloadingBytes": "Téléchargement… {{megabytes}} Mo",
     "installing": "Installation…"
   },
+  "license": {
+    "checking": "Vérification de votre abonnement…",
+    "title": "Abonnement requis",
+    "subtitle": "OCADE Dictée fonctionne avec un abonnement annuel souscrit via le Microsoft Store. Il se renouvelle automatiquement et se gère depuis votre compte Microsoft.",
+    "expired": "Votre abonnement n'est plus actif. Renouvelez-le pour continuer à dicter.",
+    "subscribe": "S'abonner",
+    "purchasing": "Ouverture du Microsoft Store…",
+    "recheck": "J'ai déjà un abonnement, vérifier à nouveau",
+    "signedIn": "Connectez-vous au Microsoft Store avec le compte qui a souscrit l'abonnement.",
+    "purchaseNotCompleted": "L'achat n'a pas été finalisé.",
+    "purchaseFailed": "Le Microsoft Store n'a pas pu finaliser l'achat. Réessayez dans quelques instants.",
+    "stillInactive": "Aucun abonnement actif n'a été trouvé pour ce compte Microsoft.",
+    "unavailable": "La licence n'a pas pu être vérifiée. Vérifiez que l'application a bien été installée depuis le Microsoft Store.",
+    "expiresOn": "Abonnement actif jusqu'au {{date}}",
+    "trial": "Version d'essai active"
+  },
   "whatsNew": {
     "title": "Nouveautés d'OCADE Dictée v{{version}}"
   },

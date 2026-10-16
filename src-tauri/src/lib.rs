@@ -19,6 +19,7 @@ pub mod portable;
 mod settings;
 mod shortcut;
 mod signal_handle;
+mod store_channel;
 pub mod summary;
 mod transcription_coordinator;
 mod tray;
@@ -47,7 +48,7 @@ pub use transcription_coordinator::TranscriptionCoordinator;
 
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Listener, Manager};
-use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_log::{Builder as LogBuilder, RotationStrategy, Target, TargetKind};
 
 use crate::settings::get_settings;
@@ -392,17 +393,10 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         tray::update_tray_menu(&app_handle_for_listener, None);
     });
 
-    // Get the autostart manager and configure based on user setting
-    let autostart_manager = app_handle.autolaunch();
+    // Démarrage automatique selon le réglage : clé Run du registre (build
+    // GitHub) ou StartupTask du manifeste MSIX (build Store).
     let settings = settings::get_settings(app_handle);
-
-    if settings.autostart_enabled {
-        // Enable autostart if user has opted in
-        let _ = autostart_manager.enable();
-    } else {
-        // Disable autostart if user has opted out
-        let _ = autostart_manager.disable();
-    }
+    store_channel::set_autostart(app_handle, settings.autostart_enabled);
 
     // Create the recording overlay window (hidden by default)
     utils::create_recording_overlay(app_handle);
@@ -715,6 +709,9 @@ pub fn run(cli_args: CliArgs) {
             commands::models::is_model_loading,
             commands::models::rescan_local_models,
             commands::models::import_model_file,
+            commands::store::get_distribution_channel,
+            commands::store::get_store_license,
+            commands::store::purchase_store_subscription,
             commands::audio::update_microphone_mode,
             commands::audio::get_microphone_mode,
             commands::audio::get_windows_microphone_permission_status,

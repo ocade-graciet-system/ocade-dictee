@@ -140,6 +140,15 @@ jobs:
           - platform: "windows-latest"
             args: "--bundles nsis"
             target: "x86_64-pc-windows-msvc"
+          # - Microsoft Store : même code compilé avec la feature `store`
+          #   (abonnement vérifié, pas d'updater in-app), empaqueté en MSIX et
+          #   joint à la release pour la soumission Partner Center. Ignoré tant
+          #   que les variables d'identité du produit ne sont pas définies
+          #   (voir docs/microsoft-store.md), sans bloquer la release.
+          - platform: "windows-latest"
+            args: "--no-bundle --features store"
+            target: "x86_64-pc-windows-msvc"
+            msix: true
           - platform: "ubuntu-24.04" # Linux x64 — AppImage universel
             args: "--bundles appimage"
             target: "x86_64-unknown-linux-gnu"
@@ -149,6 +158,7 @@ jobs:
       platform: ${{ matrix.platform }}
       target: ${{ matrix.target }}
       build-args: ${{ matrix.args }}
+      msix: ${{ matrix.msix == true }}
       version: ${{ needs.create-release.outputs.version }}
       sign-binaries: ${{ vars.SIGN_BINARIES == 'true' }}
       sign-macos: ${{ vars.SIGN_MACOS == 'true' }}

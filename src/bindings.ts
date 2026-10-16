@@ -706,6 +706,32 @@ async importModelFile(path: string) : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async getDistributionChannel() : Promise<DistributionChannel> {
+    return await TAURI_INVOKE("get_distribution_channel");
+},
+/**
+ * Lit la licence (bloquant côté Store : appels WinRT synchronisés) hors du
+ * runtime async.
+ */
+async getStoreLicense() : Promise<Result<StoreLicenseStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_store_license") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ouvre la fenêtre d'achat de l'abonnement, rattachée à la fenêtre principale.
+ */
+async purchaseStoreSubscription() : Promise<Result<PurchaseOutcome, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("purchase_store_subscription") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async updateMicrophoneMode(alwaysOn: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("update_microphone_mode", { alwaysOn }) };
@@ -1043,10 +1069,8 @@ async summaryStatus() : Promise<SummaryStatus> {
     return await TAURI_INVOKE("summary_status");
 },
 /**
- * Checks if the Mac is a laptop by detecting battery presence
- * 
- * This uses pmset to check for battery information.
- * Returns true if a battery is detected (laptop), false otherwise (desktop)
+ * Stub implementation for non-macOS platforms
+ * Always returns false since laptop detection is macOS-specific
  */
 async isLaptop() : Promise<Result<boolean, string>> {
     try {
@@ -1144,6 +1168,18 @@ export type BindingResponse = { success: boolean; binding: ShortcutBinding | nul
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CommMuteMode = "push_to_mute" | "toggle"
 export type CustomSounds = { start: boolean; stop: boolean }
+/**
+ * Canal de distribution compilé dans le binaire.
+ */
+export type DistributionChannel = 
+/**
+ * Installeur GitHub : aucune licence, updater in-app.
+ */
+"github" | 
+/**
+ * Package MSIX du Microsoft Store : abonnement vérifié, mises à jour par le Store.
+ */
+"store"
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
@@ -1326,10 +1362,56 @@ export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
+/**
+ * Résultat d'une demande d'achat de l'abonnement.
+ */
+export type PurchaseOutcome = 
+/**
+ * Achat effectué : la licence est désormais active.
+ */
+"succeeded" | 
+/**
+ * L'utilisateur possédait déjà l'abonnement.
+ */
+"already_purchased" | 
+/**
+ * L'utilisateur a fermé la fenêtre d'achat sans acheter.
+ */
+"not_purchased" | 
+/**
+ * Le Store n'a pas pu finaliser (réseau, serveur, moyen de paiement).
+ */
+"failed"
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
 export type SecretMap = Partial<{ [key in string]: string }>
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
+/**
+ * État de la licence vu par l'application.
+ */
+export type StoreLicenseStatus = { 
+/**
+ * Canal du binaire, pour que le front n'ait qu'un appel à faire.
+ */
+channel: DistributionChannel; 
+/**
+ * `true` si l'application peut être utilisée : toujours vrai côté GitHub ;
+ * côté Store, un abonnement actif (ou une licence d'essai active).
+ */
+active: boolean; 
+/**
+ * Licence d'essai du Store (si l'éditeur en propose une).
+ */
+is_trial: boolean; 
+/**
+ * Fin de l'abonnement en secondes Unix, quand le Store la communique.
+ */
+expires_at: number | null; 
+/**
+ * Cause technique quand la licence n'a pas pu être lue (hors Store,
+ * package non associé, API indisponible…). En anglais, pour le détail.
+ */
+detail: string | null }
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */

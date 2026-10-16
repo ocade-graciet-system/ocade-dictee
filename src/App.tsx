@@ -18,12 +18,24 @@ import {
 } from "./components/onboarding";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
 import { ForcedUpdater } from "./components/update-checker";
+import { LicenseGate } from "./components/license";
 import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
-import { commands } from "@/bindings";
+import {
+  commands,
+  type DistributionChannel,
+  type StoreLicenseStatus,
+} from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 
-type OnboardingStep = "accessibility" | "model" | "done";
+// « license » : build Microsoft Store sans abonnement actif, tout le reste est
+// bloqué derrière LicenseGate.
+type OnboardingStep = "license" | "accessibility" | "model" | "done";
+
+// Relecture périodique de la licence Store pendant que l'application tourne
+// (elle vit dans la barre système pendant des semaines) : un abonnement qui
+// s'arrête bloque l'usage sans attendre un redémarrage.
+const LICENSE_RECHECK_MS = 6 * 60 * 60 * 1000;
 
 const renderSettingsContent = (section: SidebarSection) => {
   const ActiveComponent =
@@ -54,10 +66,61 @@ function App() {
     (state) => state.refreshOutputDevices,
   );
   const hasCompletedPostOnboardingInit = useRef(false);
+  // Canal de distribution du binaire (GitHub / Store) et dernière licence lue.
+  const [channel, setChannel] = useState<DistributionChannel | null>(null);
+  const [licenseStatus, setLicenseStatus] = useState<StoreLicenseStatus | null>(
+    null,
+  );
 
   useEffect(() => {
     checkOnboardingStatus();
   }, []);
+
+  // Build Store : relecture périodique de la licence une fois dans l'application.
+  useEffect(() => {
+    if (onboardingStep !== "done" || channel !== "store") return;
+    const timer = setInterval(() => {
+      void (async () => {
+        const result = await commands.getStoreLicense();
+        if (result.status === "ok" && !result.data.active) {
+          setLicenseStatus(result.data);
+          setOnboardingStep("license");
+        }
+      })();
+    }, LICENSE_RECHECK_MS);
+    return () => clearInterval(timer);
+  }, [onboardingStep, channel]);
+
+  // Build Store : `false` tant qu'aucun abonnement actif n'est constaté, et
+  // l'écran LicenseGate est affiché. Build GitHub : toujours `true`.
+  const ensureLicensed = async (): Promise<boolean> => {
+    const current = await commands.getDistributionChannel();
+    setChannel(current);
+    if (current !== "store") return true;
+    const result = await commands.getStoreLicense();
+    const status: StoreLicenseStatus =
+      result.status === "ok"
+        ? result.data
+        : {
+            channel: "store",
+            active: false,
+            is_trial: false,
+            expires_at: null,
+            detail: result.error,
+          };
+    setLicenseStatus(status);
+    if (status.active) return true;
+    await revealMainWindowForPermissions();
+    setOnboardingStep("license");
+    return false;
+  };
+
+  // Abonnement constaté actif depuis LicenseGate : on reprend le flux normal
+  // (permissions, modèle, application).
+  const handleLicensed = () => {
+    setOnboardingStep(null);
+    void checkOnboardingStatus();
+  };
 
   // Initialize RTL direction when language changes
   useEffect(() => {
@@ -186,6 +249,10 @@ function App() {
 
   const checkOnboardingStatus = async () => {
     try {
+      // Avant tout le reste : sans abonnement actif (build Store), rien n'est
+      // accessible, pas même le téléchargement du modèle.
+      if (!(await ensureLicensed())) return;
+
       const settingsResult = await commands.getAppSettings();
       const hasCompletedOnboarding =
         settingsResult.status === "ok" &&
@@ -299,7 +366,11 @@ function App() {
   // stable wrapper around this node, so crossing between onboarding steps and
   // the main app never remounts it (which would drop any in-flight toast).
   let content: ReactNode;
-  if (onboardingStep === "accessibility") {
+  if (onboardingStep === "license" && licenseStatus) {
+    content = (
+      <LicenseGate initialStatus={licenseStatus} onLicensed={handleLicensed} />
+    );
+  } else if (onboardingStep === "accessibility") {
     content = (
       <AccessibilityOnboarding onComplete={handleAccessibilityComplete} />
     );
@@ -344,8 +415,9 @@ function App() {
       {/* En mode développement (`tauri dev`), la mise à jour forcée verrait la
           release publiée comme plus récente que le build local, l'installerait
           et relancerait l'application installée à la place de celle en cours
-          de développement. */}
-      {!import.meta.env.DEV && <ForcedUpdater />}
+          de développement. Dans le build Microsoft Store, c'est le Store qui
+          met à jour : l'updater in-app n'a rien à faire. */}
+      {!import.meta.env.DEV && channel === "github" && <ForcedUpdater />}
       {content}
     </>
   );

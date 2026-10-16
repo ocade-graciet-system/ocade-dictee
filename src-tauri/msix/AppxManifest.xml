@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Manifeste du package MSIX soumis au Microsoft Store (build « Store », feature
+  Cargo `store`). Les valeurs {{…}} sont remplies par scripts/build-msix.ps1 :
+
+  - IDENTITY_NAME, PUBLISHER, PUBLISHER_DISPLAY_NAME : identité du produit telle
+    que Partner Center l'affiche (Gestion des produits → Identité du produit).
+    Le Store refuse tout package dont l'identité ne correspond pas.
+  - VERSION : version à 4 composants (1.7.4 → 1.7.4.0).
+
+  L'application est une application de bureau « full trust » (Desktop Bridge) :
+  même binaire, mêmes DLL et ressources que l'installeur GitHub, dans la même
+  arborescence (handy.exe à la racine, resources\ à côté).
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  IgnorableNamespaces="uap rescap desktop">
+
+  <Identity
+    Name="{{IDENTITY_NAME}}"
+    Publisher="{{PUBLISHER}}"
+    Version="{{VERSION}}"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>OCADE Dictée</DisplayName>
+    <PublisherDisplayName>{{PUBLISHER_DISPLAY_NAME}}</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <!-- Windows 10 1809 minimum : StartupTask et API Store disponibles. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="fr-FR" />
+  </Resources>
+
+  <Applications>
+    <Application Id="OcadeDictee" Executable="handy.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="OCADE Dictée"
+        Description="Dictée vocale en français, entièrement hors ligne : parlez, le texte s'écrit là où se trouve votre curseur."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <!-- Pas de Square310x310Logo : il exigerait aussi un Wide310x150Logo, absent des icônes. -->
+        <uap:DefaultTile Square71x71Logo="Assets\Square71x71Logo.png" />
+      </uap:VisualElements>
+      <Extensions>
+        <!--
+          Démarrage automatique : pour une app packagée, la clé Run du registre
+          est virtualisée et sans effet. Cette tâche est activée/désactivée par
+          l'application (réglage « Lancer au démarrage », store_channel.rs) ;
+          l'utilisateur garde la main dans Paramètres → Applications → Démarrage.
+          TaskId doit rester égal à STARTUP_TASK_ID côté Rust.
+        -->
+        <desktop:Extension Category="windows.startupTask" Executable="handy.exe" EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask TaskId="OcadeDicteeStartup" Enabled="true" DisplayName="OCADE Dictée" />
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- Téléchargement des modèles et du moteur de résumé au premier lancement. -->
+    <Capability Name="internetClient" />
+    <!-- Application de bureau classique (raccourci clavier global, collage, micro via WASAPI). -->
+    <rescap:Capability Name="runFullTrust" />
+    <!-- Déclaré pour apparaître dans Confidentialité → Microphone et y être autorisé. -->
+    <DeviceCapability Name="microphone" />
+  </Capabilities>
+</Package>
