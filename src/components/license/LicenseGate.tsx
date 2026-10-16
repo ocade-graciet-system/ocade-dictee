@@ -89,22 +89,29 @@ const LicenseGate: React.FC<LicenseGateProps> = ({
             ? t("license.unavailable")
             : null;
 
+  // Abonnement déjà souscrit puis arrivé à échéance (le Store a communiqué une
+  // date passée) : on le dit ; sinon, premier abonnement, message neutre.
+  const lapsed =
+    status.expires_at !== null && status.expires_at * 1000 < Date.now();
+
   return (
-    <div className="h-screen w-screen flex flex-col items-center justify-center gap-6 p-8 text-center select-none">
-      <HandyTextLogo width={200} />
-      <h1 className="text-lg font-semibold">{t("license.title")}</h1>
-      <p className="text-text/70 max-w-md">
-        {unreadable ? t("license.unavailable") : t("license.subtitle")}
-      </p>
-      {!unreadable && (
-        <p className="text-sm text-text/60 max-w-md">{t("license.expired")}</p>
-      )}
-      <div className="flex flex-col items-center gap-3 w-full max-w-md">
+    <div className="h-screen w-screen flex items-center justify-center p-8 select-none">
+      <div className="w-full max-w-[26rem] flex flex-col items-center text-center">
+        <HandyTextLogo width={180} />
+        <h1 className="mt-10 text-xl font-semibold">{t("license.title")}</h1>
+        <p className="mt-3 text-sm leading-relaxed text-text/70 text-pretty">
+          {unreadable
+            ? t("license.unavailable")
+            : lapsed
+              ? t("license.expired")
+              : t("license.subtitle")}
+        </p>
+
         <button
           type="button"
           disabled={busy !== null}
           onClick={() => void purchase()}
-          className="px-5 py-2 rounded bg-logo-primary text-white hover:bg-logo-primary/80 transition-colors disabled:opacity-60 disabled:cursor-default"
+          className="mt-8 w-56 px-5 py-2.5 rounded-md bg-logo-primary text-white font-medium hover:bg-logo-primary/80 transition-colors disabled:opacity-60 disabled:cursor-default"
         >
           {busy === "purchase"
             ? t("license.purchasing")
@@ -114,19 +121,22 @@ const LicenseGate: React.FC<LicenseGateProps> = ({
           type="button"
           disabled={busy !== null}
           onClick={() => void recheck()}
-          className="text-xs text-text/60 underline hover:text-text transition-colors disabled:cursor-default"
+          className="mt-3 text-xs text-text/60 underline underline-offset-2 hover:text-text transition-colors disabled:cursor-default"
         >
           {busy === "check" ? t("license.checking") : t("license.recheck")}
         </button>
-        <p className="text-xs text-text/50 max-w-md">{t("license.signedIn")}</p>
-        {feedbackText && (
-          <p className="text-sm text-red-500 max-w-md">{feedbackText}</p>
-        )}
-        {status.detail && (
-          <p className="text-xs text-text/40 break-words max-w-md">
-            {status.detail}
+
+        <div className="mt-6 min-h-10 flex flex-col items-center gap-2">
+          {feedbackText && (
+            <p className="text-sm text-red-500 text-pretty">{feedbackText}</p>
+          )}
+          <p className="text-xs text-text/45 text-pretty">
+            {t("license.signedIn")}
           </p>
-        )}
+          {status.detail && (
+            <p className="text-xs text-text/35 break-words">{status.detail}</p>
+          )}
+        </div>
       </div>
     </div>
   );
