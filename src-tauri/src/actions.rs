@@ -472,6 +472,23 @@ impl ShortcutAction for TranscribeAction {
         let start_time = Instant::now();
         debug!("TranscribeAction::start called for binding: {}", binding_id);
 
+        // Licence (mode strict) : l'application vit masquée dans la barre
+        // système, un écran de blocage ne suffit pas. On refuse ici, avant tout
+        // enregistrement ; le coordinateur, voyant qu'aucun enregistrement n'a
+        // commencé, reste au repos et n'appellera pas `stop`.
+        if crate::licence::ensure_allowed(app).is_err() {
+            warn!("Dictée refusée : licence requise (mode strict)");
+            let _ = app.emit(
+                "recording-error",
+                RecordingErrorEvent {
+                    error_type: "license_required".to_string(),
+                    detail: None,
+                },
+            );
+            crate::show_main_window(app);
+            return;
+        }
+
         // En tout premier, avant qu'une fenêtre n'ait pu s'interposer.
         crate::focus::remember_dictation_target();
 

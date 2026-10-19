@@ -18,8 +18,10 @@ import {
 } from "./components/onboarding";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
 import { ForcedUpdater } from "./components/update-checker";
+import { LicenceBanner, LicenceGate } from "./components/licence";
 import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
+import { useLicenceStore } from "./stores/licenceStore";
 import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 
@@ -54,10 +56,20 @@ function App() {
     (state) => state.refreshOutputDevices,
   );
   const hasCompletedPostOnboardingInit = useRef(false);
+  const initLicence = useLicenceStore((s) => s.initialize);
+  // Mode strict sans licence valide : l'écran de blocage remplace tout.
+  const licenceEnforced = useLicenceStore((s) => s.view?.enforced ?? false);
 
   useEffect(() => {
     checkOnboardingStatus();
+    void initLicence();
   }, []);
+
+  // L'application démarre masquée : si la licence bloque, on montre la
+  // fenêtre pour que l'écran de blocage soit vu.
+  useEffect(() => {
+    if (licenceEnforced) void commands.showMainWindowCommand();
+  }, [licenceEnforced]);
 
   // Initialize RTL direction when language changes
   useEffect(() => {
@@ -91,6 +103,10 @@ function App() {
           defaultValue: t("errors.micPermissionDenied.generic"),
         });
         toast.error(t("errors.micPermissionDeniedTitle"), { description });
+      } else if (error_type === "license_required") {
+        toast.error(t("licence.toast.requiredTitle"), {
+          description: t("licence.toast.requiredDescription"),
+        });
       } else if (error_type === "no_input_device") {
         toast.error(t("errors.noInputDeviceTitle"), {
           description: t("errors.noInputDevice"),
@@ -299,7 +315,9 @@ function App() {
   // stable wrapper around this node, so crossing between onboarding steps and
   // the main app never remounts it (which would drop any in-flight toast).
   let content: ReactNode;
-  if (onboardingStep === "accessibility") {
+  if (licenceEnforced) {
+    content = <LicenceGate />;
+  } else if (onboardingStep === "accessibility") {
     content = (
       <AccessibilityOnboarding onComplete={handleAccessibilityComplete} />
     );
@@ -316,6 +334,13 @@ function App() {
         dir={direction}
         className="h-screen flex flex-col select-none cursor-default"
       >
+        <LicenceBanner
+          onOpen={
+            currentSection === "licence"
+              ? undefined
+              : () => setCurrentSection("licence")
+          }
+        />
         {/* Main content area that takes remaining space */}
         <div className="flex-1 flex overflow-hidden">
           <Sidebar

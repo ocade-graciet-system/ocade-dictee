@@ -706,6 +706,56 @@ async importModelFile(path: string) : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * État courant de la licence.
+ */
+async licenceGetState() : Promise<LicenceView> {
+    return await TAURI_INVOKE("licence_get_state");
+},
+/**
+ * Active une clé sur ce poste.
+ */
+async licenceActivate(key: string) : Promise<Result<LicenceView, LicenceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("licence_activate", { key }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * « Vérifier maintenant » : renouvelle tout de suite le jeton.
+ */
+async licenceRefresh() : Promise<Result<LicenceView, LicenceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("licence_refresh") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Retire la clé de ce poste et libère son emplacement.
+ */
+async licenceRemove() : Promise<Result<LicenceView, LicenceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("licence_remove") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Remplace la clé de ce poste par une autre.
+ */
+async licenceChange(key: string) : Promise<Result<LicenceView, LicenceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("licence_change", { key }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async updateMicrophoneMode(alwaysOn: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("update_microphone_mode", { alwaysOn }) };
@@ -1044,7 +1094,7 @@ async summaryStatus() : Promise<SummaryStatus> {
 },
 /**
  * Checks if the Mac is a laptop by detecting battery presence
- * 
+ *
  * This uses pmset to check for battery information.
  * Returns true if a battery is detected (laptop), false otherwise (desktop)
  */
@@ -1245,6 +1295,105 @@ export type ImplementationChangeResult = { success: boolean;
 reset_bindings: string[] }
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
+/**
+ * Erreur renvoyée à l'interface : un code stable, traduit côté front.
+ */
+export type LicenceError = { 
+/**
+ * `invalid_key_format`, `unknown_key`, `revoked`, `archived`, `expired`,
+ * `not_activated`, `seats_full`, `release_quota_exceeded`, `rate_limited`,
+ * `internal_error`, `network`, `invalid_response`, `no_fingerprint`,
+ * `no_key`, `licence_required`.
+ */
+code: string; seats_used: number | null; seats_max: number | null; expired_at: number | null; 
+/**
+ * Détail technique (en anglais), pour le support.
+ */
+detail: string | null }
+/**
+ * Mode d'application, piloté par le serveur.
+ */
+export type LicenceMode = 
+/**
+ * L'état s'affiche, rien n'est bloqué.
+ */
+"soft" | 
+/**
+ * Sans licence valide, la dictée est bloquée.
+ */
+"strict"
+/**
+ * État de la licence sur ce poste.
+ */
+export type LicenceState = 
+/**
+ * Build de développement : licence ignorée.
+ */
+"development" | 
+/**
+ * Aucune clé activée sur ce poste.
+ */
+"not_activated" | "active" | 
+/**
+ * Échéance à 30 jours ou moins.
+ */
+"expiring_soon" | 
+/**
+ * Échéance à 7 jours ou moins.
+ */
+"expiring_critical" | 
+/**
+ * Jeton encore valide, mais la dernière vérification a échoué.
+ */
+"offline_grace" | 
+/**
+ * Jeton périmé sans réponse du serveur (plus de 14 jours hors ligne).
+ */
+"token_expired" | "revoked" | "archived" | "expired" | 
+/**
+ * Clé inconnue du serveur (supprimée).
+ */
+"unknown_key" | 
+/**
+ * La clé n'est plus activée sur ce poste (poste libéré, autre machine).
+ */
+"not_activated_here" | 
+/**
+ * Jeton illisible ou de signature invalide.
+ */
+"invalid"
+/**
+ * Vue complète, envoyée telle quelle à l'interface.
+ */
+export type LicenceView = { state: LicenceState; mode: LicenceMode; 
+/**
+ * L'état bloquerait la dictée en mode strict.
+ */
+blocking: boolean; 
+/**
+ * La dictée est **effectivement** bloquée : état bloquant et mode strict.
+ */
+enforced: boolean; 
+/**
+ * Quatre derniers symboles de la clé.
+ */
+key_suffix: string | null; 
+/**
+ * Échéance de la licence (secondes Unix) ; `None` : sans échéance ou inconnue.
+ */
+expires_at: number | null; 
+/**
+ * Jours restants avant l'échéance, arrondis au jour supérieur.
+ */
+days_left: number | null; 
+/**
+ * Fin de validité du jeton : date limite de reconnexion hors ligne.
+ */
+token_expires_at: number | null; seats_max: number | null; seats_used: number | null; hostname: string | null; last_check_at: number | null; 
+/**
+ * Code du dernier refus du serveur, s'il y en a un.
+ */
+refusal: string | null }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
