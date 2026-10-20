@@ -29,6 +29,30 @@ comportement (contrat de l'API, codes d'erreur, format du jeton).
 - État local : `licence.json` dans le dossier de données (clé, jeton, dernier refus,
   dernier mode, plus grande heure vue, qui ne recule jamais).
 
+## Mises à jour pilotées par la supervision
+
+Le serveur de licences décide aussi de la **version** de chaque poste
+(`docs/versions-cadrage.md` du dépôt du serveur).
+
+- L'updater Tauri interroge
+  `https://licences-ocade-dictee.graciet.org/api/v1/update/{{target}}/{{arch}}/{{current_version}}`
+  (`tauri.conf.json`), au démarrage puis toutes les 6 h
+  (`src/components/update-checker/ForcedUpdater.tsx`).
+- Le jeton de licence part en `Authorization: Bearer …`. Il permet au serveur
+  d'appliquer la version imposée sur la clé, sinon celle de son groupe, sinon la
+  stable. Sans jeton, le poste reçoit la stable. Le jeton **n'est jamais envoyé à
+  GitHub** : le téléchargement repart avec des en-têtes vides, sans quoi l'updater
+  réutiliserait ceux de la vérification.
+- `allowDowngrades` : toute version différente de l'actuelle est installée, y
+  compris plus ancienne (retour arrière). Le serveur répond 204 quand le poste est
+  déjà sur la bonne version, ou tant qu'aucune stable n'est définie.
+- Pas de GitHub en secours : en cas de panne du serveur, aucune mise à jour, et
+  l'application continue de fonctionner. Un secours contournerait les versions
+  choisies.
+- **Première version pilotable.** Les versions antérieures interrogent encore
+  GitHub (`latest.json`). Dans la supervision, le **plancher** doit être cette
+  première version, pour qu'aucun poste n'y redescende.
+
 ## Clé publique de production
 
 `PRODUCTION_KEYS` contient la clé publique `k1` du serveur déployé

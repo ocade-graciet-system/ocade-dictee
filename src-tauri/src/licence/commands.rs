@@ -40,6 +40,13 @@ pub async fn licence_remove(
     manager.remove().await
 }
 
+/// Jeton de licence à présenter au serveur de mises à jour, s'il y en a un.
+#[tauri::command]
+#[specta::specta]
+pub fn licence_update_token(manager: State<'_, Arc<LicenceManager>>) -> Option<String> {
+    manager.update_token()
+}
+
 /// Remplace la clé de ce poste par une autre.
 #[tauri::command]
 #[specta::specta]

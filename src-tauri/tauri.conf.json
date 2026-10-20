@@ -82,7 +82,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYzNTJBN0ZDODM0OEVDQkIKUldTNzdFaUQvS2RTOHgrSytUcnU5eXdqbHVFZnFFMncvVnJqMjdtZjRWdERWNThSWW5nN2k5Qk8K",
       "endpoints": [
-        "https://github.com/ocade-graciet-system/ocade-dictee/releases/latest/download/latest.json"
+        "https://licences-ocade-dictee.graciet.org/api/v1/update/{{target}}/{{arch}}/{{current_version}}"
       ]
     }
   }

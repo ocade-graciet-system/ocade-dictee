@@ -78,7 +78,7 @@ Après une transcription (ou en rouvrant une entrée de l'historique), le bouton
 ## 9. Au quotidien
 
 - L'application se lance à l'ouverture de session, masquée ; son icône se trouve dans la barre de menus (en haut à droite). **Paramètres…** affiche la fenêtre des paramètres.
-- Les mises à jour sont automatiques : au lancement, puis toutes les 24 heures, jamais pendant une dictée. Un écran « Mise à jour vers la version X » s'affiche, puis l'application redémarre seule.
+- Les mises à jour sont automatiques : au lancement, puis toutes les 6 heures, jamais pendant une dictée. La version installée est celle choisie pour ce poste dans la supervision des licences (version stable, groupe de test ou version imposée), y compris une version plus ancienne en cas de retour arrière. Un écran « Mise à jour vers la version X » s'affiche, puis l'application redémarre seule.
 
 ## Désinstaller
 

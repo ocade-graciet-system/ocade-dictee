@@ -149,6 +149,13 @@ impl LicenceManager {
         })
     }
 
+    /// Jeton stocké, tel quel, pour la demande de mise à jour : le serveur de
+    /// licences s'en sert pour choisir la version de ce poste (version imposée,
+    /// groupe ou stable). `None` sans clé : le poste reçoit la stable.
+    pub fn update_token(&self) -> Option<String> {
+        self.lock().token.clone()
+    }
+
     /// La dictée est-elle autorisée maintenant ?
     pub fn is_allowed(&self) -> bool {
         !self.view().enforced
