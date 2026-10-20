@@ -6,6 +6,7 @@ import { SettingsGroup } from "../ui/SettingsGroup";
 import { Dialog } from "../ui/Dialog";
 import { useLicenceStore } from "@/stores/licenceStore";
 import { LicenceKeyForm } from "./LicenceKeyForm";
+import { ContactButton } from "./ContactButton";
 import {
   daysLabel,
   formatDate,
@@ -196,6 +197,15 @@ export const LicenceSettings: React.FC = () => {
               {t("licence.actions.enter")}
             </button>
           )}
+        </div>
+      </SettingsGroup>
+
+      <SettingsGroup title={t("licence.contact.title")}>
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+          <p className="max-w-xl flex-1 text-sm leading-relaxed text-text/70 text-pretty">
+            {t("licence.contact.help")}
+          </p>
+          <ContactButton />
         </div>
       </SettingsGroup>
 

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { CircleAlert, Info, TriangleAlert } from "lucide-react";
 import { useLicenceStore } from "@/stores/licenceStore";
 import { bannerFor } from "./format";
+import { ContactButton } from "./ContactButton";
 
 const TONES = {
   info: {
@@ -56,6 +57,7 @@ export const LicenceBanner: React.FC<LicenceBannerProps> = ({ onOpen }) => {
           {t("licence.actions.open")}
         </button>
       )}
+      <ContactButton variant="link" />
     </div>
   );
 };

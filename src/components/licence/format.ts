@@ -80,6 +80,31 @@ export function formatDateTime(seconds: number): string {
   });
 }
 
+/** Adresse de contact affichée aux utilisateurs pour toute question de licence. */
+export const CONTACT_EMAIL = "contact@ocadefusion.fr";
+
+/**
+ * Lien `mailto:` vers OCADE, avec un e-mail prérempli : ordinateur, suffixe de
+ * la clé, état et version, pour identifier le poste sans aller-retour.
+ */
+export function contactMailto(
+  t: TFunction,
+  view: LicenceView | null,
+  version: string,
+): string {
+  const body = t("licence.contact.body", {
+    computer: view?.hostname ?? "",
+    key: view?.key_suffix
+      ? `OCAD-…-${view.key_suffix}`
+      : t("licence.contact.noKey"),
+    state: view ? t(`licence.states.${view.state}`) : "",
+    version,
+    interpolation: { escapeValue: false },
+  });
+  const subject = t("licence.contact.subject");
+  return `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
 export function daysLabel(t: TFunction, days: number): string {
   if (days <= 0) return t("licence.days.none");
   if (days === 1) return t("licence.days.one");

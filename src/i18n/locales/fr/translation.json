@@ -819,20 +819,29 @@
     },
     "banner": {
       "notActivated": "OCADE Dictée n'est pas encore activé sur cet ordinateur. Saisissez la clé transmise par OCADE.",
-      "soon": "Votre licence arrive à échéance le {{date}}. Pensez à la renouveler auprès d'OCADE.",
-      "critical": "Votre licence expire le {{date}} : {{days}}. Contactez OCADE pour la renouveler.",
+      "soon": "Votre licence arrive à échéance le {{date}}. Pensez à la renouveler auprès d'OCADE (contact@ocadefusion.fr).",
+      "critical": "Votre licence expire le {{date}} : {{days}}. Contactez OCADE à contact@ocadefusion.fr pour la renouveler.",
       "offline": "Impossible de vérifier votre licence. Reconnectez-vous à Internet avant le {{date}}.",
-      "invalid": "Votre licence n'est pas valide : {{state}}. Ouvrez l'onglet Licence ou contactez OCADE."
+      "invalid": "Votre licence n'est pas valide : {{state}}. Ouvrez l'onglet Licence ou contactez OCADE à contact@ocadefusion.fr."
     },
     "gate": {
       "badge": "Licence",
       "title": "Licence requise",
       "subtitle": "Pour utiliser OCADE Dictée sur cet ordinateur, activez la clé de licence qui vous a été transmise par OCADE.",
-      "contact": "Une question ? Contactez OCADE, qui pourra vérifier votre licence."
+      "contact": "Une question ? Écrivez-nous à contact@ocadefusion.fr : nous vérifierons votre licence."
     },
     "privacy": {
       "title": "Données envoyées",
       "body": "Pour vérifier la licence, OCADE Dictée envoie la clé, une empreinte non réversible de cet ordinateur, son nom, son système et la version de l'application. L'adresse IP n'est conservée que sous une forme tronquée, pendant 12 mois. Aucun son ni aucun texte dicté n'est jamais transmis."
+    },
+    "contact": {
+      "title": "Assistance",
+      "help": "Une question sur votre licence, un renouvellement ou un changement d'ordinateur ? Écrivez à contact@ocadefusion.fr. Le bouton prépare un e-mail avec les informations utiles.",
+      "button": "Contacter OCADE",
+      "subject": "OCADE Dictée : ma licence",
+      "body": "Bonjour,\n\nJ'ai besoin d'aide pour ma licence OCADE Dictée.\n\nOrdinateur : {{computer}}\nClé : {{key}}\nÉtat : {{state}}\nVersion : {{version}}\n\nMerci.",
+      "noKey": "aucune",
+      "openFailed": "Votre messagerie n'a pas pu s'ouvrir. Écrivez à contact@ocadefusion.fr."
     },
     "toast": {
       "requiredTitle": "Licence requise",
@@ -840,21 +849,21 @@
     },
     "errors": {
       "invalid_key_format": "Cette clé n'est pas valide. Vérifiez qu'elle est saisie exactement comme reçue.",
-      "unknown_key": "Cette clé est inconnue. Vérifiez-la ou contactez OCADE.",
-      "revoked": "Cette clé a été désactivée. Contactez OCADE.",
-      "archived": "Cette clé a été désactivée. Contactez OCADE.",
-      "expired": "Cette clé a expiré. Contactez OCADE pour la renouveler.",
-      "expiredOn": "Cette clé a expiré le {{date}}. Contactez OCADE pour la renouveler.",
+      "unknown_key": "Cette clé est inconnue. Vérifiez-la ou contactez OCADE à contact@ocadefusion.fr.",
+      "revoked": "Cette clé a été désactivée. Contactez OCADE à contact@ocadefusion.fr.",
+      "archived": "Cette clé a été désactivée. Contactez OCADE à contact@ocadefusion.fr.",
+      "expired": "Cette clé a expiré. Contactez OCADE à contact@ocadefusion.fr pour la renouveler.",
+      "expiredOn": "Cette clé a expiré le {{date}}. Contactez OCADE à contact@ocadefusion.fr pour la renouveler.",
       "not_activated": "Cette clé n'est pas activée sur cet ordinateur. Saisissez-la à nouveau.",
-      "seats_full": "Tous les postes de cette clé sont déjà utilisés. Retirez-la d'un autre ordinateur ou contactez OCADE.",
-      "seatsFullCount": "Tous les postes de cette clé sont déjà utilisés ({{used}} sur {{max}}). Retirez-la d'un autre ordinateur ou contactez OCADE.",
-      "release_quota_exceeded": "Vous avez atteint le nombre de retraits autorisés pour cette clé. Contactez OCADE.",
+      "seats_full": "Tous les postes de cette clé sont déjà utilisés. Retirez-la d'un autre ordinateur ou contactez OCADE à contact@ocadefusion.fr.",
+      "seatsFullCount": "Tous les postes de cette clé sont déjà utilisés ({{used}} sur {{max}}). Retirez-la d'un autre ordinateur ou contactez OCADE à contact@ocadefusion.fr.",
+      "release_quota_exceeded": "Vous avez atteint le nombre de retraits autorisés pour cette clé. Contactez OCADE à contact@ocadefusion.fr.",
       "rate_limited": "Trop de tentatives. Réessayez dans quelques minutes.",
       "network": "Impossible de joindre le serveur de licences. Vérifiez votre connexion Internet.",
       "internal_error": "Le serveur de licences rencontre un problème. Réessayez plus tard.",
-      "invalid_response": "La réponse du serveur de licences n'a pas pu être vérifiée. Contactez OCADE.",
-      "no_fingerprint": "Cet ordinateur n'a pas pu être identifié. Contactez OCADE.",
-      "generic": "L'opération sur la licence a échoué. Réessayez ou contactez OCADE."
+      "invalid_response": "La réponse du serveur de licences n'a pas pu être vérifiée. Contactez OCADE à contact@ocadefusion.fr.",
+      "no_fingerprint": "Cet ordinateur n'a pas pu être identifié. Contactez OCADE à contact@ocadefusion.fr.",
+      "generic": "L'opération sur la licence a échoué. Réessayez ou contactez OCADE à contact@ocadefusion.fr."
     }
   },
   "whatsNew": {

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   bannerFor,
   checkChar,
+  contactMailto,
   daysLabel,
   formatKeyInput,
   isCompleteKey,
@@ -146,5 +147,16 @@ describe("bannerFor — rappels dans l'application", () => {
     expect(stateTone("offline_grace")).toBe("warning");
     expect(stateTone("not_activated")).toBe("neutral");
     expect(stateTone("unknown_key")).toBe("error");
+  });
+});
+
+describe("contactMailto — e-mail prérempli vers OCADE", () => {
+  test("destinataire, objet et informations du poste", () => {
+    const url = contactMailto(t, baseView, "1.8.0");
+    expect(url.startsWith("mailto:contact@ocadefusion.fr?subject=")).toBe(true);
+    const body = decodeURIComponent(url.split("&body=")[1] ?? "");
+    expect(body).toContain("3RCP");
+    expect(body).toContain("PC-TEST");
+    expect(body).toContain("1.8.0");
   });
 });

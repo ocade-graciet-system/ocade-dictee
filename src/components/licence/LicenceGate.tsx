@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import HandyTextLogo from "../icons/HandyTextLogo";
 import { useLicenceStore } from "@/stores/licenceStore";
 import { LicenceKeyForm } from "./LicenceKeyForm";
+import { ContactButton } from "./ContactButton";
 import { licenceErrorMessage } from "./format";
 
 /**
@@ -75,6 +76,9 @@ export const LicenceGate: React.FC = () => {
         <p className="mt-6 text-xs leading-relaxed text-text/45 text-pretty">
           {t("licence.gate.contact")}
         </p>
+        <div className="mt-2 text-text/70">
+          <ContactButton variant="link" />
+        </div>
       </div>
     </div>
   );
