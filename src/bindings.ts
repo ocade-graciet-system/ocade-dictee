@@ -365,6 +365,14 @@ async changeAppendTrailingSpaceSetting(enabled: boolean) : Promise<Result<null, 
     else return { status: "error", error: e  as any };
 }
 },
+async changeAiCleanupEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_ai_cleanup_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeLazyStreamCloseSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_lazy_stream_close_setting", { enabled }) };
@@ -623,6 +631,13 @@ async getAvailableModels() : Promise<Result<ModelInfo[], string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Classement des modèles français (banc d'essai) : rang et taux d'erreur,
+ * pour numéroter le sélecteur du pied de page.
+ */
+async getFrModelRanking() : Promise<FrModelRank[]> {
+    return await TAURI_INVOKE("get_fr_model_ranking");
 },
 async getModelInfo(modelId: string) : Promise<Result<ModelInfo | null, string>> {
     try {
@@ -1099,10 +1114,8 @@ async summaryStatus() : Promise<SummaryStatus> {
     return await TAURI_INVOKE("summary_status");
 },
 /**
- * Checks if the Mac is a laptop by detecting battery presence
- *
- * This uses pmset to check for battery information.
- * Returns true if a battery is detected (laptop), false otherwise (desktop)
+ * Stub implementation for non-macOS platforms
+ * Always returns false since laptop detection is macOS-specific
  */
 async isLaptop() : Promise<Result<boolean, string>> {
     try {
@@ -1170,7 +1183,14 @@ whats_new_last_seen_version?: string; selected_model?: string; onboarding_comple
  * pour que la voix de l'utilisateur ne parte pas dans le canal. Indépendant
  * de `mute_while_recording` (qui coupe la sortie audio).
  */
-mute_others_while_recording?: boolean; comm_mute_shortcut?: string; comm_mute_mode?: CommMuteMode; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path?: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; transcribe_gpu_device?: number; extra_recording_buffer_ms?: number; vad_enabled?: boolean; 
+mute_others_while_recording?: boolean; comm_mute_shortcut?: string; comm_mute_mode?: CommMuteMode; append_trailing_space?: boolean; 
+/**
+ * Nettoyage du texte dicté par l'IA locale (ponctuation, accords,
+ * hésitations), avec garde-fou : aucun mot n'est remplacé, ajouté ou
+ * supprimé en dehors de ces corrections (voir `summary::cleanup`).
+ * Activé par défaut, profils existants compris (clé absente = vrai).
+ */
+ai_cleanup_enabled?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path?: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; transcribe_gpu_device?: number; extra_recording_buffer_ms?: number; vad_enabled?: boolean; 
 /**
  * Which recording overlay to show: None / Minimal / Live. Streaming mode is
  * not gated on this — that follows model capability. Migrated from the old
@@ -1288,6 +1308,18 @@ export type FileTranscriptionResult = { path: string; content: string;
  * enregistrement a échoué (la transcription reste utilisable).
  */
 history_id: number | null }
+/**
+ * Une place du classement des modèles français.
+ */
+export type FrModelRank = { id: string; 
+/**
+ * 1 = meilleur.
+ */
+rank: number; 
+/**
+ * Taux d'erreur sur les mots (%), mesuré par le banc d'essai.
+ */
+wer: number }
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }

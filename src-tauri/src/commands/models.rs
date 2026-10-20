@@ -12,6 +12,14 @@ pub async fn get_available_models(
     Ok(model_manager.get_available_models())
 }
 
+/// Classement des modèles français (banc d'essai) : rang et taux d'erreur,
+/// pour numéroter le sélecteur du pied de page.
+#[tauri::command]
+#[specta::specta]
+pub fn get_fr_model_ranking() -> Vec<crate::managers::model::FrModelRank> {
+    crate::managers::model::fr_model_ranking()
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn get_model_info(

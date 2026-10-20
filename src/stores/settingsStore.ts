@@ -151,6 +151,8 @@ const settingUpdaters: {
     commands.changeCommMuteModeSetting(value as CommMuteMode),
   append_trailing_space: (value) =>
     commands.changeAppendTrailingSpaceSetting(value as boolean),
+  ai_cleanup_enabled: (value) =>
+    commands.changeAiCleanupEnabledSetting(value as boolean),
   log_level: (value) => commands.setLogLevel(value as any),
   app_language: (value) => commands.changeAppLanguageSetting(value as string),
   theme: (value) => commands.changeThemeSetting(value as string),

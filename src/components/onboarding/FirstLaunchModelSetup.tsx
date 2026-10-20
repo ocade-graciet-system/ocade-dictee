@@ -4,8 +4,12 @@ import HandyTextLogo from "../icons/HandyTextLogo";
 import { ProgressBar } from "../shared";
 import { useModelStore } from "../../stores/modelStore";
 
-/** Identifiant du modèle unique — égal à DEFAULT_FR_MODEL_ID (src-tauri/src/managers/model.rs). */
-export const DEFAULT_FR_MODEL_ID = "whisper-distil-fr-dec2-q5_0";
+/**
+ * Modèle téléchargé au premier lancement : le n° 1 du classement FR, égal à
+ * DEFAULT_FR_MODEL_ID (src-tauri/src/managers/model.rs).
+ */
+export const DEFAULT_FR_MODEL_ID =
+  "handy-computer/cohere-transcribe-03-2026-gguf/cohere-transcribe-03-2026-Q5_K_M.gguf";
 
 interface FirstLaunchModelSetupProps {
   onReady: () => void;
@@ -101,7 +105,7 @@ const FirstLaunchModelSetup: React.FC<FirstLaunchModelSetupProps> = ({
     void activate();
   }, [activating]);
 
-  // Ne re-télécharger (512 Mo) que si le fichier manque encore : après un échec
+  // Ne re-télécharger (1,7 Go) que si le fichier manque encore : après un échec
   // d'activation, seule l'activation est retentée.
   const handleRetry = () => {
     setFailed(null);

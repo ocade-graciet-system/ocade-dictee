@@ -444,6 +444,12 @@ pub struct AppSettings {
     pub comm_mute_mode: CommMuteMode,
     #[serde(default = "default_append_trailing_space")]
     pub append_trailing_space: bool,
+    /// Nettoyage du texte dicté par l'IA locale (ponctuation, accords,
+    /// hésitations), avec garde-fou : aucun mot n'est remplacé, ajouté ou
+    /// supprimé en dehors de ces corrections (voir `summary::cleanup`).
+    /// Activé par défaut, profils existants compris (clé absente = vrai).
+    #[serde(default = "default_ai_cleanup_enabled")]
+    pub ai_cleanup_enabled: bool,
     #[serde(default = "default_app_language")]
     pub app_language: String,
     #[serde(default = "default_theme")]
@@ -525,6 +531,10 @@ fn default_autostart_enabled() -> bool {
 }
 
 fn default_append_trailing_space() -> bool {
+    true
+}
+
+fn default_ai_cleanup_enabled() -> bool {
     true
 }
 
@@ -983,6 +993,7 @@ pub fn get_default_settings() -> AppSettings {
         comm_mute_shortcut: "ctrl+alt+shift+m".to_string(),
         comm_mute_mode: CommMuteMode::PushToMute,
         append_trailing_space: default_append_trailing_space(),
+        ai_cleanup_enabled: default_ai_cleanup_enabled(),
         app_language: default_app_language(),
         theme: default_theme(),
         experimental_enabled: false,
@@ -1751,6 +1762,7 @@ mod tests {
     fn defaults_are_locked_and_adjustable_defaults_are_on() {
         let s = get_default_settings();
         assert!(s.start_hidden && s.autostart_enabled && s.append_trailing_space);
+        assert!(s.ai_cleanup_enabled, "nettoyage par IA actif par défaut");
         assert!(s.audio_feedback && s.mute_while_recording && s.push_to_talk);
         assert_eq!(s.history_limit, 0);
         assert_eq!(s.model_unload_timeout, ModelUnloadTimeout::Never);

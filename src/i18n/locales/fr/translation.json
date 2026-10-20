@@ -22,7 +22,7 @@
   "onboarding": {
     "firstLaunch": {
       "title": "Préparation d'OCADE Dictée",
-      "subtitle": "Le modèle de reconnaissance vocale française (512 Mo) se télécharge une seule fois. Ensuite, tout fonctionne hors ligne.",
+      "subtitle": "Le modèle de reconnaissance vocale française (1,7 Go) se télécharge une seule fois. Ensuite, tout fonctionne hors ligne.",
       "downloading": "Téléchargement… {{percentage}} % ({{speed}} Mo/s)",
       "verifying": "Vérification du fichier…",
       "activating": "Activation du modèle…",
@@ -178,7 +178,10 @@
   "footer": {
     "model": {
       "switch": "Changer de modèle de transcription",
-      "recommended": "Recommandé : le plus précis et le plus rapide du comparatif",
+      "recommended": "Recommandé : n° 1 du classement, le plus précis en français",
+      "rankingTitle": "Classés du plus précis au moins précis (banc d’essai français)",
+      "rankHint": "N° {{rank}} du classement : {{wer}} % de mots erronés sur 77 minutes de français (phrases lues, livres audio, débats)",
+      "errorRate": "{{wer}} %",
       "loading": "Chargement…",
       "imported": "Modèle importé par vous",
       "size": "{{size}} Mo",
@@ -267,6 +270,10 @@
       "pushToTalk": {
         "label": "Appuyer pour parler",
         "description": "Maintenez pour enregistrer, relâchez pour arrêter"
+      },
+      "aiCleanup": {
+        "label": "Nettoyer le texte avec l’IA",
+        "description": "Après chaque dictée, l’IA de l’ordinateur corrige la ponctuation, les accords et retire les hésitations, sans jamais reformuler : au moindre doute, le texte dicté est collé tel quel. Ajoute 2 à 4 secondes par dictée. Au premier usage, l’IA (2 Go) se télécharge en arrière-plan. Rien ne quitte l’ordinateur."
       }
     },
     "models": {

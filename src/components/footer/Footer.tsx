@@ -6,7 +6,7 @@ import { Check, ChevronUp, Download, FileInput, Star, X } from "lucide-react";
 import { toast } from "sonner";
 import { ProgressBar } from "../shared";
 import { useModelStore } from "@/stores/modelStore";
-import type { ModelInfo } from "@/bindings";
+import { commands, type FrModelRank, type ModelInfo } from "@/bindings";
 
 /** Extensions acceptées par « Importer un fichier de modèle… » (même filtre côté Rust). */
 const MODEL_FILE_EXTENSIONS = ["bin", "gguf"];
@@ -16,7 +16,9 @@ const MODEL_FILE_EXTENSIONS = ["bin", "gguf"];
  * catalogue — téléchargeables depuis le menu s'ils ne le sont pas encore — et
  * les modèles importés par l'utilisateur depuis un fichier. Le choix est
  * persisté côté Rust (`set_active_model`), donc conservé au prochain
- * lancement. Étoile = modèle recommandé (comparatif FR).
+ * lancement. Les modèles sont numérotés selon le classement du banc d’essai
+ * français (`FR_MODEL_RANKING`) : 1 = le plus précis, modèle par défaut.
+ * Étoile = n° 1.
  */
 const ModelSwitcher: React.FC = () => {
   const { t } = useTranslation();
@@ -33,7 +35,17 @@ const ModelSwitcher: React.FC = () => {
   } = useModelStore();
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState<"switch" | "import" | null>(null);
+  const [ranking, setRanking] = useState<Record<string, FrModelRank>>({});
   const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    commands
+      .getFrModelRanking()
+      .then((list) =>
+        setRanking(Object.fromEntries(list.map((r) => [r.id, r]))),
+      )
+      .catch((e) => console.error("Failed to load model ranking:", e));
+  }, []);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -138,6 +150,50 @@ const ModelSwitcher: React.FC = () => {
         ? t("footer.model.importing")
         : current.name;
 
+  // Rang du classement (« 1. ») et taux d’erreur mesuré, sur toutes les lignes.
+  const rankLabel = (m: ModelInfo) => {
+    const r = ranking[m.id];
+    return (
+      <span
+        className="w-5 shrink-0 text-right tabular-nums text-text/50"
+        title={
+          r
+            ? t("footer.model.rankHint", {
+                rank: r.rank,
+                wer: r.wer.toLocaleString("fr-FR"),
+              })
+            : undefined
+        }
+      >
+        {r ? `${r.rank}.` : ""}
+      </span>
+    );
+  };
+
+  // Colonnes fixes (erreurs, taille, action) : les chiffres restent alignés
+  // d’une ligne à l’autre, que le modèle soit installé ou non.
+  const werLabel = (m: ModelInfo) => {
+    const r = ranking[m.id];
+    return (
+      <span className="w-12 shrink-0 text-right tabular-nums text-text/50">
+        {r
+          ? t("footer.model.errorRate", {
+              wer: r.wer.toLocaleString("fr-FR", {
+                minimumFractionDigits: 1,
+                maximumFractionDigits: 1,
+              }),
+            })
+          : ""}
+      </span>
+    );
+  };
+
+  const sizeLabel = (m: ModelInfo) => (
+    <span className="w-16 shrink-0 text-right whitespace-nowrap tabular-nums text-text/50">
+      {m.is_custom ? "" : t("footer.model.size", { size: m.size_mb })}
+    </span>
+  );
+
   const renderRow = (m: ModelInfo) => {
     const isDownloading = m.id in downloadingModels;
     const isVerifying = m.id in verifyingModels;
@@ -154,9 +210,13 @@ const ModelSwitcher: React.FC = () => {
           <Check
             className={`w-3 h-3 shrink-0 ${m.id === currentModel ? "" : "invisible"}`}
           />
+          {rankLabel(m)}
           <span className="flex-1 whitespace-nowrap">{m.name}</span>
           {m.is_recommended && star}
           {m.is_custom && importedBadge}
+          {werLabel(m)}
+          {sizeLabel(m)}
+          <span className="w-28 shrink-0" />
         </button>
       );
     }
@@ -168,7 +228,8 @@ const ModelSwitcher: React.FC = () => {
           className="w-full flex items-center gap-2 px-3 py-1.5 text-text/70"
         >
           <span className="w-3 shrink-0" />
-          <span className="whitespace-nowrap">{m.name}</span>
+          {rankLabel(m)}
+          <span className="flex-1 whitespace-nowrap">{m.name}</span>
           <ProgressBar
             size="small"
             className="ml-auto"
@@ -201,15 +262,15 @@ const ModelSwitcher: React.FC = () => {
         className="w-full flex items-center gap-2 px-3 py-1.5 text-text/60"
       >
         <span className="w-3 shrink-0" />
-        <span className="whitespace-nowrap">{m.name}</span>
+        {rankLabel(m)}
+        <span className="flex-1 whitespace-nowrap">{m.name}</span>
         {m.is_recommended && star}
-        <span className="ml-auto whitespace-nowrap tabular-nums">
-          {t("footer.model.size", { size: m.size_mb })}
-        </span>
+        {werLabel(m)}
+        {sizeLabel(m)}
         <button
           type="button"
           onClick={() => void download(m)}
-          className="shrink-0 flex items-center gap-1 rounded px-1.5 py-0.5 text-text hover:bg-mid-gray/20"
+          className="w-28 shrink-0 flex items-center justify-end gap-1 rounded px-1.5 py-0.5 text-text hover:bg-mid-gray/20"
         >
           <Download className="w-3 h-3" />
           <span>{t("footer.model.download")}</span>
@@ -233,7 +294,10 @@ const ModelSwitcher: React.FC = () => {
       </button>
 
       {menuOpen && (
-        <div className="absolute bottom-full left-0 mb-1 min-w-80 bg-background border border-mid-gray/80 rounded-md shadow-lg z-50 py-1">
+        <div className="absolute bottom-full left-0 mb-1 min-w-[34rem] bg-background border border-mid-gray/80 rounded-md shadow-lg z-50 py-1">
+          <div className="px-3 pt-1 pb-1.5 text-text/50">
+            {t("footer.model.rankingTitle")}
+          </div>
           {models.map(renderRow)}
           <div className="my-1 border-t border-mid-gray/20" />
           <button

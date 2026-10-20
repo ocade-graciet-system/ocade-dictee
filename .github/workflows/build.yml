@@ -105,6 +105,19 @@ jobs:
               const conf = JSON.parse(fs.readFileSync(p, "utf8"));
               conf.version = process.env.RELEASE_VERSION;
               fs.writeFileSync(p, JSON.stringify(conf, null, 2) + "\n");
+              // Même version côté Rust : CARGO_PKG_VERSION alimente la version
+              // envoyée au serveur de licences, l’infobulle de la barre des
+              // tâches et l’écran des nouveautés. Sans cela, une release
+              // v1.7.6 s’annonce « 1.7.1 » partout où Rust lit sa version.
+              const c = "src-tauri/Cargo.toml";
+              const cargo = fs.readFileSync(c, "utf8");
+              const patched = cargo.replace(
+                /^version = "[^"]*"/m,
+                `version = "${process.env.RELEASE_VERSION}"`,
+              );
+              if (patched === cargo && !cargo.includes(`version = "${process.env.RELEASE_VERSION}"`))
+                throw new Error("version introuvable dans src-tauri/Cargo.toml");
+              fs.writeFileSync(c, patched);
             '
           fi
           VERSION=$(grep -o '"version": "[^"]*"' src-tauri/tauri.conf.json | cut -d'"' -f4)

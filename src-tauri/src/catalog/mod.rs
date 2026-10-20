@@ -13,8 +13,6 @@
 //! `GgufHeaderProber` is the same shape with `None` where a header omits a key,
 //! which is why the two are interchangeable (the catalog is a baked probe).
 
-use std::collections::HashMap;
-
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 
@@ -43,9 +41,8 @@ struct CatalogModel {
     accuracy_score: Option<f32>,
     files: Vec<QuantFile>,
     default_quant: Option<String>,
-    recommended_rank: Option<u32>,
-    /// Part of the small curated onboarding set (badged "Recommended"). Distinct
-    /// from `recommended_rank`, which only orders the full list.
+    /// Part of the small curated onboarding set (badged "Recommended"). OCADE
+    /// orders its list by `FR_MODEL_RANKING` instead of the catalog rank.
     #[serde(default)]
     recommended: bool,
 }
@@ -92,7 +89,6 @@ impl From<CatalogModel> for ModelDescriptor {
             // catalog scores are 0–100; ModelInfo / the UI bars use 0.0–1.0.
             speed_score: m.speed_score.unwrap_or(0.0) / 100.0,
             accuracy_score: m.accuracy_score.unwrap_or(0.0) / 100.0,
-            recommended_rank: m.recommended_rank,
             recommended: m.recommended,
         }
     }
@@ -104,21 +100,6 @@ pub static CATALOG: Lazy<Vec<ModelDescriptor>> = Lazy::new(|| {
         .expect("bundled catalog.json is valid JSON matching the catalog schema");
     root.models.into_iter().map(ModelDescriptor::from).collect()
 });
-
-/// Editorial recommended rank keyed by descriptor id (the same id the model
-/// registry uses). Built once from the catalog.
-static RANK_BY_ID: Lazy<HashMap<String, u32>> = Lazy::new(|| {
-    CATALOG
-        .iter()
-        .filter_map(|d| d.recommended_rank.map(|r| (d.id.clone(), r)))
-        .collect()
-});
-
-/// Recommended rank for a model id (lower = higher priority). Returns
-/// `u32::MAX` for unranked/unknown ids so they sort last in an ascending sort.
-pub fn rank_of(model_id: &str) -> u32 {
-    RANK_BY_ID.get(model_id).copied().unwrap_or(u32::MAX)
-}
 
 #[cfg(test)]
 mod tests {
