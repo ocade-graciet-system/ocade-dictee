@@ -372,9 +372,6 @@ pub struct ModelDescriptor {
     pub default_quant: Option<String>,
     pub speed_score: f32,
     pub accuracy_score: f32,
-    /// Editorial sort priority across the whole catalog (lower = higher). Drives
-    /// list ordering; independent of `recommended`.
-    pub recommended_rank: Option<u32>,
     /// Whether this is part of the small curated set shown to new users in
     /// onboarding (and badged "Recommended"). A model can be ranked for ordering
     /// without being in this set.
