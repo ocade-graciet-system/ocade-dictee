@@ -22,7 +22,7 @@
   "onboarding": {
     "firstLaunch": {
       "title": "Préparation d'OCADE Dictée",
-      "subtitle": "Le modèle de reconnaissance vocale française (1,7 Go) se télécharge une seule fois. Ensuite, tout fonctionne hors ligne.",
+      "subtitle": "Le modèle de reconnaissance vocale française (0,8 Go) se télécharge une seule fois. Ensuite, tout fonctionne hors ligne.",
       "downloading": "Téléchargement… {{percentage}} % ({{speed}} Mo/s)",
       "verifying": "Vérification du fichier…",
       "activating": "Activation du modèle…",

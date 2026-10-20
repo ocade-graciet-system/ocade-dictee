@@ -60,3 +60,6 @@ blob-report/
 
 # Nix build output
 result
+
+# Modèle téléchargé par la CI pour l’installateur hors ligne
+src-tauri/offline-models/

@@ -595,6 +595,36 @@ jobs:
           assetNamePattern: ${{ steps.patch-release-name.outputs.platform }}
           args: ${{ inputs.build-args }}
 
+      # Installateur hors ligne (Windows, releases uniquement) : même application,
+      # avec le modèle par défaut (Canary 1B v2, 0,8 Go) dans les ressources
+      # (`offline-models`, lu par `ModelManager::bundled_path`). Pour les postes
+      # sans Internet au premier lancement. Publié À CÔTÉ de l'installateur
+      # normal, qui reste celui des mises à jour automatiques : sans les fichiers
+      # updater, ce second installateur ne gonfle pas chaque mise à jour.
+      - name: Installateur hors ligne (Windows, Canary inclus)
+        if: contains(inputs.platform, 'windows') && !contains(inputs.target, 'aarch64') && inputs.release-id != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.get-version.outputs.version }}
+          MODEL_FILE: canary-1b-v2-Q5_K_M.gguf
+          MODEL_URL: https://huggingface.co/handy-computer/canary-1b-v2-gguf/resolve/main/canary-1b-v2-Q5_K_M.gguf
+          # Empreinte publiée par Hugging Face (X-Linked-ETag) le 20/10/2026.
+          MODEL_SHA256: 9c3a893c93795438baf9b4b1c853c39b60316c3a0d259a3ba6e284712f5ddb71
+        run: |
+          set -euo pipefail
+          mkdir -p src-tauri/offline-models
+          curl -fL --retry 5 --retry-delay 10 -o "src-tauri/offline-models/$MODEL_FILE" "$MODEL_URL"
+          echo "$MODEL_SHA256  src-tauri/offline-models/$MODEL_FILE" | sha256sum -c -
+          bun run tauri build ${{ inputs.build-args }} \
+            --config '{"bundle":{"resources":{"offline-models":"offline-models"},"createUpdaterArtifacts":false}}'
+          setup=$(find src-tauri/target -path '*bundle/nsis/*-setup.exe' -newer "src-tauri/offline-models/$MODEL_FILE" | head -1)
+          test -n "$setup" || { echo "installateur hors ligne introuvable"; exit 1; }
+          out="OCADE.Dictee_${VERSION}_x64-setup-hors-ligne.exe"
+          cp "$setup" "$out"
+          ls -la "$out"
+          gh release upload "v${VERSION}" "$out" --clobber
+
       - name: Verify macOS dylib bundling
         if: inputs.target == 'x86_64-apple-darwin'
         shell: bash
