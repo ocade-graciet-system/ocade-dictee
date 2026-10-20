@@ -78,29 +78,91 @@ pub struct ModelInfo {
 
 const CHINESE_LANGUAGE_CODE: &str = "zh";
 
-/// Identifiant du modèle Whisper français distillé du fork OCADE (variant dec2,
-/// 2 couches de décodeur — le plus rapide). C'est le modèle par défaut (voir
-/// `settings::default_model`) et le modèle téléchargé au premier lancement par
-/// l'écran dédié du front (`FirstLaunchModelSetup`). Doit rester synchronisé avec
-/// l'entrée injectée dans le catalogue plus bas.
-pub const DEFAULT_FR_MODEL_ID: &str = "whisper-distil-fr-dec2-q5_0";
+/// Whisper français distillé (variant dec2, le plus rapide) : modèle par défaut
+/// jusqu'à la 1.7.x. Hors du classement, il reste utilisable par les
+/// installations qui l'ont déjà sur le disque (voir `get_available_models`).
+pub const LEGACY_FR_MODEL_ID: &str = "whisper-distil-fr-dec2-q5_0";
 
-/// Cohere Transcribe (GGUF du catalogue, accéléré Metal/Vulkan). Meilleur modèle
-/// du comparatif FR local (bench-fr, oct. 2026) : WER 3,8 % contre 5,3 % pour
-/// dec2, et plus rapide (190 ms vs 303 ms par phrase sur M4 Max). Badge
-/// « recommandé » dans le sélecteur du pied de page.
+/// Cohere Transcribe (GGUF du catalogue, accéléré Metal/Vulkan) : n° 1 du
+/// classement [`FR_MODEL_RANKING`]. Badge « recommandé » dans le sélecteur.
 pub const RECOMMENDED_FR_MODEL_ID: &str =
     "handy-computer/cohere-transcribe-03-2026-gguf/cohere-transcribe-03-2026-Q5_K_M.gguf";
 
-/// Modèles du catalogue que l'utilisateur peut choisir (sélecteur du pied de
-/// page). S'y ajoutent les modèles importés par l'utilisateur (voir
-/// [`IMPORTED_MODEL_ID_PREFIX`]). Tout autre identifiant dans le store est
-/// ramené à `DEFAULT_FR_MODEL_ID`.
-pub const SELECTABLE_MODEL_IDS: &[&str] = &[
-    RECOMMENDED_FR_MODEL_ID,
-    DEFAULT_FR_MODEL_ID,
-    "whisper-distil-fr-dec16-q5_0",
+/// Modèle des nouvelles installations (voir `settings::default_model`),
+/// téléchargé au premier lancement par l'écran dédié du front
+/// (`FirstLaunchModelSetup`) : le n° 1 du classement.
+pub const DEFAULT_FR_MODEL_ID: &str = RECOMMENDED_FR_MODEL_ID;
+
+/// Whisper large-v3 réentraîné en français (bofenghuang), version complète.
+pub const WHISPER_FR_LARGE_V3_MODEL_ID: &str = "whisper-large-v3-fr-q5_0";
+
+/// Une place du classement des modèles français.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct FrModelRank {
+    pub id: String,
+    /// 1 = meilleur.
+    pub rank: u32,
+    /// Taux d'erreur sur les mots (%), mesuré par le banc d'essai.
+    pub wer: f32,
+}
+
+/// Classement des modèles français, du meilleur au moins bon : banc d'essai
+/// du 20/10/2026 (bench-asr-fr), 397 énoncés et 77 min d'audio (FLEURS lu,
+/// MLS livres audio, VoxPopuli parole spontanée), moteur transcribe.cpp en
+/// Vulkan. C'est l'ordre du sélecteur, numéroté 1, 2, 3… Le premier est le
+/// modèle par défaut. WER mesuré en Q5 ; Parakeet v3 et Whisper Turbo sont
+/// servis en Q8_0 (quantification par défaut du catalogue), au moins aussi précis.
+pub const FR_MODEL_RANKING: &[(&str, f32)] = &[
+    (RECOMMENDED_FR_MODEL_ID, 4.46),
+    (
+        "handy-computer/canary-1b-v2-gguf/canary-1b-v2-Q5_K_M.gguf",
+        4.80,
+    ),
+    (
+        "handy-computer/Voxtral-Mini-3B-2507-gguf/Voxtral-Mini-3B-2507-Q5_K_M.gguf",
+        4.95,
+    ),
+    ("whisper-distil-fr-dec16-q5_0", 4.98),
+    ("handy-computer/orukeet-gguf/orukeet-Q5_K_M.gguf", 5.33),
+    (
+        "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q8_0.gguf",
+        5.35,
+    ),
+    (
+        "handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q5_K_M.gguf",
+        5.50,
+    ),
+    (WHISPER_FR_LARGE_V3_MODEL_ID, 5.52),
+    (
+        "handy-computer/parakeet-ultra-gguf/parakeet-ultra-Q5_K_M.gguf",
+        5.55,
+    ),
+    (
+        "handy-computer/whisper-large-v3-turbo-gguf/whisper-large-v3-turbo-Q8_0.gguf",
+        5.93,
+    ),
 ];
+
+/// Place d'un modèle dans [`FR_MODEL_RANKING`] (1 = meilleur), `None` hors classement.
+pub fn fr_rank(model_id: &str) -> Option<u32> {
+    FR_MODEL_RANKING
+        .iter()
+        .position(|(id, _)| *id == model_id)
+        .map(|i| i as u32 + 1)
+}
+
+/// Le classement, pour le sélecteur du front.
+pub fn fr_model_ranking() -> Vec<FrModelRank> {
+    FR_MODEL_RANKING
+        .iter()
+        .enumerate()
+        .map(|(i, (id, wer))| FrModelRank {
+            id: id.to_string(),
+            rank: i as u32 + 1,
+            wer: *wer,
+        })
+        .collect()
+}
 
 /// Préfixe du nom de fichier (donc de l'identifiant) des modèles importés par
 /// l'utilisateur via « Importer un fichier de modèle… ». Il distingue ces
@@ -110,10 +172,13 @@ pub const SELECTABLE_MODEL_IDS: &[&str] = &[
 /// préfixe reste, comme avant, invisible dans l'interface.
 pub const IMPORTED_MODEL_ID_PREFIX: &str = "import-";
 
-/// Un identifiant que l'utilisateur a le droit d'activer : un des modèles FR
-/// du catalogue, ou un modèle importé par lui.
+/// Un identifiant que l'utilisateur a le droit d'activer : un modèle du
+/// classement FR, l'ancien modèle par défaut, ou un modèle importé par lui.
+/// Tout autre identifiant dans le store est ramené à `DEFAULT_FR_MODEL_ID`.
 pub fn is_selectable_model_id(model_id: &str) -> bool {
-    SELECTABLE_MODEL_IDS.contains(&model_id) || model_id.starts_with(IMPORTED_MODEL_ID_PREFIX)
+    fr_rank(model_id).is_some()
+        || model_id == LEGACY_FR_MODEL_ID
+        || model_id.starts_with(IMPORTED_MODEL_ID_PREFIX)
 }
 
 /// Nom de fichier sous lequel un modèle importé est copié dans le dossier
@@ -185,7 +250,7 @@ fn check_imported_model_header(source: &Path) -> Result<()> {
 }
 
 /// Taille exacte du fichier `whisper-distil-fr-dec2-q5_0.bin` (sha256 e41b30e8…).
-pub const DEFAULT_FR_MODEL_SIZE_BYTES: u64 = 537_819_875;
+pub const LEGACY_FR_MODEL_SIZE_BYTES: u64 = 537_819_875;
 
 /// Adopte un fichier importé à la main sous son nom Hugging Face d'origine
 /// (`ggml-model-q5_0.bin`) comme le modèle FR du catalogue : renommage sur
@@ -607,7 +672,7 @@ impl ModelManager {
             fs::create_dir_all(&models_dir)?;
         }
 
-        if let Err(e) = adopt_legacy_fr_model_file(&models_dir, DEFAULT_FR_MODEL_SIZE_BYTES) {
+        if let Err(e) = adopt_legacy_fr_model_file(&models_dir, LEGACY_FR_MODEL_SIZE_BYTES) {
             warn!("Adoption du modèle FR hérité impossible: {}", e);
         }
 
@@ -793,17 +858,17 @@ impl ModelManager {
         // OCADE fork: French-distilled Whisper large-v3, **dec2** variant (2
         // decoder layers — the fastest distil). Hosted on Hugging Face
         // (bofenghuang), not blob.handy.computer; sha256 verified against the
-        // file actually served by the LFS CDN. This is the default FR model (see
-        // `DEFAULT_FR_MODEL_ID`), downloaded by the first-launch screen.
+        // file actually served by the LFS CDN. Default FR model until 1.7.x (see
+        // `LEGACY_FR_MODEL_ID`) : kept for installs that already have it.
         //
         // `supported_languages` is French despite the file carrying the
         // multilingual large-v3 vocab (n_vocab 51866): the distillation was
         // French-only, so the vocab overstates what the model actually
         // transcribes well. Don't "fix" it to the full Whisper language list.
         available_models.insert(
-            DEFAULT_FR_MODEL_ID.to_string(),
+            LEGACY_FR_MODEL_ID.to_string(),
             ModelInfo {
-                id: DEFAULT_FR_MODEL_ID.to_string(),
+                id: LEGACY_FR_MODEL_ID.to_string(),
                 name: "Whisper Distil French (dec2)".to_string(),
                 description: "Optimized for French. Fastest distil variant.".to_string(),
                 filename: "whisper-distil-fr-dec2-q5_0.bin".to_string(),
@@ -823,7 +888,7 @@ impl ModelManager {
                 accuracy_score: 0.80,
                 speed_score: 0.85,
                 supports_translation: false,
-                is_recommended: true,
+                is_recommended: false,
                 supported_languages: vec!["fr".to_string()],
                 supports_language_selection: false,
                 is_custom: false,
@@ -858,6 +923,41 @@ impl ModelManager {
                 engine_type: EngineType::TranscribeCpp,
                 accuracy_score: 0.90,
                 speed_score: 0.55,
+                supports_translation: false,
+                is_recommended: false,
+                supported_languages: vec!["fr".to_string()],
+                supports_language_selection: false,
+                is_custom: false,
+                supports_streaming: false,
+                supports_language_detection: false,
+            },
+        );
+
+        // OCADE fork: full French fine-tune of Whisper large-v3 (bofenghuang),
+        // n° 8 of `FR_MODEL_RANKING`. sha256 = the LFS object served by Hugging
+        // Face (X-Linked-ETag), checked against the downloaded file.
+        available_models.insert(
+            WHISPER_FR_LARGE_V3_MODEL_ID.to_string(),
+            ModelInfo {
+                id: WHISPER_FR_LARGE_V3_MODEL_ID.to_string(),
+                name: "Whisper Large v3 French".to_string(),
+                description: "Whisper large-v3 fine-tuned on French.".to_string(),
+                filename: "whisper-large-v3-fr-q5_0.bin".to_string(),
+                source: ModelSource::Url {
+                    url: "https://huggingface.co/bofenghuang/whisper-large-v3-french/resolve/main/ggml-model-q5_0.bin".to_string(),
+                    sha256: Some(
+                        "d8da7cb6cdadfac47829abf46fe8cd36fcfef06db5601bfd8acbcd40579010a5"
+                            .to_string(),
+                    ),
+                },
+                size_mb: 1031,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::TranscribeCpp,
+                accuracy_score: 0.88,
+                speed_score: 0.45,
                 supports_translation: false,
                 is_recommended: false,
                 supported_languages: vec!["fr".to_string()],
@@ -1307,14 +1407,15 @@ impl ModelManager {
     }
 
     pub fn get_available_models(&self) -> Vec<ModelInfo> {
-        // v1 clé en main (issue #2) : seuls les modèles FR retenus et les
-        // modèles importés par l'utilisateur sont exposés, et le badge
-        // « recommandé » ne va qu'au meilleur du comparatif.
+        // v1 clé en main : le classement FR (FR_MODEL_RANKING), l'ancien
+        // modèle par défaut s'il est déjà sur le disque, et les modèles
+        // importés. Le badge « recommandé » ne va qu'au n° 1.
         let mut list: Vec<ModelInfo> = {
             let models = self.available_models.lock().unwrap();
             models
                 .values()
                 .filter(|m| is_selectable_model_id(&m.id))
+                .filter(|m| m.id != LEGACY_FR_MODEL_ID || m.is_downloaded)
                 .cloned()
                 .map(|mut m| {
                     m.is_recommended = m.id == RECOMMENDED_FR_MODEL_ID;
@@ -1322,16 +1423,11 @@ impl ModelManager {
                 })
                 .collect()
         };
-        // Stable, reasonable order: catalog editorial rank first (lower = higher
-        // priority), then any other recommended model, then by accuracy, speed,
-        // and name. `ModelInfo` doesn't carry rank, so resolve it by id from the
-        // catalog here.
+        // Ordre du classement, puis les modèles hors classement par nom.
         list.sort_by(|a, b| {
-            crate::catalog::rank_of(&a.id)
-                .cmp(&crate::catalog::rank_of(&b.id))
-                .then((!a.is_recommended).cmp(&(!b.is_recommended)))
-                .then(b.accuracy_score.total_cmp(&a.accuracy_score))
-                .then(b.speed_score.total_cmp(&a.speed_score))
+            fr_rank(&a.id)
+                .unwrap_or(u32::MAX)
+                .cmp(&fr_rank(&b.id).unwrap_or(u32::MAX))
                 .then_with(|| a.name.cmp(&b.name))
         });
         list
@@ -2024,7 +2120,7 @@ impl ModelManager {
     /// URL primaire du modèle FR : asset de la pré-release `models-v1` de ce
     /// dépôt, servi par le CDN GitHub via une redirection 302 (issue #2).
     /// L'URL Hugging Face du catalogue reste le repli.
-    pub const DEFAULT_FR_MODEL_PRIMARY_URL: &str =
+    pub const LEGACY_FR_MODEL_PRIMARY_URL: &str =
         "https://github.com/ocade-graciet-system/ocade-dictee/releases/download/models-v1/whisper-distil-fr-dec2-q5_0.bin";
 
     /// Sources à essayer dans l'ordre pour `model_id` : miroir GitHub d'abord
@@ -2032,8 +2128,8 @@ impl ModelManager {
     /// le même fichier (même taille, même SHA-256), donc une reprise entamée
     /// sur l'une peut se terminer sur l'autre.
     fn download_candidates(model_id: &str, catalog_url: String) -> Vec<String> {
-        if model_id == DEFAULT_FR_MODEL_ID {
-            vec![Self::DEFAULT_FR_MODEL_PRIMARY_URL.to_string(), catalog_url]
+        if model_id == LEGACY_FR_MODEL_ID {
+            vec![Self::LEGACY_FR_MODEL_PRIMARY_URL.to_string(), catalog_url]
         } else {
             vec![catalog_url]
         }
@@ -2715,12 +2811,12 @@ mod tests {
         let catalog_url = "https://huggingface.co/bofenghuang/whisper-large-v3-french-distil-dec2/resolve/main/ggml-model-q5_0.bin";
 
         let candidates =
-            ModelManager::download_candidates(DEFAULT_FR_MODEL_ID, catalog_url.to_string());
+            ModelManager::download_candidates(LEGACY_FR_MODEL_ID, catalog_url.to_string());
 
         assert_eq!(
             candidates,
             vec![
-                ModelManager::DEFAULT_FR_MODEL_PRIMARY_URL.to_string(),
+                ModelManager::LEGACY_FR_MODEL_PRIMARY_URL.to_string(),
                 catalog_url.to_string(),
             ],
             "le modèle FR par défaut doit tenter la release GitHub puis Hugging Face"
@@ -2746,7 +2842,7 @@ mod tests {
         // Garde-fou de forme : l'URL primaire doit rester l'asset `models-v1` du
         // dépôt du fork. Une faute de frappe sur le tag ou le nom de fichier ne
         // se voit qu'au premier lancement d'une installation neuve, en 404.
-        let url = ModelManager::DEFAULT_FR_MODEL_PRIMARY_URL;
+        let url = ModelManager::LEGACY_FR_MODEL_PRIMARY_URL;
 
         assert!(
             url.starts_with(
@@ -2914,9 +3010,37 @@ mod tests {
     fn selectable_ids_cover_catalog_and_imported_models() {
         assert!(is_selectable_model_id(DEFAULT_FR_MODEL_ID));
         assert!(is_selectable_model_id(RECOMMENDED_FR_MODEL_ID));
+        assert!(is_selectable_model_id(LEGACY_FR_MODEL_ID));
+        for (id, _) in FR_MODEL_RANKING {
+            assert!(is_selectable_model_id(id), "{id}");
+        }
         assert!(is_selectable_model_id("import-mon-modele"));
         assert!(!is_selectable_model_id("small"));
         assert!(!is_selectable_model_id("mon-modele-depose-a-la-main"));
+    }
+
+    #[test]
+    fn fr_ranking_points_to_known_models_best_first() {
+        let catalog: HashSet<String> = crate::catalog::CATALOG
+            .iter()
+            .map(|d| d.id.clone())
+            .collect();
+        let injected = ["whisper-distil-fr-dec16-q5_0", WHISPER_FR_LARGE_V3_MODEL_ID];
+        let mut seen = HashSet::new();
+        for (id, _) in FR_MODEL_RANKING {
+            assert!(
+                catalog.contains(*id) || injected.contains(id),
+                "{id} : ni dans catalog.json ni injecté"
+            );
+            assert!(seen.insert(*id), "{id} classé deux fois");
+        }
+        assert!(
+            FR_MODEL_RANKING.windows(2).all(|w| w[0].1 <= w[1].1),
+            "classement trié par WER croissant"
+        );
+        assert_eq!(fr_rank(DEFAULT_FR_MODEL_ID), Some(1));
+        assert_eq!(fr_rank(LEGACY_FR_MODEL_ID), None);
+        assert_eq!(fr_model_ranking().len(), FR_MODEL_RANKING.len());
     }
 
     #[test]

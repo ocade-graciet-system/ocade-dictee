@@ -624,6 +624,13 @@ async getAvailableModels() : Promise<Result<ModelInfo[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Classement des modèles français (banc d'essai) : rang et taux d'erreur,
+ * pour numéroter le sélecteur du pied de page.
+ */
+async getFrModelRanking() : Promise<FrModelRank[]> {
+    return await TAURI_INVOKE("get_fr_model_ranking");
+},
 async getModelInfo(modelId: string) : Promise<Result<ModelInfo | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_model_info", { modelId }) };
@@ -1288,6 +1295,18 @@ export type FileTranscriptionResult = { path: string; content: string;
  * enregistrement a échoué (la transcription reste utilisable).
  */
 history_id: number | null }
+/**
+ * Une place du classement des modèles français.
+ */
+export type FrModelRank = { id: string; 
+/**
+ * 1 = meilleur.
+ */
+rank: number; 
+/**
+ * Taux d'erreur sur les mots (%), mesuré par le banc d'essai.
+ */
+wer: number }
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }

@@ -3376,6 +3376,168 @@
       "default_quant": "Q5_K_M",
       "recommended": false,
       "recommended_rank": null
+    },
+    {
+      "id": "handy-computer/orukeet-gguf",
+      "slug": "orukeet",
+      "name": "Orukeet",
+      "architecture": "parakeet",
+      "family": "parakeet",
+      "parameters": "0.6B",
+      "description": "Fast French-capable Parakeet model, 25 European languages.",
+      "base_model": "oruk/orukeet",
+      "license": "cc-by-sa-4.0",
+      "language_count": 25,
+      "languages": [
+        "bg",
+        "hr",
+        "cs",
+        "da",
+        "nl",
+        "en",
+        "et",
+        "fi",
+        "fr",
+        "de",
+        "el",
+        "hu",
+        "it",
+        "lv",
+        "lt",
+        "mt",
+        "pl",
+        "pt",
+        "ro",
+        "ru",
+        "sk",
+        "sl",
+        "es",
+        "sv",
+        "uk"
+      ],
+      "capabilities": {
+        "streaming": false,
+        "translate": false,
+        "lang_detect": true,
+        "timestamps": "token"
+      },
+      "speed_score": 79,
+      "accuracy_score": 88,
+      "files": [
+        {
+          "filename": "orukeet-Q4_K_M.gguf",
+          "quant": "Q4_K_M",
+          "size_bytes": 485425632
+        },
+        {
+          "filename": "orukeet-Q5_K_M.gguf",
+          "quant": "Q5_K_M",
+          "size_bytes": 548946400
+        },
+        {
+          "filename": "orukeet-Q6_K.gguf",
+          "quant": "Q6_K",
+          "size_bytes": 610342368
+        },
+        {
+          "filename": "orukeet-Q8_0.gguf",
+          "quant": "Q8_0",
+          "size_bytes": 739508704
+        },
+        {
+          "filename": "orukeet-F16.gguf",
+          "quant": "F16",
+          "size_bytes": 1255869984
+        },
+        {
+          "filename": "orukeet-F32.gguf",
+          "quant": "F32",
+          "size_bytes": 2508435744
+        }
+      ],
+      "default_quant": "Q5_K_M",
+      "recommended": false
+    },
+    {
+      "id": "handy-computer/parakeet-ultra-gguf",
+      "slug": "parakeet-ultra",
+      "name": "Parakeet Ultra",
+      "architecture": "parakeet",
+      "family": "parakeet",
+      "parameters": "0.6B",
+      "description": "Fast French-capable Parakeet model, 25 European languages.",
+      "base_model": "moondream/parakeet-ultra",
+      "license": "cc-by-4.0",
+      "language_count": 25,
+      "languages": [
+        "en",
+        "de",
+        "fr",
+        "es",
+        "it",
+        "pt",
+        "ru",
+        "uk",
+        "hr",
+        "sl",
+        "lv",
+        "lt",
+        "et",
+        "fi",
+        "sv",
+        "da",
+        "nl",
+        "pl",
+        "cs",
+        "sk",
+        "hu",
+        "ro",
+        "bg",
+        "el",
+        "mt"
+      ],
+      "capabilities": {
+        "streaming": false,
+        "translate": false,
+        "lang_detect": true,
+        "timestamps": "token"
+      },
+      "speed_score": 79,
+      "accuracy_score": 88,
+      "files": [
+        {
+          "filename": "parakeet-ultra-Q4_K_M.gguf",
+          "quant": "Q4_K_M",
+          "size_bytes": 486280096
+        },
+        {
+          "filename": "parakeet-ultra-Q5_K_M.gguf",
+          "quant": "Q5_K_M",
+          "size_bytes": 549800864
+        },
+        {
+          "filename": "parakeet-ultra-Q6_K.gguf",
+          "quant": "Q6_K",
+          "size_bytes": 611196832
+        },
+        {
+          "filename": "parakeet-ultra-Q8_0.gguf",
+          "quant": "Q8_0",
+          "size_bytes": 740363168
+        },
+        {
+          "filename": "parakeet-ultra-F16.gguf",
+          "quant": "F16",
+          "size_bytes": 1256724448
+        },
+        {
+          "filename": "parakeet-ultra-F32.gguf",
+          "quant": "F32",
+          "size_bytes": 2509290240
+        }
+      ],
+      "default_quant": "Q5_K_M",
+      "recommended": false
     }
   ]
 }

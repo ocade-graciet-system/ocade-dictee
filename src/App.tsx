@@ -246,10 +246,15 @@ function App() {
           }
         }
 
-        // Le modèle unique doit être sur le disque : sinon on repasse par
-        // l'écran de premier lancement (fichier supprimé, disque nettoyé…).
+        // Le modèle choisi doit être sur le disque : sinon on repasse par
+        // l'écran de premier lancement (fichier supprimé, disque nettoyé…),
+        // qui télécharge le modèle par défaut. Un utilisateur resté sur un
+        // ancien modèle déjà téléchargé n'a donc rien à télécharger.
         try {
-          const info = await commands.getModelInfo(DEFAULT_FR_MODEL_ID);
+          const selected = await commands.getCurrentModel();
+          const info = await commands.getModelInfo(
+            selected.status === "ok" ? selected.data : DEFAULT_FR_MODEL_ID,
+          );
           if (info.status === "error") {
             // Symétrique du `catch` ci-dessous : sans trace, une commande en
             // échec laisse croire que le modèle est bien là.
