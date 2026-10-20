@@ -82,7 +82,7 @@ export const LicenceSettings: React.FC = () => {
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
       <SettingsGroup title={t("licence.title")}>
-        <Row label={t("licence.title")}>
+        <Row label={t("licence.fields.state")}>
           <span className="inline-flex items-center gap-2">
             <span
               className={`h-2.5 w-2.5 shrink-0 rounded-full ${TONE_DOT[tone]}`}

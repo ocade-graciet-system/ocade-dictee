@@ -775,6 +775,7 @@
       "invalid": "Licence non reconnue"
     },
     "fields": {
+      "state": "État",
       "key": "Clé",
       "expires": "Échéance",
       "noExpiry": "Sans échéance",
