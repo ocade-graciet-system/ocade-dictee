@@ -7,6 +7,7 @@ import { OutputDeviceSelector } from "../OutputDeviceSelector";
 import { CustomWords } from "../CustomWords";
 import { AppendTrailingSpace } from "../AppendTrailingSpace";
 import { AiCleanupToggle } from "../AiCleanupToggle";
+import { CopyLastTranscription } from "../CopyLastTranscription";
 import { AudioFeedbackToggle } from "../AudioFeedbackToggle";
 import { StartHidden } from "../StartHidden";
 import { AutostartToggle } from "../AutostartToggle";
@@ -18,6 +19,7 @@ export const GeneralSettings: React.FC = () => {
     <div className="max-w-3xl w-full mx-auto space-y-6">
       <SettingsGroup title={t("settings.general.title")}>
         <ShortcutPresetSelector descriptionMode="tooltip" grouped={true} />
+        <CopyLastTranscription descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
       <SettingsGroup title={t("settings.sound.title")}>
         <MicrophoneSelector descriptionMode="tooltip" grouped={true} />
