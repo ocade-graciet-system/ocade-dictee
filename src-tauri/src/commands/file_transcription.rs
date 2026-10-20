@@ -17,6 +17,10 @@ use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 use tauri_specta::Event;
 
+/// Refus en mode strict sans licence valide (affiché tel quel par l'onglet Fichier).
+const LICENCE_REQUIRED: &str =
+    "Une licence valide est nécessaire pour transcrire. Ouvrez l'onglet Licence.";
+
 /// Tronçon = 30 s à 16 kHz (fréquence attendue par le pipeline de transcription).
 const CHUNK_LEN_SAMPLES: usize = 30 * 16_000;
 /// Chevauchement entre tronçons consécutifs.
@@ -129,6 +133,7 @@ pub async fn transcribe_audio_file(
     file_history: State<'_, Arc<FileHistoryManager>>,
     path: String,
 ) -> Result<FileTranscriptionResult, String> {
+    crate::licence::ensure_allowed(&app).map_err(|_| LICENCE_REQUIRED.to_string())?;
     // Protection anti-ré-entrance : un seul run de transcription de fichier à
     // la fois. Sans elle, un 2e appel remettrait `CANCEL_FILE_TRANSCRIPTION`
     // à `false` et annulerait silencieusement l'annulation du run en cours.
@@ -175,6 +180,7 @@ pub async fn transcribe_url(
     file_history: State<'_, Arc<FileHistoryManager>>,
     url: String,
 ) -> Result<FileTranscriptionResult, String> {
+    crate::licence::ensure_allowed(&app).map_err(|_| LICENCE_REQUIRED.to_string())?;
     validate_media_url(&url)?;
 
     // Même slot d'exécution unique que `transcribe_audio_file` : le

@@ -12,6 +12,7 @@ mod external_tools;
 mod focus;
 mod helpers;
 mod input;
+mod licence;
 mod llm_client;
 mod managers;
 mod overlay;
@@ -98,7 +99,7 @@ fn build_console_filter() -> env_filter::Filter {
     builder.build()
 }
 
-fn show_main_window(app: &AppHandle) {
+pub(crate) fn show_main_window(app: &AppHandle) {
     if let Some(main_window) = app.get_webview_window("main") {
         if let Err(e) = main_window.unminimize() {
             log::error!("Failed to unminimize webview window: {}", e);
@@ -301,6 +302,17 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         log::warn!("Purge de l'historique impossible: {}", e);
     }
     app_handle.manage(file_history_manager);
+
+    // Licence : état chargé tout de suite (le blocage en mode strict en dépend
+    // dès le premier raccourci), vérification réseau en tâche de fond.
+    match licence::LicenceManager::new(app_handle) {
+        Ok(manager) => {
+            let manager = Arc::new(manager);
+            app_handle.manage(manager.clone());
+            manager.start_background();
+        }
+        Err(e) => log::error!("Licence indisponible : {e}"),
+    }
 
     // Compte-rendu local (plan 09) : moteur llama.cpp lancé à la demande,
     // survivant d'une fermeture brutale tué au démarrage, arrêt après 10 min
@@ -715,6 +727,11 @@ pub fn run(cli_args: CliArgs) {
             commands::models::is_model_loading,
             commands::models::rescan_local_models,
             commands::models::import_model_file,
+            licence::commands::licence_get_state,
+            licence::commands::licence_activate,
+            licence::commands::licence_refresh,
+            licence::commands::licence_remove,
+            licence::commands::licence_change,
             commands::audio::update_microphone_mode,
             commands::audio::get_microphone_mode,
             commands::audio::get_windows_microphone_permission_status,

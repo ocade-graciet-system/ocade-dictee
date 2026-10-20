@@ -1,11 +1,12 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { FlaskConical, Info, FileAudio } from "lucide-react";
+import { FlaskConical, Info, FileAudio, KeyRound } from "lucide-react";
 import HandyTextLogo from "./icons/HandyTextLogo";
 import HandyHand from "./icons/HandyHand";
 import { useSettings } from "../hooks/useSettings";
 import { GeneralSettings, DebugSettings, AboutSettings } from "./settings";
 import { FileTranscription } from "./file/FileTranscription";
+import { LicenceSettings } from "./licence";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 
@@ -35,6 +36,14 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.file",
     icon: FileAudio,
     component: FileTranscription,
+    enabled: () => true,
+  },
+  // Clé de licence de cet ordinateur : décision produit explicite (saisir,
+  // changer, retirer la clé, voir l'échéance), voir docs/licences-cadrage.md.
+  licence: {
+    labelKey: "sidebar.licence",
+    icon: KeyRound,
+    component: LicenceSettings,
     enabled: () => true,
   },
   // Outils de diagnostic réservés au support : visibles uniquement avec `--debug`.

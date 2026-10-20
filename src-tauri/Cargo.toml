@@ -86,6 +86,11 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 tar = "0.4.44"
 flate2 = "1.0"
 sha2 = "0.10"
+# Licence (src/licence) : vérification des jetons Ed25519 signés par le
+# serveur de licences, encodage base64url et hexadécimal de l'empreinte.
+ed25519-dalek = "2"
+base64 = "0.22"
+hex = "0.4"
 tempfile = "3"
 # Whisper-family models run through transcribe-cpp (GGUF/ggml, native backends);
 # transcribe-rs is now ONNX-only (Parakeet, Moonshine, SenseVoice, GigaAM,
