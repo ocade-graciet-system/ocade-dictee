@@ -498,7 +498,7 @@ fn default_model() -> String {
     crate::managers::model::DEFAULT_FR_MODEL_ID.to_string()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 2;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 3;
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
@@ -891,7 +891,8 @@ pub fn apply_v1_locks(settings: &mut AppSettings) -> bool {
     // Presse-papier (Ctrl/Cmd+V) sur macOS et Windows ; Linux conserve son défaut
     // plateforme (`Direct`), seul collage fiable sous Wayland.
     settings.paste_method = PasteMethod::default();
-    settings.clipboard_handling = ClipboardHandling::DontModify;
+    // `clipboard_handling` n'est plus verrouillé : c'est le réglage « Copier la
+    // dernière transcription » (Général), activé par défaut.
     settings.auto_submit = false;
     settings.history_limit = 0;
     settings.recording_retention_period = RecordingRetentionPeriod::PreserveLimit;
@@ -978,7 +979,8 @@ pub fn get_default_settings() -> AppSettings {
         history_limit: default_history_limit(),
         recording_retention_period: default_recording_retention_period(),
         paste_method: PasteMethod::default(),
-        clipboard_handling: ClipboardHandling::default(),
+        // Copie de la dernière transcription dans le presse-papiers (Général).
+        clipboard_handling: ClipboardHandling::CopyToClipboard,
         auto_submit: default_auto_submit(),
         auto_submit_key: AutoSubmitKey::default(),
         post_process_enabled: default_post_process_enabled(),
@@ -1192,6 +1194,15 @@ fn apply_settings_migrations(
         settings.start_hidden = true;
         settings.autostart_enabled = true;
         settings.append_trailing_space = true;
+        settings.settings_schema_version = 2;
+        updated = true;
+    }
+
+    if stored_schema_version < 3 {
+        // Copie de la dernière transcription dans le presse-papiers : imposée
+        // à « ne pas modifier » jusqu'à la 1.7.7, désormais un réglage libre,
+        // activé une seule fois sur les profils existants.
+        settings.clipboard_handling = ClipboardHandling::CopyToClipboard;
         settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
         updated = true;
     }
@@ -1281,7 +1292,7 @@ mod tests {
         // Note "log_level": 2 — the legacy numeric format, kept deliberately.
         let stored: serde_json::Value = serde_json::from_str(
             r##"{
-            "settings_schema_version": 2,
+            "settings_schema_version": 3,
             "bindings": {
                 "transcribe": {
                     "id": "transcribe",
@@ -1670,7 +1681,7 @@ mod tests {
         assert_eq!(s.overlay_style, OverlayStyle::Live);
         assert_eq!(s.overlay_position, OverlayPosition::Bottom);
         assert_eq!(s.model_unload_timeout, ModelUnloadTimeout::Never);
-        assert_eq!(s.clipboard_handling, ClipboardHandling::DontModify);
+        assert_eq!(s.clipboard_handling, ClipboardHandling::CopyToClipboard);
         assert!(!s.auto_submit && !s.experimental_enabled && !s.translate_to_english);
         assert!(s.update_checks_enabled && !s.show_whats_new_on_update);
         assert_eq!(
@@ -1766,7 +1777,7 @@ mod tests {
         assert!(s.audio_feedback && s.mute_while_recording && s.push_to_talk);
         assert_eq!(s.history_limit, 0);
         assert_eq!(s.model_unload_timeout, ModelUnloadTimeout::Never);
-        assert_eq!(s.settings_schema_version, 2);
+        assert_eq!(s.settings_schema_version, 3);
         assert_eq!(
             s.bindings["transcribe"].current_binding,
             SHORTCUT_PRESETS[0]
@@ -1788,7 +1799,7 @@ mod tests {
         });
         assert!(apply_settings_migrations(&mut s, &stored));
         assert!(s.start_hidden && s.autostart_enabled && s.append_trailing_space);
-        assert_eq!(s.settings_schema_version, 2);
+        assert_eq!(s.settings_schema_version, 3);
         // Déjà en v2 : l'utilisateur a pu désactiver, on ne réimpose pas.
         s.start_hidden = false;
         let stored_v2 = serde_json::json!({
@@ -1799,5 +1810,32 @@ mod tests {
         });
         apply_settings_migrations(&mut s, &stored_v2);
         assert!(!s.start_hidden);
+    }
+
+    #[test]
+    fn schema_v3_migration_turns_clipboard_copy_on_once() {
+        let mut s = get_default_settings();
+        s.clipboard_handling = ClipboardHandling::DontModify;
+        let stored_v2 = serde_json::json!({
+            "settings_schema_version": 2,
+            "onboarding_completed": true,
+            "whats_new_last_seen_version": "0.9.17",
+            "overlay_style": "live"
+        });
+        assert!(apply_settings_migrations(&mut s, &stored_v2));
+        assert_eq!(s.clipboard_handling, ClipboardHandling::CopyToClipboard);
+        assert_eq!(s.settings_schema_version, 3);
+        // Déjà en v3 : un utilisateur qui a désactivé la copie la garde désactivée,
+        // y compris après le passage des verrous v1.
+        s.clipboard_handling = ClipboardHandling::DontModify;
+        let stored_v3 = serde_json::json!({
+            "settings_schema_version": 3,
+            "onboarding_completed": true,
+            "whats_new_last_seen_version": "0.9.17",
+            "overlay_style": "live"
+        });
+        apply_settings_migrations(&mut s, &stored_v3);
+        apply_v1_locks(&mut s);
+        assert_eq!(s.clipboard_handling, ClipboardHandling::DontModify);
     }
 }

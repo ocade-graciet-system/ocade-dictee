@@ -274,6 +274,10 @@
       "aiCleanup": {
         "label": "Nettoyer le texte avec l’IA",
         "description": "Après chaque dictée, l’IA de l’ordinateur corrige la ponctuation, les accords et retire les hésitations, sans jamais reformuler : au moindre doute, le texte dicté est collé tel quel. Ajoute 2 à 4 secondes par dictée. Au premier usage, l’IA (2 Go) se télécharge en arrière-plan. Rien ne quitte l’ordinateur."
+      },
+      "copyLastTranscription": {
+        "label": "Copier la dernière transcription",
+        "description": "Après chaque dictée, le texte reste aussi dans le presse-papiers : Ctrl+V (Cmd+V sur Mac) le recolle ailleurs. Désactivé, le presse-papiers retrouve son contenu d’avant la dictée."
       }
     },
     "models": {
