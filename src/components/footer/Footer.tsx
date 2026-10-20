@@ -170,15 +170,29 @@ const ModelSwitcher: React.FC = () => {
     );
   };
 
+  // Colonnes fixes (erreurs, taille, action) : les chiffres restent alignés
+  // d’une ligne à l’autre, que le modèle soit installé ou non.
   const werLabel = (m: ModelInfo) => {
     const r = ranking[m.id];
-    if (!r) return null;
     return (
-      <span className="shrink-0 tabular-nums text-text/50">
-        {t("footer.model.errorRate", { wer: r.wer.toLocaleString("fr-FR") })}
+      <span className="w-12 shrink-0 text-right tabular-nums text-text/50">
+        {r
+          ? t("footer.model.errorRate", {
+              wer: r.wer.toLocaleString("fr-FR", {
+                minimumFractionDigits: 1,
+                maximumFractionDigits: 1,
+              }),
+            })
+          : ""}
       </span>
     );
   };
+
+  const sizeLabel = (m: ModelInfo) => (
+    <span className="w-16 shrink-0 text-right whitespace-nowrap tabular-nums text-text/50">
+      {m.is_custom ? "" : t("footer.model.size", { size: m.size_mb })}
+    </span>
+  );
 
   const renderRow = (m: ModelInfo) => {
     const isDownloading = m.id in downloadingModels;
@@ -201,6 +215,8 @@ const ModelSwitcher: React.FC = () => {
           {m.is_recommended && star}
           {m.is_custom && importedBadge}
           {werLabel(m)}
+          {sizeLabel(m)}
+          <span className="w-28 shrink-0" />
         </button>
       );
     }
@@ -213,7 +229,7 @@ const ModelSwitcher: React.FC = () => {
         >
           <span className="w-3 shrink-0" />
           {rankLabel(m)}
-          <span className="whitespace-nowrap">{m.name}</span>
+          <span className="flex-1 whitespace-nowrap">{m.name}</span>
           <ProgressBar
             size="small"
             className="ml-auto"
@@ -247,16 +263,14 @@ const ModelSwitcher: React.FC = () => {
       >
         <span className="w-3 shrink-0" />
         {rankLabel(m)}
-        <span className="whitespace-nowrap">{m.name}</span>
+        <span className="flex-1 whitespace-nowrap">{m.name}</span>
         {m.is_recommended && star}
         {werLabel(m)}
-        <span className="ml-auto whitespace-nowrap tabular-nums">
-          {t("footer.model.size", { size: m.size_mb })}
-        </span>
+        {sizeLabel(m)}
         <button
           type="button"
           onClick={() => void download(m)}
-          className="shrink-0 flex items-center gap-1 rounded px-1.5 py-0.5 text-text hover:bg-mid-gray/20"
+          className="w-28 shrink-0 flex items-center justify-end gap-1 rounded px-1.5 py-0.5 text-text hover:bg-mid-gray/20"
         >
           <Download className="w-3 h-3" />
           <span>{t("footer.model.download")}</span>
@@ -280,7 +294,7 @@ const ModelSwitcher: React.FC = () => {
       </button>
 
       {menuOpen && (
-        <div className="absolute bottom-full left-0 mb-1 min-w-96 bg-background border border-mid-gray/80 rounded-md shadow-lg z-50 py-1">
+        <div className="absolute bottom-full left-0 mb-1 min-w-[34rem] bg-background border border-mid-gray/80 rounded-md shadow-lg z-50 py-1">
           <div className="px-3 pt-1 pb-1.5 text-text/50">
             {t("footer.model.rankingTitle")}
           </div>
