@@ -756,6 +756,12 @@ async licenceChange(key: string) : Promise<Result<LicenceView, LicenceError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Jeton de licence à présenter au serveur de mises à jour, s'il y en a un.
+ */
+async licenceUpdateToken() : Promise<string | null> {
+    return await TAURI_INVOKE("licence_update_token");
+},
 async updateMicrophoneMode(alwaysOn: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("update_microphone_mode", { alwaysOn }) };

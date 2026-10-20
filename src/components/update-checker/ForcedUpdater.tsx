@@ -11,10 +11,12 @@ import {
 } from "../../stores/fileTranscriptionStore";
 import { commands } from "@/bindings";
 
-const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // toutes les 24 h (issue #6)
+// Toutes les 6 h : un changement de version décidé dans la supervision (nouvelle
+// stable, retour arrière) doit arriver sur les postes dans la journée.
+const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const RETRY_WHEN_BUSY_MS = 5 * 60 * 1000; // dictée ou téléchargement en cours → réessai dans 5 min
 // Un échec (réseau coupé, serveur injoignable, release absente…) ne doit pas
-// attendre le tick de 24 h : on réessaie dans 30 min, toujours en silence.
+// attendre le tick de 6 h : on réessaie dans 30 min, toujours en silence.
 const RETRY_AFTER_FAILURE_MS = 30 * 60 * 1000;
 // Borne de la requête de vérification. Sans elle, un socket semi-ouvert ne
 // rejette jamais : `busy` resterait armé et plus aucune tentative ne repartirait
@@ -32,6 +34,23 @@ const megabyteFormatter = new Intl.NumberFormat("fr-FR", {
   minimumFractionDigits: 1,
   maximumFractionDigits: 1,
 });
+
+/**
+ * Demande au serveur de licences la version que ce poste doit avoir : version
+ * imposée sur sa clé, sinon celle de son groupe, sinon la stable. Le jeton
+ * identifie la clé ; sans jeton, le serveur répond avec la stable.
+ * `allowDowngrades` : toute version différente de l'actuelle est installée,
+ * y compris plus ancienne (retour arrière décidé dans la supervision). Le
+ * serveur ne renvoie rien quand le poste est déjà sur la bonne version.
+ */
+async function checkForAssignedVersion(): Promise<Update | null> {
+  const token = await commands.licenceUpdateToken();
+  return check({
+    timeout: CHECK_TIMEOUT_MS,
+    allowDowngrades: true,
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+}
 
 // Mise à jour forcée : aucune question, aucun report. Montée à la racine de
 // l'app pour couvrir aussi les écrans de premier lancement.
@@ -133,7 +152,9 @@ export const ForcedUpdater: React.FC = () => {
             break;
         }
       },
-      { timeout: DOWNLOAD_TIMEOUT_MS },
+      // En-têtes vides : sans eux, l'updater renverrait au téléchargement ceux de
+      // la vérification, donc le jeton de licence, à github.com.
+      { timeout: DOWNLOAD_TIMEOUT_MS, headers: {} },
     );
   };
 
@@ -157,8 +178,7 @@ export const ForcedUpdater: React.FC = () => {
 
       // Une tentative précédente a pu télécharger le paquet sans pouvoir
       // l'installer : on repart de là plutôt que de refaire un `check()`.
-      pending =
-        downloaded.current ?? (await check({ timeout: CHECK_TIMEOUT_MS }));
+      pending = downloaded.current ?? (await checkForAssignedVersion());
       if (!pending) return;
 
       if (!downloaded.current) {

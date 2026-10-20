@@ -732,6 +732,7 @@ pub fn run(cli_args: CliArgs) {
             licence::commands::licence_refresh,
             licence::commands::licence_remove,
             licence::commands::licence_change,
+            licence::commands::licence_update_token,
             commands::audio::update_microphone_mode,
             commands::audio::get_microphone_mode,
             commands::audio::get_windows_microphone_permission_status,
