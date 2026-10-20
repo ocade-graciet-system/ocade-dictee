@@ -59,6 +59,11 @@ struct TranscribeAction {
 /// Field name for structured output JSON schema
 const TRANSCRIPTION_FIELD: &str = "transcription";
 
+/// Délai accordé au nettoyage par IA d'une dictée avant de coller le texte
+/// brut. Sur processeur (Windows) le modèle répond en 2 à 4 s en général
+/// (bench-asr-fr : médiane 2,2 s, 90 % sous 4,4 s, maximum 6,1 s).
+const AI_CLEANUP_TIMEOUT: Duration = Duration::from_secs(8);
+
 /// Strip invisible Unicode characters that some LLMs may insert
 fn strip_invisible_chars(s: &str) -> String {
     s.replace(['\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}'], "")
@@ -460,6 +465,22 @@ pub(crate) async fn process_transcription_output(
         post_processed_text = Some(final_text.clone());
     }
 
+    // OCADE — nettoyage par l'IA locale (ponctuation, accords, hésitations).
+    // Le garde-fou de `summary::cleanup` refuse toute reformulation : en cas
+    // de doute, de délai dépassé ou d'IA pas encore prête, le texte dicté est
+    // collé tel quel.
+    if settings.ai_cleanup_enabled {
+        if let Some(engine) = app.try_state::<Arc<crate::summary::engine::SummaryEngine>>() {
+            if let Some(cleaned) = engine
+                .clean_dictation(&final_text, AI_CLEANUP_TIMEOUT)
+                .await
+            {
+                post_processed_text = Some(cleaned.clone());
+                final_text = cleaned;
+            }
+        }
+    }
+
     ProcessedTranscription {
         final_text,
         post_processed_text,
@@ -491,6 +512,15 @@ impl ShortcutAction for TranscribeAction {
 
         // En tout premier, avant qu'une fenêtre n'ait pu s'interposer.
         crate::focus::remember_dictation_target();
+
+        // Nettoyage par IA : l'IA locale se charge pendant l'enregistrement,
+        // pour être prête quand le texte arrive (voir `SummaryEngine::prewarm`).
+        if get_settings(app).ai_cleanup_enabled {
+            if let Some(engine) = app.try_state::<Arc<crate::summary::engine::SummaryEngine>>() {
+                let engine = Arc::clone(engine.inner());
+                tauri::async_runtime::spawn(async move { engine.prewarm().await });
+            }
+        }
 
         // Load model in the background
         let tm = app.state::<Arc<TranscriptionManager>>();

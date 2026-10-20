@@ -6,6 +6,7 @@ import { MicrophoneSelector } from "../MicrophoneSelector";
 import { OutputDeviceSelector } from "../OutputDeviceSelector";
 import { CustomWords } from "../CustomWords";
 import { AppendTrailingSpace } from "../AppendTrailingSpace";
+import { AiCleanupToggle } from "../AiCleanupToggle";
 import { AudioFeedbackToggle } from "../AudioFeedbackToggle";
 import { StartHidden } from "../StartHidden";
 import { AutostartToggle } from "../AutostartToggle";
@@ -24,6 +25,7 @@ export const GeneralSettings: React.FC = () => {
         <AudioFeedbackToggle descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
       <SettingsGroup title={t("settings.advanced.groups.transcription")}>
+        <AiCleanupToggle descriptionMode="tooltip" grouped={true} />
         <CustomWords descriptionMode="tooltip" grouped />
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>

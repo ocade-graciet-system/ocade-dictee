@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 use super::assets::{engine_asset, CTX_SIZE, MODEL};
+use super::cleanup;
 use super::install::{ensure_engine, ensure_model, SummaryPaths};
 use super::server::{
     build_local_client, default_gpu_layers, kill_orphan_server, LlamaServer, LlamaServerConfig,
@@ -17,6 +18,8 @@ use super::server::{
 use super::summarize::{summarize_text, LlamaCompletion};
 use super::system::{available_memory_bytes, check_memory, physical_cores};
 use super::{SummaryError, SummaryPhase, SummaryStatus};
+use crate::llm_client::{send_chat_completion_with_options, ChatSamplingOptions};
+use crate::settings::PostProcessProvider;
 
 /// Le serveur est arrêté après ce délai sans requête.
 pub const IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -34,6 +37,9 @@ pub struct SummaryEngine {
     running: AtomicBool,
     cancel: Mutex<Option<CancellationToken>>,
     available_memory: fn() -> u64,
+    /// Démarrage du serveur : un seul à la fois (résumé ou préchauffage pour
+    /// le nettoyage des dictées), sinon deux processus se disputeraient la place.
+    start_lock: tokio::sync::Mutex<()>,
 }
 
 /// Verrou tolérant à l'empoisonnement : ces mutex sont pris depuis un `Drop`
@@ -81,6 +87,7 @@ impl SummaryEngine {
             running: AtomicBool::new(false),
             cancel: Mutex::new(None),
             available_memory: available_memory_bytes,
+            start_lock: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -289,6 +296,138 @@ impl SummaryEngine {
         Ok(())
     }
 
+    fn server_config(
+        &self,
+        exe: std::path::PathBuf,
+        model: std::path::PathBuf,
+    ) -> LlamaServerConfig {
+        LlamaServerConfig {
+            exe,
+            model,
+            ctx_size: CTX_SIZE,
+            threads: physical_cores(),
+            gpu_layers: default_gpu_layers(),
+            extra_args: MODEL.server_args.iter().map(|s| s.to_string()).collect(),
+            pid_file: Some(self.paths.pid_file()),
+        }
+    }
+
+    /// Démarre le serveur en arrière-plan pour nettoyer la dictée qui commence :
+    /// le temps d'un enregistrement suffit en général à charger le modèle.
+    /// Sans effet si un résumé tourne, si le serveur est déjà chaud ou en cours
+    /// de démarrage. Moteur ou modèle absents : leur installation est lancée,
+    /// et la dictée reste collée telle quelle en attendant.
+    pub async fn prewarm(&self) {
+        if self.is_running() {
+            return;
+        }
+        if self.warm_server().is_some() {
+            *lock(&self.last_used) = Instant::now();
+            return;
+        }
+        let status = self.status();
+        if !(status.engine_ready && status.model_ready) {
+            self.install_in_background().await;
+            return;
+        }
+        let Ok(_guard) = self.start_lock.try_lock() else {
+            return;
+        };
+        if self.warm_server().is_some() {
+            return;
+        }
+        let Some(exe) = self.paths.engine_exe() else {
+            return;
+        };
+        if let Err(e) = check_memory((self.available_memory)()) {
+            log::info!("Nettoyage par IA : mémoire insuffisante, serveur non démarré ({e:?})");
+            return;
+        }
+        let config = self.server_config(exe, self.paths.model_file());
+        match self.start_server(config, &CancellationToken::new()).await {
+            Ok(server) => {
+                *lock(&self.server) = Some(Arc::new(server));
+                *lock(&self.last_used) = Instant::now();
+            }
+            Err(e) => log::warn!("Nettoyage par IA : démarrage du serveur échoué ({e})"),
+        }
+    }
+
+    /// Installe moteur et modèle en arrière-plan (première utilisation du
+    /// nettoyage). Tient le verrou « un résumé à la fois » : un compte-rendu
+    /// demandé pendant le téléchargement répond « occupé ».
+    async fn install_in_background(&self) {
+        if self
+            .running
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let _guard = RunGuard(self);
+        let cancel = CancellationToken::new();
+        *lock(&self.cancel) = Some(cancel.clone());
+        log::info!("Nettoyage par IA : installation du moteur et du modèle en arrière-plan");
+        if let Err(e) = ensure_engine(&self.paths, &self.client, &cancel, |_| {}).await {
+            log::warn!("Nettoyage par IA : moteur non installé ({e})");
+            return;
+        }
+        if let Err(e) = ensure_model(&self.paths, &self.client, &cancel, |_| {}).await {
+            log::warn!("Nettoyage par IA : modèle non installé ({e})");
+        }
+    }
+
+    /// Nettoie un texte dicté avec le serveur déjà chaud (jamais de démarrage
+    /// ni de téléchargement ici : voir `prewarm`). `None` = coller la dictée
+    /// telle quelle : serveur froid, résumé en cours, délai dépassé, ou réponse
+    /// refusée par le garde-fou (`cleanup::accept`).
+    pub async fn clean_dictation(&self, text: &str, timeout: Duration) -> Option<String> {
+        if text.trim().is_empty() || self.is_running() {
+            return None;
+        }
+        let server = self.warm_server()?;
+        *lock(&self.last_used) = Instant::now();
+        let provider = PostProcessProvider {
+            id: "llama-local".to_string(),
+            label: "llama.cpp local".to_string(),
+            base_url: server.base_url(),
+            allow_base_url_edit: false,
+            models_endpoint: None,
+            supports_structured_output: false,
+        };
+        let request = send_chat_completion_with_options(
+            &provider,
+            server.api_key().to_string(),
+            MODEL.model_name,
+            text.to_string(),
+            Some(cleanup::SYSTEM_PROMPT.to_string()),
+            ChatSamplingOptions {
+                temperature: Some(0.0),
+                max_tokens: Some(cleanup::max_tokens_for(text)),
+            },
+        );
+        let outcome = match tokio::time::timeout(timeout, request).await {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(e)) => {
+                log::warn!("Nettoyage par IA : requête échouée ({e})");
+                return None;
+            }
+            Err(_) => {
+                log::info!("Nettoyage par IA : délai de {timeout:?} dépassé, texte brut collé");
+                return None;
+            }
+        };
+        *lock(&self.last_used) = Instant::now();
+        if outcome.truncated {
+            return None;
+        }
+        let cleaned = cleanup::accept(text, &outcome.content?);
+        if cleaned.is_none() {
+            log::debug!("Nettoyage par IA : réponse écartée par le garde-fou");
+        }
+        cleaned
+    }
+
     async fn run_inner<F: Fn() -> bool + Send>(
         &self,
         text: &str,
@@ -299,6 +438,8 @@ impl SummaryEngine {
         // Jamais en concurrence avec la dictée (CPU/GPU partagés).
         self.wait_for_dictation(&is_dictating, cancel).await?;
 
+        // Un préchauffage en cours finit d'abord : son serveur sera réutilisé.
+        let start_guard = self.start_lock.lock().await;
         let server = match self.warm_server() {
             Some(server) => server,
             None => {
@@ -329,21 +470,14 @@ impl SummaryEngine {
                 // Une dictée a pu commencer pendant les téléchargements.
                 self.wait_for_dictation(&is_dictating, cancel).await?;
                 on_progress(SummaryPhase::Starting, 0, 1);
-                let config = LlamaServerConfig {
-                    exe,
-                    model,
-                    ctx_size: CTX_SIZE,
-                    threads: physical_cores(),
-                    gpu_layers: default_gpu_layers(),
-                    extra_args: MODEL.server_args.iter().map(|s| s.to_string()).collect(),
-                    pid_file: Some(self.paths.pid_file()),
-                };
+                let config = self.server_config(exe, model);
                 let server = Arc::new(self.start_server(config, cancel).await?);
                 *lock(&self.server) = Some(server.clone());
                 on_progress(SummaryPhase::Starting, 1, 1);
                 server
             }
         };
+        drop(start_guard);
 
         // Dernier contrôle avant la génération, la phase la plus gourmande.
         self.wait_for_dictation(&is_dictating, cancel).await?;

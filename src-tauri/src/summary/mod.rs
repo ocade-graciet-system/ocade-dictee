@@ -4,6 +4,7 @@
 
 pub mod assets;
 pub mod chunking;
+pub mod cleanup;
 pub mod commands;
 pub mod engine;
 pub mod install;

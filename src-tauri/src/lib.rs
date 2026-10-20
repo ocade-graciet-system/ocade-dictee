@@ -687,6 +687,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_comm_mute_shortcut_setting,
             shortcut::change_comm_mute_mode_setting,
             shortcut::change_append_trailing_space_setting,
+            shortcut::change_ai_cleanup_enabled_setting,
             shortcut::change_lazy_stream_close_setting,
             shortcut::change_vad_enabled_setting,
             shortcut::change_app_language_setting,
