@@ -1,13 +1,12 @@
 //! Configuration figée dans l'application : adresse du serveur de licences et
 //! clés publiques de confiance.
 //!
-//! **À compléter avant la première publication** : la clé publique de
-//! production `k1` (`PRODUCTION_KEYS`) est affichée par `npm run gen:key` dans le
-//! dépôt `ocade-dictee-licences`, au moment de la mise en service du serveur.
-//! Tant que la liste est vide, aucun jeton n'est accepté hors build de
-//! débogage : en mode souple l'application reste utilisable, mais aucune clé ne
-//! peut s'activer. La PR qui l'ajoute doit être fusionnée **avant** toute
-//! publication qui compte sur l'activation.
+//! La clé publique de production `k1` (`PRODUCTION_KEYS`) correspond à la clé
+//! privée `SIGNING_PRIVATE_KEY_B64` du serveur déployé
+//! (`licences-ocade-dictee.graciet.org`), affichée par `npm run gen:key` dans le
+//! dépôt `ocade-dictee-licences`. Si cette clé privée change un jour, il faut
+//! **d'abord** publier une version qui connaît la nouvelle clé publique (sous un
+//! autre `kid`), sinon tous les postes refuseraient les nouveaux jetons.
 
 use super::token::{parse_public_key, TrustedKey};
 
@@ -19,7 +18,8 @@ pub const PRODUCTION_URL: &str = "https://licences-ocade-dictee.graciet.org/api/
 /// standard**, avec `+`, `/` et `=`). Plusieurs entrées permettent une rotation
 /// sans coupure : on publie d'abord une version qui connaît la nouvelle clé,
 /// puis le serveur bascule dessus.
-pub const PRODUCTION_KEYS: &[(&str, &str)] = &[];
+pub const PRODUCTION_KEYS: &[(&str, &str)] =
+    &[("k1", "JEPp+g33p/pDMD7cIi9fVre3oOthQsSOlWaa8pQOHTA=")];
 
 /// Réglages effectifs, résolus une fois au démarrage.
 pub struct LicenceConfig {
@@ -93,6 +93,15 @@ impl LicenceConfig {
 mod tests {
     use super::*;
     use base64::{engine::general_purpose::STANDARD, Engine};
+
+    #[test]
+    fn every_production_key_is_a_valid_ed25519_key() {
+        // Une clé mal copiée ferait refuser tous les jetons en production.
+        assert!(!PRODUCTION_KEYS.is_empty());
+        for (kid, b64) in PRODUCTION_KEYS {
+            assert!(parse_public_key(kid, b64).is_some(), "clé {kid} illisible");
+        }
+    }
 
     #[test]
     fn key_lists_accept_several_entries_and_skip_bad_ones() {

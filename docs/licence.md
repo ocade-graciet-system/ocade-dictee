@@ -31,10 +31,18 @@ comportement (contrat de l'API, codes d'erreur, format du jeton).
 
 ## Clé publique de production
 
-`PRODUCTION_KEYS` est **vide** tant que la clé `k1` n'est pas générée côté serveur
-(`npm run gen:key`, base64 standard). Une version publiée sans elle reste
-utilisable en mode souple, mais **aucune clé ne peut s'activer**. La PR qui
-l'ajoute doit être fusionnée avant de compter sur l'activation.
+`PRODUCTION_KEYS` contient la clé publique `k1` du serveur déployé
+(`licences-ocade-dictee.graciet.org`), en base64 standard. Elle correspond à la
+clé privée `SIGNING_PRIVATE_KEY_B64` stockée dans Coolify. Pour la retrouver,
+lancer dans le terminal du conteneur du serveur :
+
+```bash
+node -e "const c=require('crypto');const k=c.createPrivateKey({key:Buffer.from(process.env.SIGNING_PRIVATE_KEY_B64,'base64'),format:'der',type:'pkcs8'});const d=c.createPublicKey(k).export({format:'der',type:'spki'});console.log(process.env.SIGNING_KEY_ID+':'+d.subarray(d.length-32).toString('base64'))"
+```
+
+**Changer de clé privée** impose de publier d'abord une version qui connaît la
+nouvelle clé publique sous un autre `kid` (par exemple `k2`), puis seulement de
+basculer le serveur : sinon tous les postes refuseraient les nouveaux jetons.
 
 ## Essai en développement
 
