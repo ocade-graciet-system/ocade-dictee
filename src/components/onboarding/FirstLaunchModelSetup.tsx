@@ -9,7 +9,7 @@ import { useModelStore } from "../../stores/modelStore";
  * DEFAULT_FR_MODEL_ID (src-tauri/src/managers/model.rs).
  */
 export const DEFAULT_FR_MODEL_ID =
-  "handy-computer/canary-1b-v2-gguf/canary-1b-v2-Q5_K_M.gguf";
+  "handy-computer/cohere-transcribe-03-2026-gguf/cohere-transcribe-03-2026-Q5_K_M.gguf";
 
 interface FirstLaunchModelSetupProps {
   onReady: () => void;
@@ -105,7 +105,7 @@ const FirstLaunchModelSetup: React.FC<FirstLaunchModelSetupProps> = ({
     void activate();
   }, [activating]);
 
-  // Ne re-télécharger (0,8 Go) que si le fichier manque encore : après un échec
+  // Ne re-télécharger (1,7 Go) que si le fichier manque encore : après un échec
   // d'activation, seule l'activation est retentée.
   const handleRetry = () => {
     setFailed(null);

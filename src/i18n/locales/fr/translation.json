@@ -22,7 +22,7 @@
   "onboarding": {
     "firstLaunch": {
       "title": "Préparation d'OCADE Dictée",
-      "subtitle": "Le modèle de reconnaissance vocale française (0,8 Go) se télécharge une seule fois. Ensuite, tout fonctionne hors ligne.",
+      "subtitle": "Le modèle de reconnaissance vocale française (1,7 Go) se télécharge une seule fois. Ensuite, tout fonctionne hors ligne.",
       "downloading": "Téléchargement… {{percentage}} % ({{speed}} Mo/s)",
       "verifying": "Vérification du fichier…",
       "activating": "Activation du modèle…",
@@ -758,6 +758,12 @@
           "description": "Inférence haute performance du modèle de reconnaissance vocale automatique Whisper d'OpenAI",
           "details": "OCADE Dictée utilise ggml pour un traitement rapide et local de la parole en texte. Merci au travail incroyable de Georgi Gerganov et des contributeurs."
         }
+      },
+      "models": {
+        "title": "Modèles de reconnaissance vocale",
+        "description": "OCADE Dictée propose ces modèles, utilisés sous licence libre MIT ou Apache 2.0. Cliquez sur un nom pour sa page d’origine, sur une licence pour son texte.",
+        "by": "par {{author}}",
+        "licenseLink": "Lire le texte de la licence"
       }
     }
   },
