@@ -1319,7 +1319,15 @@ rank: number;
 /**
  * Taux d'erreur sur les mots (%), mesuré par le banc d'essai.
  */
-wer: number }
+wer: number; name: string; author: string; 
+/**
+ * Identifiant SPDX : « MIT » ou « Apache-2.0 ».
+ */
+license: string; 
+/**
+ * Page du modèle d'origine (auteur, licence).
+ */
+source_url: string }
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }

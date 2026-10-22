@@ -4,8 +4,9 @@ import { getVersion } from "@tauri-apps/api/app";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { ThemeSelector } from "../ThemeSelector";
+import { ModelLicenses } from "./ModelLicenses";
 
-// v1 (issue #11) : version et thème uniquement.
+// v1 (issue #11) : version et thème, plus les licences des modèles proposés.
 export const AboutSettings: React.FC = () => {
   const { t } = useTranslation();
   const [version, setVersion] = useState("");
@@ -29,6 +30,7 @@ export const AboutSettings: React.FC = () => {
         </SettingContainer>
         <ThemeSelector descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
+      <ModelLicenses />
     </div>
   );
 };

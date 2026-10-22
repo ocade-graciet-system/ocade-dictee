@@ -83,14 +83,10 @@ const CHINESE_LANGUAGE_CODE: &str = "zh";
 /// installations qui l'ont déjà sur le disque (voir `get_available_models`).
 pub const LEGACY_FR_MODEL_ID: &str = "whisper-distil-fr-dec2-q5_0";
 
-/// Canary 1B v2 (GGUF du catalogue, accéléré Metal/Vulkan) : n° 1 du
+/// Cohere Transcribe (GGUF du catalogue, accéléré Metal/Vulkan) : n° 1 du
 /// classement [`FR_MODEL_RANKING`], badge « recommandé » dans le sélecteur.
 /// Inclus dans l'installateur hors ligne (`BUNDLED_MODELS_DIR`).
 pub const RECOMMENDED_FR_MODEL_ID: &str =
-    "handy-computer/canary-1b-v2-gguf/canary-1b-v2-Q5_K_M.gguf";
-
-/// Cohere Transcribe : le plus précis du banc d'essai (n° 2 du classement).
-pub const COHERE_FR_MODEL_ID: &str =
     "handy-computer/cohere-transcribe-03-2026-gguf/cohere-transcribe-03-2026-Q5_K_M.gguf";
 
 /// Dossier des ressources de l'application où l'installateur hors ligne dépose
@@ -106,7 +102,8 @@ pub const DEFAULT_FR_MODEL_ID: &str = RECOMMENDED_FR_MODEL_ID;
 /// Whisper large-v3 réentraîné en français (bofenghuang), version complète.
 pub const WHISPER_FR_LARGE_V3_MODEL_ID: &str = "whisper-large-v3-fr-q5_0";
 
-/// Une place du classement des modèles français.
+/// Une place du classement des modèles français, avec ce qu'il faut afficher
+/// pour respecter sa licence (À propos).
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct FrModelRank {
     pub id: String,
@@ -114,40 +111,76 @@ pub struct FrModelRank {
     pub rank: u32,
     /// Taux d'erreur sur les mots (%), mesuré par le banc d'essai.
     pub wer: f32,
+    pub name: String,
+    pub author: String,
+    /// Identifiant SPDX : « MIT » ou « Apache-2.0 ».
+    pub license: String,
+    /// Page du modèle d'origine (auteur, licence).
+    pub source_url: String,
 }
+
+/// Licences admises au classement : usage commercial libre, sans attribution
+/// visible ni partage à l'identique (seule obligation : fournir le texte de la
+/// licence, fait dans À propos). Les modèles CC-BY / CC-BY-SA du banc d'essai
+/// (Canary, Parakeet, Orukeet) en sont exclus à dessein.
+pub const ALLOWED_MODEL_LICENSES: &[&str] = &["MIT", "Apache-2.0"];
 
 /// Classement des modèles français : banc d'essai du 20/10/2026
 /// (bench-asr-fr), 397 énoncés et 77 min d'audio (FLEURS lu, MLS livres audio,
-/// VoxPopuli parole spontanée), moteur transcribe.cpp en Vulkan. C'est l'ordre
-/// du sélecteur, numéroté 1, 2, 3… Le premier est le modèle par défaut :
-/// Canary 1B v2, choix éditorial (deux fois plus léger que Cohere, 0,8 Go
-/// contre 1,7 Go, plus rapide, à 0,3 point de WER). Les suivants sont triés par WER. WER mesuré en Q5 ; Parakeet v3 et Whisper Turbo sont
-/// servis en Q8_0 (quantification par défaut du catalogue), au moins aussi précis.
-pub const FR_MODEL_RANKING: &[(&str, f32)] = &[
-    (RECOMMENDED_FR_MODEL_ID, 4.80),
-    (COHERE_FR_MODEL_ID, 4.46),
+/// VoxPopuli parole spontanée), moteur transcribe.cpp en Vulkan, trié par WER.
+/// C'est l'ordre du sélecteur, numéroté 1, 2, 3… ; le premier est le modèle
+/// par défaut. Seuls les modèles sous licence MIT ou Apache 2.0 y figurent
+/// (`ALLOWED_MODEL_LICENSES`). WER mesuré en Q5 ; Whisper Turbo est servi en
+/// Q8_0 (quantification par défaut du catalogue), au moins aussi précis.
+/// Colonnes : identifiant, WER, nom, auteur, licence SPDX, page d'origine.
+pub const FR_MODEL_RANKING: &[(&str, f32, &str, &str, &str, &str)] = &[
+    (
+        RECOMMENDED_FR_MODEL_ID,
+        4.46,
+        "Cohere Transcribe",
+        "Cohere Labs",
+        "Apache-2.0",
+        "https://huggingface.co/CohereLabs/cohere-transcribe-03-2026",
+    ),
     (
         "handy-computer/Voxtral-Mini-3B-2507-gguf/Voxtral-Mini-3B-2507-Q5_K_M.gguf",
         4.95,
+        "Voxtral Mini 3B",
+        "Mistral AI",
+        "Apache-2.0",
+        "https://huggingface.co/mistralai/Voxtral-Mini-3B-2507",
     ),
-    ("whisper-distil-fr-dec16-q5_0", 4.98),
-    ("handy-computer/orukeet-gguf/orukeet-Q5_K_M.gguf", 5.33),
     (
-        "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q8_0.gguf",
-        5.35,
+        "whisper-distil-fr-dec16-q5_0",
+        4.98,
+        "Whisper Distil French (dec16)",
+        "Bofeng Huang",
+        "MIT",
+        "https://huggingface.co/bofenghuang/whisper-large-v3-french-distil-dec16",
     ),
     (
         "handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q5_K_M.gguf",
         5.50,
+        "Qwen3-ASR 1.7B",
+        "Alibaba Qwen",
+        "Apache-2.0",
+        "https://huggingface.co/Qwen/Qwen3-ASR-1.7B",
     ),
-    (WHISPER_FR_LARGE_V3_MODEL_ID, 5.52),
     (
-        "handy-computer/parakeet-ultra-gguf/parakeet-ultra-Q5_K_M.gguf",
-        5.55,
+        WHISPER_FR_LARGE_V3_MODEL_ID,
+        5.52,
+        "Whisper Large v3 French",
+        "Bofeng Huang",
+        "MIT",
+        "https://huggingface.co/bofenghuang/whisper-large-v3-french",
     ),
     (
         "handy-computer/whisper-large-v3-turbo-gguf/whisper-large-v3-turbo-Q8_0.gguf",
         5.93,
+        "Whisper Large v3 Turbo",
+        "OpenAI",
+        "MIT",
+        "https://huggingface.co/openai/whisper-large-v3-turbo",
     ),
 ];
 
@@ -155,7 +188,7 @@ pub const FR_MODEL_RANKING: &[(&str, f32)] = &[
 pub fn fr_rank(model_id: &str) -> Option<u32> {
     FR_MODEL_RANKING
         .iter()
-        .position(|(id, _)| *id == model_id)
+        .position(|(id, ..)| *id == model_id)
         .map(|i| i as u32 + 1)
 }
 
@@ -163,12 +196,20 @@ pub fn fr_rank(model_id: &str) -> Option<u32> {
 pub fn fr_model_ranking() -> Vec<FrModelRank> {
     FR_MODEL_RANKING
         .iter()
+        // Garde-fou : un modèle hors licence admise n'est jamais proposé.
+        .filter(|(.., license, _)| ALLOWED_MODEL_LICENSES.contains(license))
         .enumerate()
-        .map(|(i, (id, wer))| FrModelRank {
-            id: id.to_string(),
-            rank: i as u32 + 1,
-            wer: *wer,
-        })
+        .map(
+            |(i, (id, wer, name, author, license, source_url))| FrModelRank {
+                id: id.to_string(),
+                rank: i as u32 + 1,
+                wer: *wer,
+                name: name.to_string(),
+                author: author.to_string(),
+                license: license.to_string(),
+                source_url: source_url.to_string(),
+            },
+        )
         .collect()
 }
 
@@ -3076,7 +3117,7 @@ mod tests {
         assert!(is_selectable_model_id(DEFAULT_FR_MODEL_ID));
         assert!(is_selectable_model_id(RECOMMENDED_FR_MODEL_ID));
         assert!(is_selectable_model_id(LEGACY_FR_MODEL_ID));
-        for (id, _) in FR_MODEL_RANKING {
+        for (id, ..) in FR_MODEL_RANKING {
             assert!(is_selectable_model_id(id), "{id}");
         }
         assert!(is_selectable_model_id("import-mon-modele"));
@@ -3092,17 +3133,31 @@ mod tests {
             .collect();
         let injected = ["whisper-distil-fr-dec16-q5_0", WHISPER_FR_LARGE_V3_MODEL_ID];
         let mut seen = HashSet::new();
-        for (id, _) in FR_MODEL_RANKING {
+        for (id, _, _, _, license, source_url) in FR_MODEL_RANKING {
             assert!(
                 catalog.contains(*id) || injected.contains(id),
                 "{id} : ni dans catalog.json ni injecté"
             );
             assert!(seen.insert(*id), "{id} classé deux fois");
+            assert!(
+                ALLOWED_MODEL_LICENSES.contains(license),
+                "{id} : licence {license} non admise"
+            );
+            assert!(source_url.starts_with("https://huggingface.co/"));
         }
         assert!(
-            FR_MODEL_RANKING[1..].windows(2).all(|w| w[0].1 <= w[1].1),
-            "après le n° 1 (choix éditorial), classement trié par WER croissant"
+            FR_MODEL_RANKING.windows(2).all(|w| w[0].1 <= w[1].1),
+            "classement trié par WER croissant"
         );
+        // Les modèles CC-BY / CC-BY-SA du banc d'essai restent hors classement.
+        for excluded in ["canary-1b-v2", "parakeet", "orukeet"] {
+            assert!(
+                FR_MODEL_RANKING
+                    .iter()
+                    .all(|(id, ..)| !id.contains(excluded)),
+                "{excluded} ne doit pas être proposé"
+            );
+        }
         assert_eq!(fr_rank(DEFAULT_FR_MODEL_ID), Some(1));
         assert_eq!(fr_rank(LEGACY_FR_MODEL_ID), None);
         assert_eq!(fr_model_ranking().len(), FR_MODEL_RANKING.len());
@@ -3128,7 +3183,7 @@ mod tests {
     #[test]
     fn bundled_models_are_found_only_when_shipped() {
         let dir = tempfile::tempdir().unwrap();
-        let name = "canary-1b-v2-Q5_K_M.gguf";
+        let name = "cohere-transcribe-03-2026-Q5_K_M.gguf";
         assert_eq!(bundled_model_path(None, name), None);
         assert_eq!(bundled_model_path(Some(dir.path()), name), None);
         std::fs::write(dir.path().join(name), b"gguf").unwrap();
