@@ -83,10 +83,20 @@ const CHINESE_LANGUAGE_CODE: &str = "zh";
 /// installations qui l'ont déjà sur le disque (voir `get_available_models`).
 pub const LEGACY_FR_MODEL_ID: &str = "whisper-distil-fr-dec2-q5_0";
 
-/// Cohere Transcribe (GGUF du catalogue, accéléré Metal/Vulkan) : n° 1 du
-/// classement [`FR_MODEL_RANKING`]. Badge « recommandé » dans le sélecteur.
+/// Canary 1B v2 (GGUF du catalogue, accéléré Metal/Vulkan) : n° 1 du
+/// classement [`FR_MODEL_RANKING`], badge « recommandé » dans le sélecteur.
+/// Inclus dans l'installateur hors ligne (`BUNDLED_MODELS_DIR`).
 pub const RECOMMENDED_FR_MODEL_ID: &str =
+    "handy-computer/canary-1b-v2-gguf/canary-1b-v2-Q5_K_M.gguf";
+
+/// Cohere Transcribe : le plus précis du banc d'essai (n° 2 du classement).
+pub const COHERE_FR_MODEL_ID: &str =
     "handy-computer/cohere-transcribe-03-2026-gguf/cohere-transcribe-03-2026-Q5_K_M.gguf";
+
+/// Dossier des ressources de l'application où l'installateur hors ligne dépose
+/// des modèles du catalogue (même nom de fichier que sur Hugging Face) : ils
+/// sont alors utilisables sans aucun téléchargement.
+pub const BUNDLED_MODELS_DIR: &str = "offline-models";
 
 /// Modèle des nouvelles installations (voir `settings::default_model`),
 /// téléchargé au premier lancement par l'écran dédié du front
@@ -106,18 +116,16 @@ pub struct FrModelRank {
     pub wer: f32,
 }
 
-/// Classement des modèles français, du meilleur au moins bon : banc d'essai
-/// du 20/10/2026 (bench-asr-fr), 397 énoncés et 77 min d'audio (FLEURS lu,
-/// MLS livres audio, VoxPopuli parole spontanée), moteur transcribe.cpp en
-/// Vulkan. C'est l'ordre du sélecteur, numéroté 1, 2, 3… Le premier est le
-/// modèle par défaut. WER mesuré en Q5 ; Parakeet v3 et Whisper Turbo sont
+/// Classement des modèles français : banc d'essai du 20/10/2026
+/// (bench-asr-fr), 397 énoncés et 77 min d'audio (FLEURS lu, MLS livres audio,
+/// VoxPopuli parole spontanée), moteur transcribe.cpp en Vulkan. C'est l'ordre
+/// du sélecteur, numéroté 1, 2, 3… Le premier est le modèle par défaut :
+/// Canary 1B v2, choix éditorial (deux fois plus léger que Cohere, 0,8 Go
+/// contre 1,7 Go, plus rapide, à 0,3 point de WER). Les suivants sont triés par WER. WER mesuré en Q5 ; Parakeet v3 et Whisper Turbo sont
 /// servis en Q8_0 (quantification par défaut du catalogue), au moins aussi précis.
 pub const FR_MODEL_RANKING: &[(&str, f32)] = &[
-    (RECOMMENDED_FR_MODEL_ID, 4.46),
-    (
-        "handy-computer/canary-1b-v2-gguf/canary-1b-v2-Q5_K_M.gguf",
-        4.80,
-    ),
+    (RECOMMENDED_FR_MODEL_ID, 4.80),
+    (COHERE_FR_MODEL_ID, 4.46),
     (
         "handy-computer/Voxtral-Mini-3B-2507-gguf/Voxtral-Mini-3B-2507-Q5_K_M.gguf",
         4.95,
@@ -489,6 +497,45 @@ fn hf_cached_path(repo_id: &str, revision: &str, filename: &str) -> Option<PathB
         .get(filename)
 }
 
+/// Range les modèles de l'installateur hors ligne dans le dossier de données :
+/// une mise à jour automatique réinstalle l'application sans eux et viderait
+/// le dossier d'installation. Déplacement (installation par utilisateur, même
+/// disque : instantané), copie à défaut. Un modèle déjà rangé n'est pas touché.
+fn adopt_bundled_models(shipped: &Path, kept: &Path) {
+    let Ok(entries) = fs::read_dir(shipped) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let source = entry.path();
+        if !source.is_file() {
+            continue;
+        }
+        let target = kept.join(entry.file_name());
+        if target.exists() {
+            continue;
+        }
+        if let Err(e) = fs::create_dir_all(kept) {
+            warn!("Modèle hors ligne non rangé ({}): {}", kept.display(), e);
+            return;
+        }
+        let partial = target.with_extension("partial");
+        let moved = fs::rename(&source, &target).is_ok()
+            || (fs::copy(&source, &partial).is_ok() && fs::rename(&partial, &target).is_ok());
+        if moved {
+            info!("Modèle hors ligne rangé dans {}", target.display());
+        } else {
+            let _ = fs::remove_file(&partial);
+            warn!("Modèle hors ligne non rangé : {}", source.display());
+        }
+    }
+}
+
+/// Modèle du catalogue livré par l'installateur hors ligne, s'il est présent.
+fn bundled_model_path(bundled_dir: Option<&Path>, filename: &str) -> Option<PathBuf> {
+    let path = bundled_dir?.join(filename);
+    path.is_file().then_some(path)
+}
+
 /// Friendly name advertised by GGUF metadata, if present. Empty strings are not
 /// useful display names, so callers can keep their filename/repo fallback.
 fn probed_display_name(probe: &CapabilityProbe) -> Option<String> {
@@ -656,6 +703,9 @@ pub struct ModelManager {
     /// Single-flight guard for [`Self::rescan_local_models`] so concurrent
     /// refresh requests coalesce instead of scanning the disk in parallel.
     is_rescanning: Arc<AtomicBool>,
+    /// Modèles venus de l'installateur hors ligne, rangés dans le dossier de
+    /// données (`models/offline-models`) ; `None` s'il n'y en a pas.
+    bundled_dir: Option<PathBuf>,
 }
 
 impl ModelManager {
@@ -1382,6 +1432,15 @@ impl ModelManager {
         // Auto-discover transcribe-cpp GGUF models already in the shared HF cache.
         Self::discover_hf_cache_models(&mut available_models);
 
+        // Modèles de l'installateur hors ligne, rangés dans le dossier de données.
+        let bundled_dir = {
+            let kept = models_dir.join(BUNDLED_MODELS_DIR);
+            if let Ok(resources) = app_handle.path().resource_dir() {
+                adopt_bundled_models(&resources.join(BUNDLED_MODELS_DIR), &kept);
+            }
+            kept.is_dir().then_some(kept)
+        };
+
         let manager = Self {
             app_handle: app_handle.clone(),
             models_dir,
@@ -1389,6 +1448,7 @@ impl ModelManager {
             cancel_flags: Arc::new(Mutex::new(HashMap::new())),
             extracting_models: Arc::new(Mutex::new(HashSet::new())),
             is_rescanning: Arc::new(AtomicBool::new(false)),
+            bundled_dir,
         };
 
         // Migrate any bundled models to user directory
@@ -1692,12 +1752,18 @@ impl ModelManager {
         Ok(())
     }
 
+    /// Fichier d'un modèle du catalogue inclus dans l'installateur hors ligne.
+    fn bundled_path(&self, filename: &str) -> Option<PathBuf> {
+        bundled_model_path(self.bundled_dir.as_deref(), filename)
+    }
+
     fn update_download_status(&self) -> Result<()> {
         let mut models = self.available_models.lock().unwrap();
 
         for model in models.values_mut() {
             if let ModelSource::HuggingFace { repo_id, revision } = &model.source {
-                model.is_downloaded = hf_cached_path(repo_id, revision, &model.filename).is_some();
+                model.is_downloaded = hf_cached_path(repo_id, revision, &model.filename).is_some()
+                    || bundled_model_path(self.bundled_dir.as_deref(), &model.filename).is_some();
                 model.is_downloading = false;
                 model.partial_size = 0;
                 continue;
@@ -2523,9 +2589,11 @@ impl ModelManager {
         }
 
         if let ModelSource::HuggingFace { repo_id, revision } = &model_info.source {
-            return hf_cached_path(repo_id, revision, &model_info.filename).ok_or_else(|| {
-                anyhow::anyhow!("Complete model file not found in HF cache: {}", model_id)
-            });
+            return hf_cached_path(repo_id, revision, &model_info.filename)
+                .or_else(|| self.bundled_path(&model_info.filename))
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Complete model file not found in HF cache: {}", model_id)
+                });
         }
 
         let model_path = self.models_dir.join(&model_info.filename);
@@ -3032,12 +3100,46 @@ mod tests {
             assert!(seen.insert(*id), "{id} classé deux fois");
         }
         assert!(
-            FR_MODEL_RANKING.windows(2).all(|w| w[0].1 <= w[1].1),
-            "classement trié par WER croissant"
+            FR_MODEL_RANKING[1..].windows(2).all(|w| w[0].1 <= w[1].1),
+            "après le n° 1 (choix éditorial), classement trié par WER croissant"
         );
         assert_eq!(fr_rank(DEFAULT_FR_MODEL_ID), Some(1));
         assert_eq!(fr_rank(LEGACY_FR_MODEL_ID), None);
         assert_eq!(fr_model_ranking().len(), FR_MODEL_RANKING.len());
+    }
+
+    #[test]
+    fn bundled_models_move_to_app_data_once() {
+        let shipped = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let kept = data.path().join(BUNDLED_MODELS_DIR);
+        let name = "canary-1b-v2-Q5_K_M.gguf";
+        std::fs::write(shipped.path().join(name), b"gguf").unwrap();
+        adopt_bundled_models(shipped.path(), &kept);
+        assert_eq!(std::fs::read(kept.join(name)).unwrap(), b"gguf");
+        // Déjà rangé : un second passage (ou un nouvel installateur) n'écrase rien.
+        std::fs::write(shipped.path().join(name), b"autre").unwrap();
+        adopt_bundled_models(shipped.path(), &kept);
+        assert_eq!(std::fs::read(kept.join(name)).unwrap(), b"gguf");
+        // Installateur normal : pas de dossier, rien à faire.
+        adopt_bundled_models(&shipped.path().join("absent"), &kept);
+    }
+
+    #[test]
+    fn bundled_models_are_found_only_when_shipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let name = "canary-1b-v2-Q5_K_M.gguf";
+        assert_eq!(bundled_model_path(None, name), None);
+        assert_eq!(bundled_model_path(Some(dir.path()), name), None);
+        std::fs::write(dir.path().join(name), b"gguf").unwrap();
+        assert_eq!(
+            bundled_model_path(Some(dir.path()), name),
+            Some(dir.path().join(name))
+        );
+        assert!(
+            RECOMMENDED_FR_MODEL_ID.ends_with(name),
+            "le modèle par défaut est celui de l'installateur hors ligne"
+        );
     }
 
     #[test]
