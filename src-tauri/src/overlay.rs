@@ -70,7 +70,12 @@ const OVERLAY_TOP_OFFSET: f64 = 4.0;
 #[cfg(target_os = "macos")]
 const OVERLAY_BOTTOM_OFFSET: f64 = 15.0;
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+// Windows : écart au-dessus de la barre des tâches, la position partant de la
+// zone de travail (voir `calculate_overlay_position`).
+#[cfg(target_os = "windows")]
+const OVERLAY_BOTTOM_OFFSET: f64 = 12.0;
+
+#[cfg(target_os = "linux")]
 const OVERLAY_BOTTOM_OFFSET: f64 = 40.0;
 
 #[cfg(target_os = "linux")]
@@ -222,6 +227,9 @@ fn is_mouse_within_monitor(
 ///
 /// The Bottom anchor uses the macOS work area (visibleFrame) so the overlay
 /// tracks the Dock — above it when shown, at the screen edge when hidden.
+/// OCADE : Windows uses its work area too (rcWork, without the taskbar), so
+/// the overlay always clears the taskbar whatever its size or edge — a fixed
+/// 40 px offset left it hidden behind tall or top/side taskbars.
 /// This relies on tauri 2.11's work_area.position.y fix (#14655), the same
 /// bug that led PR #969 to abandon work_area for full monitor bounds. Top and
 /// the other platforms keep full monitor bounds plus the fixed offsets
@@ -237,9 +245,23 @@ fn calculate_overlay_position(
 ) -> Option<(f64, f64)> {
     let monitor = get_monitor_with_cursor(app_handle)?;
     let scale = monitor.scale_factor();
-    let monitor_x = monitor.position().x as f64 / scale;
-    let monitor_y = monitor.position().y as f64 / scale;
-    let monitor_width = monitor.size().width as f64 / scale;
+    #[cfg(not(target_os = "windows"))]
+    let (monitor_x, monitor_y, monitor_width) = (
+        monitor.position().x as f64 / scale,
+        monitor.position().y as f64 / scale,
+        monitor.size().width as f64 / scale,
+    );
+    // Windows : zone de travail (écran moins la barre des tâches), même
+    // repère global que monitor.position.
+    #[cfg(target_os = "windows")]
+    let (monitor_x, monitor_y, monitor_width) = {
+        let wa = monitor.work_area();
+        (
+            wa.position.x as f64 / scale,
+            wa.position.y as f64 / scale,
+            wa.size.width as f64 / scale,
+        )
+    };
 
     let settings = settings::get_settings(app_handle);
 
@@ -249,12 +271,12 @@ fn calculate_overlay_position(
         OverlayPosition::Bottom => {
             // work_area.position shares monitor.position's global coordinate
             // space, so no monitor offset is added.
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             let bottom = {
                 let wa = monitor.work_area();
                 (wa.position.y as f64 + wa.size.height as f64) / scale
             };
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(target_os = "linux")]
             let bottom = monitor_y + monitor.size().height as f64 / scale;
 
             bottom - height - OVERLAY_BOTTOM_OFFSET
@@ -275,16 +297,10 @@ fn current_overlay_logical_size(window: &tauri::webview::WebviewWindow) -> Optio
 /// Creates the recording overlay window and keeps it hidden by default
 #[cfg(not(target_os = "macos"))]
 pub fn create_recording_overlay(app_handle: &AppHandle) {
-    // On Linux (Wayland), monitor detection often fails, but we don't need exact coordinates
-    // for Layer Shell as we use anchors. On other platforms, we require a monitor.
-    #[cfg(not(target_os = "linux"))]
-    {
-        let position = calculate_overlay_position(app_handle, OVERLAY_WIDTH, OVERLAY_HEIGHT);
-        if position.is_none() {
-            debug!("Failed to determine overlay position, not creating overlay window");
-            return;
-        }
-    }
+    // OCADE : la fenêtre est créée même sans écran détecté (démarrage avec
+    // Windows avant que l'affichage soit prêt, écran externe débranché) :
+    // `show_overlay_state` la positionne à chaque affichage. Auparavant elle
+    // n'était alors jamais créée, et aucun indicateur n'apparaissait de la session.
 
     // Position starts unset — update_overlay_position() sets the correct
     // LogicalPosition before the overlay is shown.
@@ -378,6 +394,13 @@ fn show_overlay_state(app_handle: &AppHandle, state: &str) {
     let settings = settings::get_settings(app_handle);
     if settings.overlay_style == OverlayStyle::None {
         return;
+    }
+
+    // Fenêtre absente (création au démarrage échouée) : on la crée maintenant.
+    #[cfg(not(target_os = "macos"))]
+    if app_handle.get_webview_window("recording_overlay").is_none() {
+        log::warn!("Fenêtre des indicateurs absente, création à la demande");
+        create_recording_overlay(app_handle);
     }
 
     // Size the overlay for this state (compact vs. streaming), then position it.
