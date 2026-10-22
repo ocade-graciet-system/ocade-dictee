@@ -6,12 +6,30 @@ const DB_MAX: f32 = -8.0;
 const GAIN: f32 = 1.3;
 const CURVE_POWER: f32 = 0.7;
 
+// Sensibilité automatique (OCADE) : un micro peu sensible, fréquent sous
+// Windows, place la voix sous la plage fixe ci-dessus et les barres restent
+// plates. La plage adaptative part du bruit de fond mesuré et monte jusqu'au
+// pic récent de la voix ; on retient la plus réactive des deux plages, si bien
+// qu'un micro déjà bien réglé (Mac) n'y perd rien.
+/// Marge au-dessus du bruit de fond avant de faire bouger une barre.
+const ADAPTIVE_FLOOR_MARGIN_DB: f32 = 6.0;
+/// Plage minimale de la sensibilité automatique : en dessous, le moindre
+/// souffle remplirait les barres.
+const ADAPTIVE_MIN_SPAN_DB: f32 = 18.0;
+/// Décroissance du pic de voix retenu, par trame (~30 trames par seconde).
+const PEAK_DECAY_DB: f32 = 0.05;
+/// Plancher du bruit de fond mesuré : aucun micro réel ne descend plus bas, et
+/// sans cette limite un silence numérique ferait réagir la moindre poussière.
+const NOISE_FLOOR_MIN_DB: f32 = -75.0;
+
 pub struct AudioVisualiser {
     fft: Arc<dyn Fft<f32>>,
     window: Vec<f32>,
     bucket_ranges: Vec<(usize, usize)>,
     fft_input: Vec<Complex32>,
     noise_floor: Vec<f32>,
+    /// Pic récent du signal (dB), haut de la plage adaptative.
+    peak_db: f32,
     buffer: Vec<f32>,
     window_size: usize,
     buckets: usize,
@@ -71,6 +89,7 @@ impl AudioVisualiser {
             bucket_ranges,
             fft_input: vec![Complex32::new(0.0, 0.0); window_size],
             noise_floor: vec![-40.0; buckets], // Initialize to reasonable noise floor
+            peak_db: DB_MIN,
             buffer: Vec::with_capacity(window_size * 2),
             window_size,
             buckets,
@@ -103,6 +122,7 @@ impl AudioVisualiser {
 
         // Compute power spectrum and bucket levels
         let mut buckets = vec![0.0; self.buckets];
+        let mut frame_peak_db = f32::MIN;
 
         for (bucket_idx, &(start_bin, end_bin)) in self.bucket_ranges.iter().enumerate() {
             if start_bin >= end_bin || end_bin > self.fft_input.len() / 2 {
@@ -125,17 +145,33 @@ impl AudioVisualiser {
                 -80.0 // Very low floor for zero power
             };
 
-            // Only update noise floor when signal is quiet (below current floor + 10dB)
-            if db < self.noise_floor[bucket_idx] + 10.0 {
+            // Only update noise floor when signal is quiet (below current floor + 10dB).
+            // A quieter signal pulls it down quickly: a low-gain mic sits far below
+            // the initial -40 dB guess, and the adaptive range starts from here.
+            if db < self.noise_floor[bucket_idx] {
+                const NOISE_DROP_ALPHA: f32 = 0.1;
+                self.noise_floor[bucket_idx] = (NOISE_DROP_ALPHA * db
+                    + (1.0 - NOISE_DROP_ALPHA) * self.noise_floor[bucket_idx])
+                    .max(NOISE_FLOOR_MIN_DB);
+            } else if db < self.noise_floor[bucket_idx] + 10.0 {
                 const NOISE_ALPHA: f32 = 0.001; // Very slow adaptation
                 self.noise_floor[bucket_idx] =
                     NOISE_ALPHA * db + (1.0 - NOISE_ALPHA) * self.noise_floor[bucket_idx];
             }
+            frame_peak_db = frame_peak_db.max(db);
 
-            // Map configurable dB range to 0-1 with gain and curve shaping
-            let normalized = ((db - DB_MIN) / (DB_MAX - DB_MIN)).clamp(0.0, 1.0);
+            // Map configurable dB range to 0-1 with gain and curve shaping, or the
+            // adaptive range (noise floor → recent peak) when it reacts more.
+            let fixed = ((db - DB_MIN) / (DB_MAX - DB_MIN)).clamp(0.0, 1.0);
+            let low = self.noise_floor[bucket_idx] + ADAPTIVE_FLOOR_MARGIN_DB;
+            let high = self.peak_db.max(low + ADAPTIVE_MIN_SPAN_DB);
+            let adaptive = ((db - low) / (high - low)).clamp(0.0, 1.0);
+            let normalized = fixed.max(adaptive);
             buckets[bucket_idx] = (normalized * GAIN).powf(CURVE_POWER).clamp(0.0, 1.0);
         }
+
+        // Le pic retenu suit la voix aussitôt et redescend lentement.
+        self.peak_db = (self.peak_db - PEAK_DECAY_DB).max(frame_peak_db);
 
         // Apply light smoothing to reduce jitter
         for i in 1..buckets.len() - 1 {
@@ -152,5 +188,85 @@ impl AudioVisualiser {
         self.buffer.clear();
         // Reset noise floor to initial values
         self.noise_floor.fill(-40.0);
+        self.peak_db = DB_MIN;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RATE: u32 = 48_000;
+    const WINDOW: usize = 2048;
+
+    /// Signal de parole schématique : quelques harmoniques vocales, d'amplitude
+    /// crête `amplitude`.
+    fn voice(amplitude: f32, offset: usize) -> Vec<f32> {
+        (0..WINDOW)
+            .map(|i| {
+                let t = (offset + i) as f32 / RATE as f32;
+                let s: f32 = [220.0f32, 440.0, 880.0, 1760.0]
+                    .iter()
+                    .map(|f| (2.0 * std::f32::consts::PI * f * t).sin())
+                    .sum();
+                amplitude * s / 4.0
+            })
+            .collect()
+    }
+
+    /// Bruit blanc uniforme (générateur congruentiel), reproductible.
+    fn noise(amplitude: f32, seed: usize) -> Vec<f32> {
+        let mut state = (seed as u64).wrapping_mul(6_364_136_223_846_793_005) | 1;
+        (0..WINDOW)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                let u = (state >> 40) as f32 / (1u64 << 24) as f32;
+                amplitude * (2.0 * u - 1.0)
+            })
+            .collect()
+    }
+
+    fn max_level(levels: &[f32]) -> f32 {
+        levels.iter().cloned().fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn quiet_microphone_still_moves_the_bars() {
+        let mut v = AudioVisualiser::new(RATE, WINDOW, 16, 80.0, 4000.0);
+        // Une seconde de silence ambiant très bas (micro peu sensible)…
+        for k in 0..30 {
+            v.feed(&noise(0.0005, k * WINDOW));
+        }
+        // …puis une voix faible, que la plage fixe laissait complètement à plat
+        // (chaque harmonique vers -58 dB, sous DB_MIN).
+        let mut last = Vec::new();
+        for k in 0..15 {
+            last = v.feed(&voice(0.02, k * WINDOW)).unwrap();
+        }
+        assert!(
+            max_level(&last) > 0.4,
+            "voix faible : barres trop basses ({:?})",
+            max_level(&last)
+        );
+        // Retour au silence : les barres retombent.
+        let mut quiet = Vec::new();
+        for k in 0..30 {
+            quiet = v.feed(&noise(0.0005, k * WINDOW)).unwrap();
+        }
+        assert!(
+            max_level(&quiet) < 0.35,
+            "silence : {:?}",
+            max_level(&quiet)
+        );
+    }
+
+    #[test]
+    fn loud_microphone_is_not_less_reactive_than_before() {
+        let mut v = AudioVisualiser::new(RATE, WINDOW, 16, 80.0, 4000.0);
+        // Référence : 0,48 avec la seule plage fixe (comportement d'avant).
+        let levels = v.feed(&voice(0.3, 0)).unwrap();
+        assert!(max_level(&levels) >= 0.48, "{:?}", max_level(&levels));
     }
 }
