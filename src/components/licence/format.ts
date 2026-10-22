@@ -81,7 +81,7 @@ export function formatDateTime(seconds: number): string {
 }
 
 /** Adresse de contact affichée aux utilisateurs pour toute question de licence. */
-export const CONTACT_EMAIL = "contact@ocadefusion.fr";
+export const CONTACT_EMAIL = "contact@graciet.info";
 
 /**
  * Lien `mailto:` vers OCADE, avec un e-mail prérempli : ordinateur, suffixe de
