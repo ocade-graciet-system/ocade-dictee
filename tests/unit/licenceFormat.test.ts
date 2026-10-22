@@ -153,7 +153,7 @@ describe("bannerFor — rappels dans l'application", () => {
 describe("contactMailto — e-mail prérempli vers OCADE", () => {
   test("destinataire, objet et informations du poste", () => {
     const url = contactMailto(t, baseView, "1.8.0");
-    expect(url.startsWith("mailto:contact@ocadefusion.fr?subject=")).toBe(true);
+    expect(url.startsWith("mailto:contact@graciet.info?subject=")).toBe(true);
     const body = decodeURIComponent(url.split("&body=")[1] ?? "");
     expect(body).toContain("3RCP");
     expect(body).toContain("PC-TEST");
