@@ -614,7 +614,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p src-tauri/offline-models
-          curl -fL --retry 5 --retry-delay 10 -o "src-tauri/offline-models/$MODEL_FILE" "$MODEL_URL"
+          # Reprise du téléchargement (-C -) et nouvel essai sur toute erreur,
+          # coupure en cours de transfert comprise (curl 18 sur 1,7 Go).
+          curl -fL --retry 8 --retry-delay 15 --retry-all-errors -C - \
+            -o "src-tauri/offline-models/$MODEL_FILE" "$MODEL_URL"
           echo "$MODEL_SHA256  src-tauri/offline-models/$MODEL_FILE" | sha256sum -c -
           bun run tauri build ${{ inputs.build-args }} \
             --config '{"bundle":{"resources":{"offline-models":"offline-models"},"createUpdaterArtifacts":false}}'
