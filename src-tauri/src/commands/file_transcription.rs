@@ -33,6 +33,14 @@ const CHUNK_LEN_SAMPLES: usize = 30 * 16_000;
 /// que la structuration LLM de la Phase B pourra lisser.
 const CHUNK_OVERLAP_SAMPLES: usize = 0;
 
+/// Plus court morceau encore redécoupé quand un tronçon échoue (5 s).
+const MIN_RETRY_SAMPLES: usize = 5 * 16_000;
+/// Laissé dans le document à la place d'un passage impossible à transcrire.
+const UNTRANSCRIBED_MARK: &str = "[passage non transcrit]";
+/// Tronçons en échec d'affilée, dès le début, au-delà desquels l'erreur est
+/// jugée systémique (modèle absent, moteur hors service) et le fichier abandonné.
+const MAX_LEADING_FAILED_CHUNKS: usize = 3;
+
 /// Drapeau d'annulation partagé pour le pipeline de transcription de fichier.
 /// L'app ne traite qu'un fichier à la fois (pas de file d'attente), donc un
 /// simple static suffit — pas besoin de le faire transiter par le state Tauri
@@ -854,16 +862,31 @@ fn run_pipeline(
     tm.initiate_model_load();
 
     let mut texts: Vec<String> = Vec::with_capacity(ranges.len());
+    let mut transcribe = |pcm: &[f32]| tm.transcribe(pcm.to_vec()).map_err(|e| e.to_string());
+    let cancelled = || CANCEL_FILE_TRANSCRIPTION.load(Ordering::Relaxed);
     for (i, range) in ranges.into_iter().enumerate() {
-        if CANCEL_FILE_TRANSCRIPTION.load(Ordering::Relaxed) {
+        if cancelled() {
             return Err("Transcription annulée par l'utilisateur".to_string());
         }
 
-        let chunk_samples = samples[range].to_vec();
-        let text = tm
-            .transcribe(chunk_samples)
-            .map_err(|e| format!("Échec de la transcription (tronçon {}/{total}): {e}", i + 1))?;
-        texts.push(text);
+        // Un passage difficile ne fait plus échouer tout le fichier : il est
+        // redécoupé, et au pire marqué comme non transcrit.
+        match transcribe_chunk_resilient(&samples[range], &mut transcribe, &cancelled) {
+            Ok(text) => texts.push(text),
+            Err(e)
+                if i + 1 >= MAX_LEADING_FAILED_CHUNKS
+                    && texts.iter().all(|t| t == UNTRANSCRIBED_MARK) =>
+            {
+                return Err(format!(
+                    "Échec de la transcription (tronçon {}/{total}): {e}",
+                    i + 1
+                ));
+            }
+            Err(e) => {
+                warn!("Tronçon {}/{total} non transcrit : {e}", i + 1);
+                texts.push(UNTRANSCRIBED_MARK.to_string());
+            }
+        }
 
         emit_progress(
             app,
@@ -873,8 +896,11 @@ fn run_pipeline(
         );
     }
 
-    if CANCEL_FILE_TRANSCRIPTION.load(Ordering::Relaxed) {
+    if cancelled() {
         return Err("Transcription annulée par l'utilisateur".to_string());
+    }
+    if !texts.is_empty() && texts.iter().all(|t| t == UNTRANSCRIBED_MARK) {
+        return Err("Échec de la transcription : aucun passage n'a pu être transcrit".to_string());
     }
 
     emit_progress(app, FileTranscriptionPhase::Assemble, 0, 1);
@@ -925,9 +951,111 @@ pub fn cancel_file_transcription() {
     CANCEL_FILE_TRANSCRIPTION.store(true, Ordering::Relaxed);
 }
 
+/// Transcrit un tronçon sans laisser un passage difficile faire échouer tout
+/// le fichier : en cas d'échec, le morceau est coupé en deux et chaque moitié
+/// retentée, jusqu'à [`MIN_RETRY_SAMPLES`] ; un morceau qui échoue encore est
+/// remplacé par [`UNTRANSCRIBED_MARK`]. Ne renvoie une erreur que si rien n'a
+/// pu être transcrit dans le tronçon.
+fn transcribe_chunk_resilient(
+    samples: &[f32],
+    transcribe: &mut dyn FnMut(&[f32]) -> Result<String, String>,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<String, String> {
+    struct Run<'a, 'b> {
+        transcribe: &'a mut dyn FnMut(&[f32]) -> Result<String, String>,
+        cancelled: &'b dyn Fn() -> bool,
+        parts: Vec<String>,
+        any_ok: bool,
+        last_err: Option<String>,
+    }
+
+    fn go(run: &mut Run, samples: &[f32]) {
+        if (run.cancelled)() {
+            return;
+        }
+        match (run.transcribe)(samples) {
+            Ok(text) => {
+                run.any_ok = true;
+                run.parts.push(text);
+            }
+            Err(e) if samples.len() >= 2 * MIN_RETRY_SAMPLES => {
+                warn!(
+                    "Échec sur {:.1} s d'audio, nouvel essai en deux moitiés : {e}",
+                    samples.len() as f32 / 16_000.0
+                );
+                let (first, second) = samples.split_at(samples.len() / 2);
+                go(run, first);
+                go(run, second);
+            }
+            Err(e) => {
+                if run.parts.last().map(String::as_str) != Some(UNTRANSCRIBED_MARK) {
+                    run.parts.push(UNTRANSCRIBED_MARK.to_string());
+                }
+                run.last_err = Some(e);
+            }
+        }
+    }
+
+    let mut run = Run {
+        transcribe,
+        cancelled,
+        parts: Vec::new(),
+        any_ok: false,
+        last_err: None,
+    };
+    go(&mut run, samples);
+    match run.last_err {
+        Some(e) if !run.any_ok => Err(e),
+        _ => Ok(assemble_document(&run.parts)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SECOND: usize = 16_000;
+
+    /// Moteur factice : échoue sur tout morceau qui contient l'échantillon
+    /// « piège » (valeur 1.0), transcrit les autres par leur durée en secondes.
+    fn fake_engine(pcm: &[f32]) -> Result<String, String> {
+        if pcm.contains(&1.0) {
+            Err("output truncated".into())
+        } else {
+            Ok(format!("{}s", pcm.len() / SECOND))
+        }
+    }
+
+    #[test]
+    fn resilient_chunk_passes_through_on_success() {
+        let pcm = vec![0.0; 30 * SECOND];
+        let out = transcribe_chunk_resilient(&pcm, &mut fake_engine, &|| false);
+        assert_eq!(out.unwrap(), "30s");
+    }
+
+    #[test]
+    fn resilient_chunk_isolates_the_failing_passage() {
+        // Piège au début de la 2e moitié (15 s) : 30 → 15 + 15, la 2e moitié
+        // → 7,5 + 7,5, dont la 1re (7,5 s < 10 s) reste en échec.
+        let mut pcm = vec![0.0; 30 * SECOND];
+        pcm[15 * SECOND] = 1.0;
+        let out = transcribe_chunk_resilient(&pcm, &mut fake_engine, &|| false);
+        assert_eq!(out.unwrap(), format!("15s {UNTRANSCRIBED_MARK} 7s"));
+    }
+
+    #[test]
+    fn resilient_chunk_fails_only_when_nothing_is_transcribed() {
+        let pcm = vec![1.0; 30 * SECOND];
+        let mut calls = 0;
+        let mut engine = |pcm: &[f32]| {
+            calls += 1;
+            fake_engine(pcm)
+        };
+        let out = transcribe_chunk_resilient(&pcm, &mut engine, &|| false);
+        assert_eq!(out.unwrap_err(), "output truncated");
+        // 30 s, 2 × 15 s, 4 × 7,5 s : jamais plus de 7 essais par tronçon.
+        assert_eq!(calls, 7);
+    }
 
     /// Le nombre de tronçons annoncé dans les events de progression doit
     /// correspondre exactement à ce que produit `chunk_ranges` avec les

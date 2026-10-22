@@ -1259,8 +1259,20 @@ impl TranscriptionManager {
                         session
                             .run(&audio, &run_options)
                             .map(|t| t.text)
-                            .map_err(|e| {
-                                anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
+                            .or_else(|e| match truncated_partial_text(&e) {
+                                // Budget de génération atteint, le plus souvent
+                                // une boucle de répétition sur un passage bruité
+                                // ou musical : le texte déjà produit est gardé,
+                                // et `filter_transcription_output` en retire
+                                // ensuite la boucle.
+                                Some(text) => {
+                                    warn!("transcribe-cpp: sortie tronquée, texte partiel conservé ({e})");
+                                    Ok(text)
+                                }
+                                None => Err(anyhow::anyhow!(
+                                    "transcribe-cpp transcription failed: {}",
+                                    e
+                                )),
                             })
                     }
                     LoadedEngine::Parakeet(parakeet_engine) => {
@@ -1600,6 +1612,18 @@ fn transcribe_cpp_run_plan(
     }
 }
 
+/// Texte partiel d'un décodage arrêté par le budget de génération
+/// (`OutputTruncated`), s'il n'est pas vide. `None` pour toute autre erreur.
+fn truncated_partial_text(err: &transcribe_cpp::Error) -> Option<String> {
+    match err {
+        transcribe_cpp::Error::OutputTruncated { .. } => err
+            .partial()
+            .map(|p| p.text.trim().to_string())
+            .filter(|text| !text.is_empty()),
+        _ => None,
+    }
+}
+
 fn post_process_transcription_text(
     raw: String,
     settings: &AppSettings,
@@ -1889,6 +1913,34 @@ pub fn get_available_accelerators() -> AvailableAccelerators {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn truncated(text: Option<&str>) -> transcribe_cpp::Error {
+        transcribe_cpp::Error::OutputTruncated {
+            message: "decode hit the context/generation cap".into(),
+            partial: text.map(|t| {
+                Box::new(transcribe_cpp::Transcript {
+                    text: t.into(),
+                    ..Default::default()
+                })
+            }),
+        }
+    }
+
+    #[test]
+    fn truncated_output_keeps_partial_text() {
+        assert_eq!(
+            truncated_partial_text(&truncated(Some(" Bonjour à tous. "))).as_deref(),
+            Some("Bonjour à tous.")
+        );
+    }
+
+    #[test]
+    fn truncated_output_without_text_stays_an_error() {
+        assert_eq!(truncated_partial_text(&truncated(None)), None);
+        assert_eq!(truncated_partial_text(&truncated(Some("  "))), None);
+        let other = transcribe_cpp::Error::InvalidArgument("x".into());
+        assert_eq!(truncated_partial_text(&other), None);
+    }
 
     fn languages(codes: &[&str]) -> Vec<String> {
         codes.iter().map(|code| (*code).to_string()).collect()
