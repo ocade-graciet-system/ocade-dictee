@@ -1113,6 +1113,193 @@ async cancelSummary() : Promise<void> {
 async summaryStatus() : Promise<SummaryStatus> {
     return await TAURI_INVOKE("summary_status");
 },
+async meetingRecorderStatus() : Promise<MeetingRecorderStatus> {
+    return await TAURI_INVOKE("meeting_recorder_status");
+},
+async meetingStart() : Promise<Result<MeetingRecorderStatus, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_start") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingPause() : Promise<Result<MeetingRecorderStatus, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_pause") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingResume() : Promise<Result<MeetingRecorderStatus, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_resume") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingStop() : Promise<Result<MeetingRecording, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_stop") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingList() : Promise<Result<MeetingRecording[], MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingRename(id: number, name: string) : Promise<Result<null, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_rename", { id, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingDelete(id: number) : Promise<Result<null, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fichier WAV à écouter (le premier, pour un enregistrement de plus de 37 h).
+ */
+async meetingAudioPath(id: number) : Promise<Result<string, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_audio_path", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Copie l'enregistrement là où l'utilisateur l'a choisi.
+ */
+async meetingExport(id: number, destPath: string) : Promise<Result<null, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_export", { id, destPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingAssets() : Promise<Result<MeetingAssets, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_assets") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingImportTextAsset(kind: TextAssetKind, path: string) : Promise<Result<MeetingAssets, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_import_text_asset", { kind, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingSetTextAsset(kind: TextAssetKind, text: string) : Promise<Result<MeetingAssets, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_set_text_asset", { kind, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingClearTextAsset(kind: TextAssetKind) : Promise<Result<MeetingAssets, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_clear_text_asset", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingSaveGraphicCharter(charter: GraphicCharter) : Promise<Result<MeetingAssets, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_save_graphic_charter", { charter }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingImportLogo(path: string) : Promise<Result<MeetingAssets, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_import_logo", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingClearLogo() : Promise<Result<MeetingAssets, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_clear_logo") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingClearGraphicCharter() : Promise<Result<MeetingAssets, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_clear_graphic_charter") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Rédige le compte rendu de l'enregistrement (progression : événement
+ * `meeting-report-progress`). `retranscribe` refait la transcription au lieu
+ * de réutiliser celle déjà conservée.
+ */
+async meetingGenerateReport(id: number, retranscribe: boolean) : Promise<Result<MeetingReport, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_generate_report", { id, retranscribe }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingCancelReport() : Promise<void> {
+    await TAURI_INVOKE("meeting_cancel_report");
+},
+/**
+ * Un compte rendu est en cours de rédaction.
+ */
+async meetingReportRunning() : Promise<boolean> {
+    return await TAURI_INVOKE("meeting_report_running");
+},
+async meetingGetReport(id: number) : Promise<Result<MeetingReport, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_get_report", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Enregistre le compte rendu en document Word, mis en forme avec la charte
+ * graphique (couleurs, police, pied de page, logo).
+ */
+async meetingExportReportDocx(id: number, destPath: string, logo: ReportLogo | null) : Promise<Result<null, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_export_report_docx", { id, destPath, logo }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Stub implementation for non-macOS platforms
  * Always returns false since laptop detection is macOS-specific
@@ -1133,6 +1320,9 @@ async isLaptop() : Promise<Result<boolean, string>> {
 export const events = __makeEvents__<{
 fileTranscriptionProgress: FileTranscriptionProgress,
 historyUpdatePayload: HistoryUpdatePayload,
+meetingRecorderStatus: MeetingRecorderStatus,
+meetingRecordingFinished: MeetingRecordingFinished,
+meetingReportProgress: MeetingReportProgress,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent,
 summaryProgress: SummaryProgress,
@@ -1140,6 +1330,9 @@ videoDownloadProgress: VideoDownloadProgress
 }>({
 fileTranscriptionProgress: "file-transcription-progress",
 historyUpdatePayload: "history-update-payload",
+meetingRecorderStatus: "meeting-recorder-status",
+meetingRecordingFinished: "meeting-recording-finished",
+meetingReportProgress: "meeting-report-progress",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event",
 summaryProgress: "summary-progress",
@@ -1309,7 +1502,28 @@ export type FileTranscriptionResult = { path: string; content: string;
  */
 history_id: number | null }
 /**
- * Une place du classement des modèles français.
+ * Pourquoi un enregistrement s'est terminé.
+ */
+export type FinishReason = 
+/**
+ * « Terminer l'enregistrement ».
+ */
+"user" | 
+/**
+ * Disque presque plein : arrêt avant d'écrire un fichier tronqué.
+ */
+"diskFull" | 
+/**
+ * Écriture impossible (disque retiré, droits…).
+ */
+"writeFailed" | 
+/**
+ * Fermeture de l'application pendant l'enregistrement.
+ */
+"appExit"
+/**
+ * Une place du classement des modèles français, avec ce qu'il faut afficher
+ * pour respecter sa licence (À propos).
  */
 export type FrModelRank = { id: string; 
 /**
@@ -1329,6 +1543,19 @@ license: string;
  */
 source_url: string }
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
+/**
+ * Charte graphique appliquée au document du compte rendu (par l'application,
+ * pas par le modèle).
+ */
+export type GraphicCharter = { 
+/**
+ * `#RRGGBB`.
+ */
+primaryColor: string; secondaryColor: string; font: string; 
+/**
+ * Mention de pied de page (vide : aucune).
+ */
+footer: string }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 /**
@@ -1441,6 +1668,97 @@ token_expires_at: number | null; seats_max: number | null; seats_used: number | 
  */
 refusal: string | null }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+export type MeetingAssets = { editorial: TextAsset | null; skill: TextAsset | null; graphic: GraphicCharter | null; 
+/**
+ * Chemin absolu du logo, pour l'aperçu.
+ */
+logoPath: string | null; graphicUpdatedAt: number | null }
+/**
+ * Erreurs remontées au front, qui les traduit (`meeting.errors.*`).
+ */
+export type MeetingError = { kind: "alreadyRecording" } | { kind: "notRecording" } | 
+/**
+ * Accès au micro refusé par le système (réglages de confidentialité).
+ */
+{ kind: "microphonePermission" } | { kind: "noMicrophone" } | { kind: "microphoneFailed"; detail: string } | { kind: "diskSpace"; freeBytes: number } | 
+/**
+ * Enregistrement en cours : ni suppression ni export.
+ */
+{ kind: "inProgress" } | { kind: "notFound" } | { kind: "unsupportedFile" } | { kind: "fileTooLarge"; maxBytes: number } | { kind: "invalidFile"; detail: string } | { kind: "invalidValue" } | { kind: "storage"; detail: string } | 
+/**
+ * Mode strict sans licence valide.
+ */
+{ kind: "licenceRequired" } | 
+/**
+ * Un compte rendu est déjà en cours de rédaction.
+ */
+{ kind: "reportBusy" } | { kind: "cancelled" } | 
+/**
+ * Transcription impossible (modèle de transcription absent, audio
+ * illisible ou sans parole).
+ */
+{ kind: "transcription"; detail: string } | 
+/**
+ * Charte et skill trop longs pour le contexte du modèle local.
+ */
+{ kind: "assetsTooLong" } | 
+/**
+ * Étape de rédaction : erreur du moteur local (téléchargement, mémoire…).
+ */
+{ kind: "summary"; error: SummaryError }
+/**
+ * État courant de l'enregistreur, émis plusieurs fois par seconde pendant un
+ * enregistrement (chronomètre, niveau du micro) et à chaque changement de
+ * phase (événement `meeting-recorder-status`).
+ */
+export type MeetingRecorderStatus = { phase: RecorderPhase; 
+/**
+ * Enregistrement en cours (`None` au repos).
+ */
+recordingId: number | null; 
+/**
+ * Durée d'audio enregistrée, pauses exclues.
+ */
+durationMs: number; sizeBytes: number; 
+/**
+ * Niveau du micro, de 0 (silence) à 1.
+ */
+level: number; 
+/**
+ * Nom du micro qui enregistre (`None` hors enregistrement).
+ */
+microphone: string | null }
+export type MeetingRecording = { id: number; name: string; 
+/**
+ * Début de l'enregistrement, horodatage unix (secondes).
+ */
+createdAt: number; durationMs: number; sizeBytes: number; state: RecordingState; 
+/**
+ * Nombre de fichiers WAV : 1, sauf au-delà de ~37 h d'audio (limite de
+ * 4 Go du format WAV), où l'enregistrement continue dans un fichier suivant.
+ */
+parts: number; 
+/**
+ * Un compte rendu a déjà été rédigé.
+ */
+hasReport: boolean }
+/**
+ * Événement `meeting-recording-finished` : l'enregistrement est terminé et
+ * son fichier est complet.
+ */
+export type MeetingRecordingFinished = { recording: MeetingRecording; reason: FinishReason }
+/**
+ * Transcription et compte rendu d'un enregistrement.
+ */
+export type MeetingReport = { recordingId: number; transcript: string | null; 
+/**
+ * Compte rendu Markdown, `None` tant qu'il n'a pas été rédigé.
+ */
+markdown: string | null; updatedAt: number | null }
+/**
+ * Événement `meeting-report-progress`.
+ */
+export type MeetingReportProgress = { recordingId: number; phase: ReportPhase; current: number; total: number }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
 /**
@@ -1521,7 +1839,58 @@ export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
+/**
+ * Phase de l'enregistreur.
+ */
+export type RecorderPhase = "idle" | "recording" | "paused" | 
+/**
+ * Le micro a cessé de répondre (débranché, casque Bluetooth éteint…) :
+ * l'enregistrement continue dès qu'un micro répond de nouveau.
+ */
+"reconnecting"
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
+/**
+ * État d'un enregistrement de la liste.
+ */
+export type RecordingState = "inProgress" | "done" | 
+/**
+ * L'application s'est arrêtée pendant l'enregistrement (plantage,
+ * extinction de l'ordinateur) : l'audio est conservé jusqu'à
+ * l'interruption.
+ */
+"interrupted"
+/**
+ * Logo converti en PNG par l'interface (qui sait lire SVG, WebP, GIF…).
+ */
+export type ReportLogo = { pngBase64: string; width: number; height: number }
+/**
+ * Étape en cours, pour l'encart de progression de l'onglet Réunion.
+ */
+export type ReportPhase = 
+/**
+ * `current` / `total` : tronçons de 30 s transcrits.
+ */
+"transcribing" | 
+/**
+ * Téléchargement unique du moteur, en pourcentage.
+ */
+"engine" | 
+/**
+ * Téléchargement unique du modèle de rédaction, en pourcentage.
+ */
+"model" | 
+/**
+ * Chargement du modèle en mémoire.
+ */
+"starting" | 
+/**
+ * `current` / `total` : appels au modèle (notes puis synthèse).
+ */
+"writing" | 
+/**
+ * Corrections de la charte et enregistrement.
+ */
+"formatting"
 export type SecretMap = Partial<{ [key in string]: string }>
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
@@ -1587,7 +1956,14 @@ export type SummaryError =
  * Le serveur a répondu, mais le fichier n'est pas arrivé complet (statut
  * HTTP inattendu, flux coupé, taille incohérente, écriture impossible).
  */
-{ kind: "downloadFailed"; asset: SummaryAsset; host: string; detail: string } | { kind: "checksumMismatch" } | { kind: "engineStartFailed"; detail: string } | { kind: "incompleteOutput" } | { kind: "cancelled" } | 
+{ kind: "downloadFailed"; asset: SummaryAsset; host: string; detail: string } | { kind: "checksumMismatch" } | { kind: "engineStartFailed"; detail: string } | 
+/**
+ * Le moteur tournait, mais le texte envoyé et la sortie demandée
+ * dépassent son contexte (`llama-server` : HTTP 400
+ * `exceed_context_size_error`). `detail` reprend sa réponse, avec le
+ * nombre de tokens du prompt et la taille du contexte.
+ */
+{ kind: "contextExceeded"; detail: string } | { kind: "incompleteOutput" } | { kind: "cancelled" } | 
 /**
  * Un résumé est déjà en cours.
  */
@@ -1625,6 +2001,19 @@ export type SummaryStatus = { engineReady: boolean; modelReady: boolean;
  * Octets restant à télécharger (0 si tout est installé).
  */
 downloadSizeBytes: number }
+export type TextAsset = { 
+/**
+ * Nom du fichier importé ; `None` pour un texte collé.
+ */
+fileName: string | null; content: string; words: number; updatedAt: number; 
+/**
+ * Skill : `name` et `description` de son en-tête YAML, s'il en a un.
+ */
+title: string | null; description: string | null }
+/**
+ * Élément texte du compte rendu : charte éditoriale ou skill.
+ */
+export type TextAssetKind = "editorial" | "skill"
 /**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.

@@ -15,6 +15,7 @@ mod input;
 mod licence;
 mod llm_client;
 mod managers;
+mod meeting;
 mod overlay;
 pub mod portable;
 mod settings;
@@ -328,6 +329,21 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     summary_engine.cleanup_orphan();
     summary::commands::spawn_idle_watchdog(summary_engine.clone());
     app_handle.manage(summary_engine);
+
+    // Enregistrement de réunion : les enregistrements interrompus par un arrêt
+    // brutal sont réparés avant que l'onglet ne les liste.
+    match meeting::store::MeetingStore::new(app_handle) {
+        Ok(store) => {
+            if let Err(e) = store.recover_interrupted() {
+                log::warn!("Réunions interrompues non récupérées : {e}");
+            }
+            app_handle.manage(Arc::new(meeting::recorder::MeetingRecorder::new(
+                app_handle,
+                Arc::new(store),
+            )));
+        }
+        Err(e) => log::error!("Enregistrement de réunion indisponible : {e}"),
+    }
 
     app_handle.manage(tray::CurrentTrayIconState::new());
 
@@ -774,6 +790,29 @@ pub fn run(cli_args: CliArgs) {
             summary::commands::summarize_document,
             summary::commands::cancel_summary,
             summary::commands::summary_status,
+            meeting::commands::meeting_recorder_status,
+            meeting::commands::meeting_start,
+            meeting::commands::meeting_pause,
+            meeting::commands::meeting_resume,
+            meeting::commands::meeting_stop,
+            meeting::commands::meeting_list,
+            meeting::commands::meeting_rename,
+            meeting::commands::meeting_delete,
+            meeting::commands::meeting_audio_path,
+            meeting::commands::meeting_export,
+            meeting::commands::meeting_assets,
+            meeting::commands::meeting_import_text_asset,
+            meeting::commands::meeting_set_text_asset,
+            meeting::commands::meeting_clear_text_asset,
+            meeting::commands::meeting_save_graphic_charter,
+            meeting::commands::meeting_import_logo,
+            meeting::commands::meeting_clear_logo,
+            meeting::commands::meeting_clear_graphic_charter,
+            meeting::commands::meeting_generate_report,
+            meeting::commands::meeting_cancel_report,
+            meeting::commands::meeting_report_running,
+            meeting::commands::meeting_get_report,
+            meeting::commands::meeting_export_report_docx,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![
@@ -783,6 +822,9 @@ pub fn run(cli_args: CliArgs) {
             commands::file_transcription::FileTranscriptionProgress,
             commands::video_download::VideoDownloadProgress,
             summary::SummaryProgress,
+            meeting::MeetingRecorderStatus,
+            meeting::MeetingRecordingFinished,
+            meeting::report::MeetingReportProgress,
         ]);
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
@@ -1086,6 +1128,11 @@ pub fn run(cli_args: CliArgs) {
             // compte-rendu (processus enfant) est tué ici, sinon il survivrait
             // à l'application.
             tauri::RunEvent::Exit => {
+                // Une réunion en cours est finalisée : fichier complet et
+                // liste à jour, rien à réparer au prochain démarrage.
+                if let Some(recorder) = app.try_state::<Arc<meeting::recorder::MeetingRecorder>>() {
+                    recorder.shutdown();
+                }
                 if let Some(engine) = app.try_state::<Arc<summary::engine::SummaryEngine>>() {
                     stop_summary_engine(&engine);
                 }

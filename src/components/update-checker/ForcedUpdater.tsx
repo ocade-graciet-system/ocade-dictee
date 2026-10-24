@@ -82,13 +82,17 @@ export const ForcedUpdater: React.FC = () => {
   // redémarrage, mais l'écran de préparation du premier lancement disparaîtrait
   // en plein transfert de 512 Mo. Côté page Fichier, tout est également perdu
   // par un redémarrage : la transcription et le compte-rendu se comptent en
-  // minutes, un téléchargement de vidéo repartirait de zéro.
+  // minutes, un téléchargement de vidéo repartirait de zéro. Un enregistrement
+  // de réunion, en cours ou en pause, peut durer des heures, et la rédaction
+  // de son compte rendu plusieurs minutes : le redémarrage les couperait net.
   const isBusyElsewhere = async () => {
     const models = useModelStore.getState();
     const files = useFileTranscriptionStore.getState();
     return (
       (await commands.isRecording()) ||
       (await commands.isTranscribing()) ||
+      (await commands.meetingRecorderStatus()).phase !== "idle" ||
+      (await commands.meetingReportRunning()) ||
       Object.keys(models.downloadingModels).length > 0 ||
       Object.keys(models.verifyingModels).length > 0 ||
       Object.keys(models.extractingModels).length > 0 ||
