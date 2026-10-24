@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use chrono::{Local, NaiveDate, TimeZone};
 use tauri::{AppHandle, Manager, State};
 use tauri_specta::Event;
 
@@ -24,9 +25,27 @@ fn dictation_in_progress(app: &AppHandle) -> bool {
     recording || transcribing
 }
 
+/// Jour local d'un horodatage unix (secondes) ; `None` hors des dates
+/// représentables.
+fn local_date(unix_secs: i64) -> Option<NaiveDate> {
+    Local
+        .timestamp_opt(unix_secs, 0)
+        .single()
+        .map(|datetime| datetime.date_naive())
+}
+
+/// Date de l'enregistrement donnée au modèle : jour (heure locale) de création
+/// de l'entrée d'historique, sinon aujourd'hui.
+fn recording_date(created_at: Option<i64>) -> NaiveDate {
+    created_at
+        .and_then(local_date)
+        .unwrap_or_else(|| Local::now().date_naive())
+}
+
 /// Produit le compte-rendu Markdown de `text`. Si `history_id` est fourni, le
 /// compte-rendu est enregistré dans l'entrée d'historique correspondante (un
-/// échec d'enregistrement n'invalide pas le résultat renvoyé).
+/// échec d'enregistrement n'invalide pas le résultat renvoyé), et la date de
+/// création de l'entrée sert de date de l'enregistrement dans les prompts.
 ///
 /// Un seul résumé à la fois : le moteur rend `SummaryError::Busy` si un autre
 /// est déjà en cours. La progression part en événement `summary-progress`.
@@ -39,11 +58,18 @@ pub async fn summarize_document(
     text: String,
     history_id: Option<i64>,
 ) -> Result<String, SummaryError> {
+    let created_at = history_id.and_then(|id| {
+        file_history.created_at(id).unwrap_or_else(|e| {
+            log::warn!("Date de l'entrée d'historique {id} illisible, date du jour retenue: {e}");
+            None
+        })
+    });
     let dictation_app = app.clone();
     let progress_app = app.clone();
     let result = engine
         .run(
             &text,
+            recording_date(created_at),
             move || dictation_in_progress(&dictation_app),
             move |phase, current, total| {
                 let _ = SummaryProgress {
@@ -105,4 +131,35 @@ pub fn spawn_idle_watchdog(engine: Arc<SummaryEngine>) {
             engine.stop_if_idle_async(IDLE_TIMEOUT).await;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_recording_date_is_the_local_day_of_the_history_entry() {
+        // Midi, heure locale : le même jour quel que soit le fuseau de la machine.
+        let noon = NaiveDate::from_ymd_opt(2026, 10, 22)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let created_at = Local.from_local_datetime(&noon).unwrap().timestamp();
+        assert_eq!(
+            recording_date(Some(created_at)),
+            NaiveDate::from_ymd_opt(2026, 10, 22).unwrap()
+        );
+    }
+
+    #[test]
+    fn without_a_usable_history_date_the_recording_date_is_today() {
+        let today = Local::now().date_naive();
+        // Tolère un passage à minuit entre les deux lectures de l'horloge.
+        let is_today = |date: NaiveDate| date == today || date == Local::now().date_naive();
+        assert!(is_today(recording_date(None)));
+        assert!(
+            is_today(recording_date(Some(i64::MAX))),
+            "date hors limites"
+        );
+    }
 }

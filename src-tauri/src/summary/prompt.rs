@@ -10,6 +10,8 @@
 //! forme. Ce qui reste refusé relève du fond : plusieurs comptes-rendus
 //! collés, une section inconnue, une section obligatoire absente.
 
+use chrono::{Datelike, NaiveDate, Weekday};
+
 pub const SYSTEM_PROMPT: &str = "Tu es un assistant de rédaction professionnel. Tu écris uniquement en français, dans un style clair et neutre. Tu reformules et organises le contenu fourni sans rien inventer : aucune information absente de la transcription, aucun commentaire, aucune introduction ni conclusion hors du gabarit demandé. N'indique une date, un chiffre, un nom ou un montant que s'il figure explicitement dans la transcription ; en cas de doute, omets-le.";
 
 /// Structure imposée du compte-rendu, commune au prompt direct et au prompt
@@ -33,6 +35,23 @@ pub const CONCISE_REMINDER: &str = "La réponse précédente a été coupée car
 /// transcription.
 pub const TEMPLATE_REMINDER: &str = "Rappel : réponds uniquement avec le compte-rendu, en français, dans la structure demandée (une ligne `# ` avec un titre court, `## Résumé`, `## Points clés`, et `## Décisions et actions` seulement s'il y en a), sans rien inventer, sans ligne de séparation et sans bloc de code.";
 
+/// Consigne des notes de tranche. Au banc d'essai du 24/10/2026, la première
+/// tranche (≈ 6 700 tokens de prompt) rendait 64 à 72 puces, avec des titres
+/// `###` et des lignes `---`, au lieu de 25 puces : les notes étaient coupées
+/// au plafond de tokens dans 2 essais sur 2. D'où l'interdiction explicite
+/// des titres et des séparateurs, et le rappel `NOTES_REMINDER` en fin de
+/// prompt, comme pour le compte-rendu.
+pub const NOTES_INSTRUCTIONS: &str = "Rédige des notes détaillées en puces (faits, chiffres, noms, dates, décisions, actions), dans l'ordre, sans rien inventer et sans résumer à outrance. 25 puces maximum, une ligne par puce, sans titres ni séparateurs : aucune ligne `#`, aucune ligne `---`, rien d'autre que les puces.";
+
+/// Rappel refermant le prompt des notes, après la tranche de transcription.
+pub const NOTES_REMINDER: &str = "Rappel : réponds uniquement par des puces, 25 au maximum, une ligne par puce, sans titres ni séparateurs.";
+
+/// Suite de la ligne de date (`recording_date_line`). Sans date de référence,
+/// le modèle complétait les dates citées sans année par une année de ses
+/// données d'entraînement (« mardi 17 novembre 2023 » pour une réunion
+/// d'octobre 2026, banc d'essai du 24/10/2026).
+pub const DATE_RULE: &str = "Situe les dates citées sans année par rapport à cette date, et n'écris jamais une année qui ne figure ni dans le texte ni dans cette date.";
+
 pub const SECTION_SUMMARY: &str = "## Résumé";
 pub const SECTION_KEY_POINTS: &str = "## Points clés";
 pub const SECTION_DECISIONS: &str = "## Décisions et actions";
@@ -44,28 +63,82 @@ pub struct ChatMessages {
     pub user: String,
 }
 
+/// Date en toutes lettres, à la française : « jeudi 22 octobre 2026 »,
+/// « jeudi 1er octobre 2026 ».
+pub fn french_date(date: NaiveDate) -> String {
+    const MONTHS: [&str; 12] = [
+        "janvier",
+        "février",
+        "mars",
+        "avril",
+        "mai",
+        "juin",
+        "juillet",
+        "août",
+        "septembre",
+        "octobre",
+        "novembre",
+        "décembre",
+    ];
+    let weekday = match date.weekday() {
+        Weekday::Mon => "lundi",
+        Weekday::Tue => "mardi",
+        Weekday::Wed => "mercredi",
+        Weekday::Thu => "jeudi",
+        Weekday::Fri => "vendredi",
+        Weekday::Sat => "samedi",
+        Weekday::Sun => "dimanche",
+    };
+    let day = match date.day() {
+        1 => "1er".to_string(),
+        day => day.to_string(),
+    };
+    format!(
+        "{weekday} {day} {} {}",
+        MONTHS[date.month0() as usize],
+        date.year()
+    )
+}
+
+/// Date de référence, placée juste avant le texte dans les trois prompts.
+pub fn recording_date_line(date: NaiveDate) -> String {
+    format!(
+        "Date de l'enregistrement : {}. {DATE_RULE}",
+        french_date(date)
+    )
+}
+
 /// Compte-rendu direct : la transcription tient en une tranche. Le gabarit
 /// encadre la transcription — instructions avant, rappel après.
-pub fn build_direct_messages(text: &str) -> ChatMessages {
+pub fn build_direct_messages(text: &str, date: NaiveDate) -> ChatMessages {
     ChatMessages {
         system: SYSTEM_PROMPT.to_string(),
-        user: format!("{TEMPLATE_INSTRUCTIONS} Transcription : {text}\n\n{TEMPLATE_REMINDER}"),
+        user: format!(
+            "{TEMPLATE_INSTRUCTIONS} {} Transcription : {text}\n\n{TEMPLATE_REMINDER}",
+            recording_date_line(date)
+        ),
     }
 }
 
 /// Notes intermédiaires pour la tranche `part_index` (1-based) sur `total`.
-pub fn build_notes_messages(part: &str, part_index: u32, total: u32) -> ChatMessages {
+pub fn build_notes_messages(
+    part: &str,
+    part_index: u32,
+    total: u32,
+    date: NaiveDate,
+) -> ChatMessages {
     ChatMessages {
         system: SYSTEM_PROMPT.to_string(),
         user: format!(
-            "Voici la partie {part_index} sur {total} de la transcription d'un enregistrement. Rédige des notes détaillées en puces (faits, chiffres, noms, dates, décisions, actions), dans l'ordre, sans rien inventer et sans résumer à outrance. 25 puces maximum, une ligne par puce. Transcription : {part}"
+            "Voici la partie {part_index} sur {total} de la transcription d'un enregistrement. {NOTES_INSTRUCTIONS} {} Transcription : {part}\n\n{NOTES_REMINDER}",
+            recording_date_line(date)
         ),
     }
 }
 
 /// Compte-rendu final à partir des notes de toutes les tranches : un seul
 /// compte-rendu qui synthétise l'ensemble, pas une section par partie.
-pub fn build_final_messages(notes: &[String]) -> ChatMessages {
+pub fn build_final_messages(notes: &[String], date: NaiveDate) -> ChatMessages {
     let joined = notes
         .iter()
         .enumerate()
@@ -75,9 +148,10 @@ pub fn build_final_messages(notes: &[String]) -> ChatMessages {
     ChatMessages {
         system: SYSTEM_PROMPT.to_string(),
         user: format!(
-            "Voici les notes prises sur les {} parties d'un enregistrement. À partir de ces notes uniquement, {} Écris un seul compte-rendu global qui synthétise l'ensemble des parties, et non un compte-rendu ou une section par partie. Notes : {}\n\n{TEMPLATE_REMINDER}",
+            "Voici les notes prises sur les {} parties d'un enregistrement. À partir de ces notes uniquement, {} Écris un seul compte-rendu global qui synthétise l'ensemble des parties, et non un compte-rendu ou une section par partie. {} Notes : {}\n\n{TEMPLATE_REMINDER}",
             notes.len(),
             lowercase_first(TEMPLATE_INSTRUCTIONS),
+            recording_date_line(date),
             joined
         ),
     }
@@ -358,9 +432,14 @@ mod tests {
 
     const GOOD: &str = "# Réunion budget\n\n## Résumé\nPhrase une. Phrase deux. Phrase trois.\n\n## Points clés\n- Budget : 30 000 €\n\n## Décisions et actions\n- Marie envoie le devis lundi\n";
 
+    /// Jour de la réunion du banc d'essai du 24/10/2026.
+    fn date() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 10, 22).unwrap()
+    }
+
     #[test]
     fn prompts_carry_the_spec_wording_and_the_text() {
-        let direct = build_direct_messages("Bonjour.");
+        let direct = build_direct_messages("Bonjour.", date());
         assert_eq!(direct.system, SYSTEM_PROMPT);
         assert!(direct.user.starts_with(TEMPLATE_INSTRUCTIONS));
         assert!(direct
@@ -371,15 +450,16 @@ mod tests {
         // en tête d'un texte de plusieurs milliers de tokens.
         assert!(direct.user.ends_with(TEMPLATE_REMINDER));
 
-        let notes = build_notes_messages("texte", 2, 3);
+        let notes = build_notes_messages("texte", 2, 3, date());
         assert_eq!(notes.system, SYSTEM_PROMPT);
         assert!(notes
             .user
             .starts_with("Voici la partie 2 sur 3 de la transcription d'un enregistrement."));
         assert!(notes.user.contains("sans résumer à outrance"));
-        assert!(notes.user.ends_with("Transcription : texte"));
+        assert!(notes.user.contains("Transcription : texte\n\n"));
+        assert!(notes.user.ends_with(NOTES_REMINDER));
 
-        let final_ = build_final_messages(&["- a".into(), "- b".into()]);
+        let final_ = build_final_messages(&["- a".into(), "- b".into()], date());
         assert_eq!(final_.system, SYSTEM_PROMPT);
         assert!(final_
             .user
@@ -426,12 +506,83 @@ mod tests {
         assert!(CONCISE_REMINDER.contains("en 450 mots au maximum"));
         assert!(!CONCISE_REMINDER.contains("250"));
 
-        let notes = build_notes_messages("texte", 1, 4);
+        let notes = build_notes_messages("texte", 1, 4, date());
         assert!(notes.user.contains("25 puces maximum, une ligne par puce"));
-        let final_ = build_final_messages(&["- a".into(), "- b".into(), "- c".into()]);
+        let final_ = build_final_messages(&["- a".into(), "- b".into(), "- c".into()], date());
         assert!(final_
             .user
             .contains("un seul compte-rendu global qui synthétise l'ensemble des parties"));
+    }
+
+    /// Banc d'essai du 24/10/2026 : 64 à 72 puces, des titres `###` et des
+    /// lignes `---` au lieu de 25 puces. Le prompt des notes les interdit en
+    /// toutes lettres, avant la tranche et dans le rappel qui la suit.
+    #[test]
+    fn notes_prompt_forbids_headings_and_separators() {
+        for constraint in [
+            "25 puces maximum",
+            "une ligne par puce",
+            "sans titres ni séparateurs",
+            "aucune ligne `#`",
+            "aucune ligne `---`",
+        ] {
+            assert!(
+                NOTES_INSTRUCTIONS.contains(constraint),
+                "NOTES_INSTRUCTIONS sans « {constraint} »"
+            );
+        }
+        assert!(NOTES_REMINDER.contains("25 au maximum"));
+        assert!(NOTES_REMINDER.contains("sans titres ni séparateurs"));
+
+        let notes = build_notes_messages("La tranche.", 1, 2, date());
+        let instructions = notes.user.find(NOTES_INSTRUCTIONS).unwrap();
+        let part = notes.user.find("Transcription : La tranche.").unwrap();
+        assert!(instructions < part, "consigne avant la tranche");
+        assert!(
+            notes.user.ends_with(NOTES_REMINDER),
+            "rappel après la tranche"
+        );
+    }
+
+    #[test]
+    fn dates_are_written_in_french() {
+        let ymd = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        assert_eq!(french_date(date()), "jeudi 22 octobre 2026");
+        assert_eq!(french_date(ymd(2026, 10, 1)), "jeudi 1er octobre 2026");
+        assert_eq!(french_date(ymd(2026, 8, 15)), "samedi 15 août 2026");
+        assert_eq!(french_date(ymd(2026, 12, 25)), "vendredi 25 décembre 2026");
+        assert_eq!(french_date(ymd(2027, 2, 1)), "lundi 1er février 2027");
+        assert_eq!(
+            recording_date_line(date()),
+            format!("Date de l'enregistrement : jeudi 22 octobre 2026. {DATE_RULE}")
+        );
+    }
+
+    /// Banc d'essai du 24/10/2026 : sans date de référence, « mardi
+    /// 17 novembre 2023 » pour une réunion d'octobre 2026. Les trois prompts
+    /// portent la date, juste avant le texte à traiter.
+    #[test]
+    fn every_prompt_carries_the_recording_date_before_the_text() {
+        let line = "Date de l'enregistrement : jeudi 22 octobre 2026.";
+        assert!(DATE_RULE.contains("n'écris jamais une année"));
+
+        let direct = build_direct_messages("Bonjour.", date());
+        let notes = build_notes_messages("Bonjour.", 1, 2, date());
+        let final_ = build_final_messages(&["- a".into()], date());
+        for (name, user, text) in [
+            ("direct", &direct.user, "Transcription : Bonjour."),
+            ("notes", &notes.user, "Transcription : Bonjour."),
+            ("final", &final_.user, "Notes : Partie 1 :"),
+        ] {
+            let date_at = user
+                .find(line)
+                .unwrap_or_else(|| panic!("{name} sans date : {user}"));
+            assert!(user.contains(DATE_RULE), "{name} sans consigne de date");
+            let text_at = user.find(text).unwrap();
+            assert!(date_at < text_at, "{name} : date après le texte");
+        }
+        // Le prompt système reste commun et inchangé.
+        assert_eq!(direct.system, SYSTEM_PROMPT);
     }
 
     /// Les écarts constatés en conditions réelles (titres en gras, deux-points,

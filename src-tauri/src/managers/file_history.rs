@@ -186,6 +186,17 @@ impl FileHistoryManager {
         Ok(rows.next().transpose()?)
     }
 
+    /// Horodatage de création d'une entrée (unix, secondes), sans charger ses
+    /// textes ; `None` si l'entrée n'existe pas. Le compte-rendu local s'en
+    /// sert comme date de l'enregistrement.
+    pub fn created_at(&self, id: i64) -> Result<Option<i64>> {
+        let conn = self.open()?;
+        let mut stmt =
+            conn.prepare("SELECT created_at FROM file_transcription_history WHERE id = ?1")?;
+        let mut rows = stmt.query_map([id], |row| row.get(0))?;
+        Ok(rows.next().transpose()?)
+    }
+
     /// Mémorise le chemin de la vidéo conservée pour une entrée.
     pub fn set_video_path(&self, id: i64, video_path: &str) -> Result<()> {
         let updated = self.open()?.execute(
@@ -251,6 +262,11 @@ mod tests {
         // Détail complet + enregistrement du compte-rendu (plan 09).
         let entry = m.get(id).unwrap().unwrap();
         assert_eq!(entry.source_ref, "/tmp/réunion.mp3");
+        assert_eq!(m.created_at(id).unwrap(), Some(entry.created_at));
+        assert!(
+            entry.created_at > 1_700_000_000,
+            "horodatage unix en secondes"
+        );
         assert_eq!(entry.summary_markdown, None);
         m.update_summary(id, "# Réunion\n\n## Résumé\nBonjour à tous")
             .unwrap();
@@ -275,6 +291,7 @@ mod tests {
         // Suppression.
         m.delete(id).unwrap();
         assert!(m.get(id).unwrap().is_none());
+        assert_eq!(m.created_at(id).unwrap(), None);
         assert!(!video.exists(), "la vidéo conservée est supprimée aussi");
         assert_eq!(m.list().unwrap().len(), 1);
         assert!(m.delete(id).is_err(), "double suppression signalée");

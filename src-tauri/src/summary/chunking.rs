@@ -8,9 +8,9 @@ pub const CHARS_PER_TOKEN: f64 = 3.5;
 pub const SAFETY_MARGIN: f64 = 1.2;
 /// Tranche maximale : 9 000 tokens estimés. Le serveur tourne avec un contexte
 /// de 12 288 tokens (`super::assets::CTX_SIZE`) et la plus longue sortie
-/// demandée vaut 1 800 tokens (compte-rendu ; 1 400 pour les notes) : une
-/// tranche de 9 000 tokens, les prompts et 1 800 tokens de sortie tiennent
-/// sous 12 288.
+/// demandée vaut 1 800 tokens (compte-rendu comme notes) : une tranche de
+/// 9 000 tokens, les prompts et 1 800 tokens de sortie tiennent sous 12 288
+/// (vérifié par `summarize::tests::prompts_and_outputs_fit_in_the_context`).
 pub const MAX_CHUNK_TOKENS: usize = 9_000;
 
 /// Nombre de tokens estimé, marge comprise.

@@ -407,6 +407,8 @@ export const FileTranscription: React.FC = () => {
         return t("settings.file.summary.errors.checksumMismatch");
       case "engineStartFailed":
         return t("settings.file.summary.errors.engineStartFailed");
+      case "contextExceeded":
+        return t("settings.file.summary.errors.contextExceeded");
       case "incompleteOutput":
         return t("settings.file.summary.errors.incompleteOutput");
       case "busy":
@@ -424,6 +426,7 @@ export const FileTranscription: React.FC = () => {
       case "network":
       case "downloadFailed":
       case "engineStartFailed":
+      case "contextExceeded":
         return error.detail.trim() === "" ? null : error.detail;
       default:
         return null;
