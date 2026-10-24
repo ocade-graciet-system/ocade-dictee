@@ -22,7 +22,7 @@ import { useMeetingStore } from "@/stores/meetingStore";
 import { Button } from "../ui/Button";
 import { Dialog } from "../ui/Dialog";
 import { Textarea } from "../ui/Textarea";
-import { TEXT_ASSET_WORD_LIMIT } from "./format";
+import { TEXT_ASSET_WORD_LIMITS } from "./format";
 
 const TEXT_EXTENSIONS: Record<TextAssetKind, string[]> = {
   editorial: ["md", "markdown", "txt", "docx"],
@@ -105,7 +105,8 @@ const TextAssetBlock: React.FC<TextAssetBlockProps> = ({
     if (confirmed) applyAssets(await commands.meetingClearTextAsset(kind));
   };
 
-  const tooLong = asset !== null && asset.words > TEXT_ASSET_WORD_LIMIT;
+  const wordLimit = TEXT_ASSET_WORD_LIMITS[kind];
+  const tooLong = asset !== null && asset.words > wordLimit;
 
   return (
     <div className="space-y-2 p-4">
@@ -144,7 +145,7 @@ const TextAssetBlock: React.FC<TextAssetBlockProps> = ({
           {tooLong && (
             <p className="text-xs text-yellow-600">
               {t("settings.meeting.assets.tooLong", {
-                limit: TEXT_ASSET_WORD_LIMIT,
+                limit: wordLimit,
               })}
             </p>
           )}

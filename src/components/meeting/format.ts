@@ -1,5 +1,5 @@
 import type { TFunction } from "i18next";
-import type { MeetingError, MeetingRecording } from "@/bindings";
+import type { MeetingError, MeetingRecording, TextAssetKind } from "@/bindings";
 
 // Fonctions pures de l'onglet Réunion (testées dans tests/unit) : affichage
 // des durées et tailles en typographie française, tri de la liste, messages
@@ -116,6 +116,10 @@ export const meetingErrorMessage = (
   }
 };
 
-/** Longueur d'un texte pour le modèle local : au-delà, il en néglige une
- *  partie (voir le banc d'essai du compte rendu). */
-export const TEXT_ASSET_WORD_LIMIT = 1200;
+/** Longueur au-delà de laquelle le modèle local du compte rendu en néglige
+ *  une partie et ralentit (banc d'essai, docs/compte-rendu-reunion-faisabilite.md) :
+ *  ~1 000 tokens pour la charte, ~800 pour le skill. */
+export const TEXT_ASSET_WORD_LIMITS: Record<TextAssetKind, number> = {
+  editorial: 650,
+  skill: 500,
+};

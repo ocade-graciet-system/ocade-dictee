@@ -703,7 +703,7 @@
         "summary": "{{count}} mots · ajouté le {{date}}",
         "summary_one": "{{count}} mot · ajouté le {{date}}",
         "summary_other": "{{count}} mots · ajouté le {{date}}",
-        "tooLong": "Texte long : au-delà d'environ {{limit}} mots, le modèle local risque d'en négliger une partie. Gardez l'essentiel.",
+        "tooLong": "Texte long : au-delà d'environ {{limit}} mots, le modèle local en néglige une partie et le compte rendu est plus lent. Gardez l'essentiel.",
         "editorial": {
           "title": "Charte éditoriale",
           "description": "Ton, vocabulaire et règles d'écriture à respecter dans le compte rendu.",
