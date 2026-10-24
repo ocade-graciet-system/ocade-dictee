@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use chrono::NaiveDate;
 use futures_util::future::BoxFuture;
 use tokio_util::sync::CancellationToken;
 
@@ -42,8 +43,11 @@ pub trait GenerationJob: Sync {
     ) -> BoxFuture<'a, Result<String, SummaryError>>;
 }
 
-/// Résumé d'un document (onglet Fichier).
-struct DocumentJob<'t>(&'t str);
+/// Résumé d'un document (onglet Fichier), daté de son enregistrement.
+struct DocumentJob<'t> {
+    text: &'t str,
+    recording_date: NaiveDate,
+}
 
 impl GenerationJob for DocumentJob<'_> {
     fn generate<'a>(
@@ -52,7 +56,13 @@ impl GenerationJob for DocumentJob<'_> {
         cancel: &'a CancellationToken,
         on_part: &'a mut (dyn FnMut(u32, u32) + Send),
     ) -> BoxFuture<'a, Result<String, SummaryError>> {
-        Box::pin(summarize_text(self.0, completion, cancel, on_part))
+        Box::pin(summarize_text(
+            self.text,
+            self.recording_date,
+            completion,
+            cancel,
+            on_part,
+        ))
     }
 }
 
@@ -224,16 +234,21 @@ impl SummaryEngine {
         }
     }
 
-    /// Exécute un résumé complet. `is_dictating` est sondé toutes les 500 ms
-    /// tant qu'une dictée est en cours ; `on_progress` reçoit chaque étape.
+    /// Exécute un résumé complet. `recording_date` est la date de référence
+    /// donnée au modèle ; `is_dictating` est sondé toutes les 500 ms tant
+    /// qu'une dictée est en cours ; `on_progress` reçoit chaque étape.
     pub async fn run<F: Fn() -> bool + Send>(
         &self,
         text: &str,
+        recording_date: NaiveDate,
         is_dictating: F,
         on_progress: impl FnMut(SummaryPhase, u32, u32) + Send,
     ) -> Result<String, SummaryError> {
-        self.run_job(&DocumentJob(text), is_dictating, on_progress)
-            .await
+        let job = DocumentJob {
+            text,
+            recording_date,
+        };
+        self.run_job(&job, is_dictating, on_progress).await
     }
 
     /// Comme `run`, pour une rédaction fournie par l'appelant (compte rendu
@@ -543,6 +558,10 @@ mod tests {
     /// Compte-rendu conforme au gabarit (§6), rendu par le faux moteur.
     const GOOD_SUMMARY: &str = "# Titre\n\n## Résumé\nPhrase.\n\n## Points clés\n- point\n";
 
+    fn test_date() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 10, 22).unwrap()
+    }
+
     fn plenty_of_memory() -> u64 {
         8 * 1024 * 1024 * 1024
     }
@@ -600,7 +619,7 @@ mod tests {
             e.cancel();
         });
         let err = engine
-            .run("texte", || true, |_, _, _| {})
+            .run("texte", test_date(), || true, |_, _, _| {})
             .await
             .unwrap_err();
         assert_eq!(err, SummaryError::Cancelled);
@@ -614,10 +633,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let engine = Arc::new(engine(dir.path()));
         let e = engine.clone();
-        let first = tokio::spawn(async move { e.run("texte", || true, |_, _, _| {}).await });
+        let first =
+            tokio::spawn(async move { e.run("texte", test_date(), || true, |_, _, _| {}).await });
         tokio::time::sleep(Duration::from_millis(50)).await;
         let err = engine
-            .run("texte", || false, |_, _, _| {})
+            .run("texte", test_date(), || false, |_, _, _| {})
             .await
             .unwrap_err();
         assert_eq!(err, SummaryError::Busy);
@@ -645,7 +665,7 @@ mod tests {
         engine.cancel();
         let (events, on_progress) = recorder();
         let err = engine
-            .run("texte", || false, on_progress)
+            .run("texte", test_date(), || false, on_progress)
             .await
             .unwrap_err();
         assert_eq!(
@@ -826,7 +846,7 @@ mod tests {
 
         let (events, on_progress) = recorder();
         let summary = engine
-            .run("Texte de la dictée.", || false, on_progress)
+            .run("Texte de la dictée.", test_date(), || false, on_progress)
             .await
             .unwrap();
         assert_eq!(summary, GOOD_SUMMARY.trim());
@@ -847,7 +867,7 @@ mod tests {
         // Deuxième résumé : même processus, aucune phase de démarrage.
         let (events, on_progress) = recorder();
         engine
-            .run("Autre dictée.", || false, on_progress)
+            .run("Autre dictée.", test_date(), || false, on_progress)
             .await
             .unwrap();
         assert_eq!(engine.server_pid(), Some(pid));
@@ -877,7 +897,7 @@ mod tests {
         let engine = engine_with_memory(dir.path(), plenty_of_memory);
 
         let err = engine
-            .run("texte", || false, |_, _, _| {})
+            .run("texte", test_date(), || false, |_, _, _| {})
             .await
             .unwrap_err();
         assert!(
@@ -909,7 +929,11 @@ mod tests {
         let engine = Arc::new(engine_with_memory(dir.path(), plenty_of_memory));
 
         let runner = engine.clone();
-        let run = tokio::spawn(async move { runner.run("texte", || false, |_, _, _| {}).await });
+        let run = tokio::spawn(async move {
+            runner
+                .run("texte", test_date(), || false, |_, _, _| {})
+                .await
+        });
         assert!(
             wait_until(Duration::from_secs(20), || engine.server_pid().is_some()).await,
             "le serveur aurait dû démarrer"
@@ -952,7 +976,12 @@ mod tests {
 
         let started = Instant::now();
         let summary = engine
-            .run("Texte de la dictée.", is_dictating, |_, _, _| {})
+            .run(
+                "Texte de la dictée.",
+                test_date(),
+                is_dictating,
+                |_, _, _| {},
+            )
             .await
             .unwrap();
         assert_eq!(summary, GOOD_SUMMARY.trim());
@@ -988,8 +1017,11 @@ mod tests {
         let is_dictating = move || probe.fetch_add(1, Ordering::SeqCst) >= 1;
 
         let runner = engine.clone();
-        let run =
-            tokio::spawn(async move { runner.run("texte", is_dictating, |_, _, _| {}).await });
+        let run = tokio::spawn(async move {
+            runner
+                .run("texte", test_date(), is_dictating, |_, _, _| {})
+                .await
+        });
         assert!(
             wait_until(Duration::from_secs(10), || calls.load(Ordering::SeqCst)
                 >= 2)
@@ -1040,7 +1072,7 @@ mod tests {
 
         let (events, on_progress) = recorder();
         let started = Instant::now();
-        let result = engine.run(&text, || false, on_progress).await;
+        let result = engine.run(&text, test_date(), || false, on_progress).await;
         println!("--- passe réelle ({:?}) ---", started.elapsed());
         match &result {
             Ok(summary) => {

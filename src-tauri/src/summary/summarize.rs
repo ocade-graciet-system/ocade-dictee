@@ -2,6 +2,7 @@
 //! final, contrôle du gabarit et relance ciblée. Indépendant de Tauri : la
 //! complétion est abstraite par `Completion` (vrai serveur ou double de test).
 
+use chrono::NaiveDate;
 use futures_util::future::BoxFuture;
 use tokio_util::sync::CancellationToken;
 
@@ -12,7 +13,9 @@ use super::prompt::{
 };
 use super::server::LlamaServer;
 use super::SummaryError;
-use crate::llm_client::{send_chat_completion_with_options, ChatSamplingOptions};
+use crate::llm_client::{
+    send_chat_completion_with_options, ChatCompletionError, ChatSamplingOptions,
+};
 use crate::settings::PostProcessProvider;
 
 pub const TEMPERATURE: f64 = 0.2;
@@ -22,7 +25,12 @@ pub const TEMPERATURE: f64 = 0.2;
 /// `chunking::MAX_CHUNK_TOKENS`).
 pub const MAX_TOKENS_SUMMARY: u32 = 1_800;
 /// Plafond de tokens des notes d'une tranche (jusqu'à 25 puces détaillées).
-pub const MAX_TOKENS_NOTES: u32 = 1_400;
+/// À 1 400, la première tranche du banc d'essai du 24/10/2026 était coupée
+/// dans 2 essais sur 2 ; 25 puces détaillées frôlent ce plafond même quand le
+/// modèle respecte la consigne. 1 800, comme le compte-rendu : le budget du
+/// contexte est le même (`chunking::MAX_CHUNK_TOKENS`, et le test
+/// `prompts_and_outputs_fit_in_the_context`).
+pub const MAX_TOKENS_NOTES: u32 = 1_800;
 /// Tours de notes au plus : les notes de la 2e passe (≥ 6 h d'audio) sont
 /// condensées à nouveau ; au-delà on synthétise quoi qu'il arrive.
 pub const MAX_NOTE_ROUNDS: usize = 3;
@@ -94,11 +102,21 @@ impl Completion for LlamaCompletion<'_> {
                     }),
                     None => Err(SummaryError::IncompleteOutput),
                 },
-                Err(detail) => Err(SummaryError::EngineStartFailed {
-                    detail: format!("requête au moteur échouée: {detail}"),
-                }),
+                Err(e) => Err(completion_error(e)),
             }
         })
+    }
+}
+
+/// Erreur d'une requête au serveur local, vue du résumé. Un dépassement de
+/// contexte est une réponse du moteur, qui tournait : le présenter comme un
+/// démarrage échoué enverrait l'utilisateur sur une fausse piste.
+fn completion_error(error: ChatCompletionError) -> SummaryError {
+    match error {
+        ChatCompletionError::ContextExceeded { detail } => SummaryError::ContextExceeded { detail },
+        ChatCompletionError::Other(detail) => SummaryError::EngineStartFailed {
+            detail: format!("requête au moteur échouée: {detail}"),
+        },
     }
 }
 
@@ -165,11 +183,14 @@ async fn summary_with_single_retry(
 }
 
 /// Résume `text` : une tranche → compte-rendu direct ; plusieurs → notes par
-/// tranche puis compte-rendu final. `on_progress(partie, total)` suit les
-/// tranches, la partie en cours ne redescendant jamais. Gabarit et troncature
-/// contrôlés ; une relance ciblée au plus, sinon `IncompleteOutput`.
+/// tranche puis compte-rendu final. `recording_date` est donnée au modèle
+/// dans chaque prompt, pour qu'il situe les dates sans en inventer l'année.
+/// `on_progress(partie, total)` suit les tranches, la partie en cours ne
+/// redescendant jamais. Gabarit et troncature contrôlés ; une relance ciblée
+/// au plus, sinon `IncompleteOutput`.
 pub async fn summarize_text(
     text: &str,
+    recording_date: NaiveDate,
     completion: &dyn Completion,
     cancel: &CancellationToken,
     on_progress: &mut (dyn FnMut(u32, u32) + Send),
@@ -181,7 +202,7 @@ pub async fn summarize_text(
 
     let messages = if chunks.len() == 1 {
         on_progress(1, 1);
-        build_direct_messages(&chunks[0])
+        build_direct_messages(&chunks[0], recording_date)
     } else {
         // Parties traitées depuis le début, tous tours confondus : un second
         // tour de condensation allonge le total plutôt que de renvoyer la
@@ -195,7 +216,8 @@ pub async fn summarize_text(
             for (index, part) in chunks.iter().enumerate() {
                 done += 1;
                 on_progress(done, total);
-                let part_messages = build_notes_messages(part, index as u32 + 1, round_total);
+                let part_messages =
+                    build_notes_messages(part, index as u32 + 1, round_total, recording_date);
                 let output =
                     complete_cancellable(completion, cancel, &part_messages, MAX_TOKENS_NOTES)
                         .await?;
@@ -217,7 +239,7 @@ pub async fn summarize_text(
             round += 1;
             if estimate_tokens(&joined) <= MAX_CHUNK_TOKENS || round >= MAX_NOTE_ROUNDS {
                 on_progress(total, total);
-                break build_final_messages(&notes);
+                break build_final_messages(&notes, recording_date);
             }
             log::info!(
                 "Notes trop longues ({} tokens estimés), nouvelle passe de condensation",
@@ -239,6 +261,11 @@ mod tests {
 
     const GOOD: &str = "# Titre\n\n## Résumé\nPhrase.\n\n## Points clés\n- point\n";
     const BAD: &str = "Voici un résumé sans structure.";
+
+    /// Jour de la réunion du banc d'essai du 24/10/2026.
+    fn date() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 10, 22).unwrap()
+    }
 
     /// Double de test : rejoue des réponses (texte, tronqué) dans l'ordre et
     /// journalise les prompts reçus avec leur plafond de tokens.
@@ -319,6 +346,7 @@ mod tests {
         let mut progress = Vec::new();
         let out = summarize_text(
             "Bonjour à tous. Merci.",
+            date(),
             &scripted,
             &CancellationToken::new(),
             &mut |c, t| progress.push((c, t)),
@@ -341,6 +369,7 @@ mod tests {
         let scripted = Scripted::new(&[BAD, GOOD]);
         let out = summarize_text(
             "Texte.",
+            date(),
             &scripted,
             &CancellationToken::new(),
             &mut |_, _| {},
@@ -359,6 +388,7 @@ mod tests {
         let scripted = Scripted::new(&[BAD, "# Titre\n## Conclusion\nx"]);
         let err = summarize_text(
             "Texte.",
+            date(),
             &scripted,
             &CancellationToken::new(),
             &mut |_, _| {},
@@ -375,6 +405,7 @@ mod tests {
         let scripted = Scripted::truncating(&[(GOOD, true), (GOOD, false)]);
         let out = summarize_text(
             "Texte.",
+            date(),
             &scripted,
             &CancellationToken::new(),
             &mut |_, _| {},
@@ -393,6 +424,7 @@ mod tests {
         let scripted = Scripted::truncating(&[(GOOD, true), (GOOD, true)]);
         let err = summarize_text(
             "Texte.",
+            date(),
             &scripted,
             &CancellationToken::new(),
             &mut |_, _| {},
@@ -408,9 +440,13 @@ mod tests {
         let text = three_chunk_text();
         let scripted = Scripted::new(&["- note 1", "- note 2", "- note 3", GOOD]);
         let mut progress = Vec::new();
-        let out = summarize_text(&text, &scripted, &CancellationToken::new(), &mut |c, t| {
-            progress.push((c, t))
-        })
+        let out = summarize_text(
+            &text,
+            date(),
+            &scripted,
+            &CancellationToken::new(),
+            &mut |c, t| progress.push((c, t)),
+        )
         .await
         .unwrap();
         assert_eq!(out, GOOD.trim());
@@ -426,6 +462,153 @@ mod tests {
         assert_eq!(calls[3].1, MAX_TOKENS_SUMMARY);
     }
 
+    /// Banc d'essai du 24/10/2026 : sans date, « mardi 17 novembre 2023 »
+    /// pour une réunion d'octobre 2026. Compte-rendu direct, notes de chaque
+    /// tranche et compte-rendu final reçoivent tous la date de l'enregistrement.
+    #[tokio::test]
+    async fn the_recording_date_reaches_every_prompt() {
+        let line = "Date de l'enregistrement : jeudi 22 octobre 2026.";
+
+        let scripted = Scripted::new(&[BAD, GOOD]);
+        summarize_text(
+            "Texte.",
+            date(),
+            &scripted,
+            &CancellationToken::new(),
+            &mut |_, _| {},
+        )
+        .await
+        .unwrap();
+        let calls = scripted.calls();
+        assert_eq!(calls.len(), 2);
+        for (user, _) in &calls {
+            assert!(user.contains(line), "direct ou relance sans date : {user}");
+        }
+
+        let text = three_chunk_text();
+        let scripted = Scripted::new(&["- note 1", "- note 2", "- note 3", GOOD]);
+        summarize_text(
+            &text,
+            date(),
+            &scripted,
+            &CancellationToken::new(),
+            &mut |_, _| {},
+        )
+        .await
+        .unwrap();
+        let calls = scripted.calls();
+        assert_eq!(calls.len(), 4);
+        for (index, (user, _)) in calls.iter().enumerate() {
+            assert!(user.contains(line), "appel {index} sans date");
+        }
+    }
+
+    /// Budget du contexte (`assets::CTX_SIZE`, 12 288 tokens) : la plus longue
+    /// tranche, le plus long des prompts qui l'entourent (relance comprise) et
+    /// la sortie demandée tiennent ensemble, en tokens estimés (marge de 20 %
+    /// comprise). Au-delà, llama-server refuse la requête (`ContextExceeded`).
+    #[test]
+    fn prompts_and_outputs_fit_in_the_context() {
+        use super::super::assets::CTX_SIZE;
+        use super::super::prompt::SYSTEM_PROMPT;
+        /// Balises du gabarit de chat ajoutées par le serveur autour des messages.
+        const CHAT_TEMPLATE_TOKENS: usize = 32;
+        // « mercredi 30 septembre 2026 » : la ligne de date la plus longue.
+        let date = NaiveDate::from_ymd_opt(2026, 9, 30).unwrap();
+        let retry = format!("\n\n{STRICT_REMINDER}");
+        assert!(STRICT_REMINDER.len() >= CONCISE_REMINDER.len());
+        // Dix parties au compte-rendu final : chacune ajoute son « Partie n : ».
+        let ten_notes = vec![String::new(); 10];
+        for (name, messages, max_tokens, retried) in [
+            (
+                "direct",
+                build_direct_messages("", date),
+                MAX_TOKENS_SUMMARY,
+                true,
+            ),
+            (
+                "notes",
+                build_notes_messages("", 10, 10, date),
+                MAX_TOKENS_NOTES,
+                false,
+            ),
+            (
+                "final",
+                build_final_messages(&ten_notes, date),
+                MAX_TOKENS_SUMMARY,
+                true,
+            ),
+        ] {
+            assert_eq!(messages.system, SYSTEM_PROMPT);
+            let mut prompt = estimate_tokens(&messages.system) + estimate_tokens(&messages.user);
+            if retried {
+                prompt += estimate_tokens(&retry);
+            }
+            let total = CHAT_TEMPLATE_TOKENS + prompt + MAX_CHUNK_TOKENS + max_tokens as usize;
+            assert!(
+                total <= CTX_SIZE as usize,
+                "{name} : {total} tokens estimés pour un contexte de {CTX_SIZE}"
+            );
+        }
+    }
+
+    /// Un dépassement de contexte remonte tel quel, sans relance ni
+    /// conversion en compte-rendu incomplet.
+    #[tokio::test]
+    async fn context_exceeded_is_reported_as_such() {
+        struct Overflowing;
+        impl Completion for Overflowing {
+            fn complete<'a>(
+                &'a self,
+                _: &'a ChatMessages,
+                _: u32,
+            ) -> BoxFuture<'a, Result<CompletionOutput, SummaryError>> {
+                Box::pin(async {
+                    Err(SummaryError::ContextExceeded {
+                        detail: "n_prompt_tokens 13104, n_ctx 12288".into(),
+                    })
+                })
+            }
+        }
+        for text in ["Texte.".to_string(), three_chunk_text()] {
+            let err = summarize_text(
+                &text,
+                date(),
+                &Overflowing,
+                &CancellationToken::new(),
+                &mut |_, _| {},
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(
+                err,
+                SummaryError::ContextExceeded {
+                    detail: "n_prompt_tokens 13104, n_ctx 12288".into()
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn engine_errors_become_summary_errors() {
+        assert_eq!(
+            completion_error(ChatCompletionError::ContextExceeded {
+                detail: "API request failed with status 400 Bad Request: …".into()
+            }),
+            SummaryError::ContextExceeded {
+                detail: "API request failed with status 400 Bad Request: …".into()
+            }
+        );
+        match completion_error(ChatCompletionError::Other(
+            "HTTP request failed: connection refused".into(),
+        )) {
+            SummaryError::EngineStartFailed { detail } => {
+                assert!(detail.contains("connection refused"), "{detail}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn truncated_notes_are_kept_without_retry() {
         let text = three_chunk_text();
@@ -435,9 +618,15 @@ mod tests {
             ("- note 3", false),
             (GOOD, false),
         ]);
-        let out = summarize_text(&text, &scripted, &CancellationToken::new(), &mut |_, _| {})
-            .await
-            .unwrap();
+        let out = summarize_text(
+            &text,
+            date(),
+            &scripted,
+            &CancellationToken::new(),
+            &mut |_, _| {},
+        )
+        .await
+        .unwrap();
         assert_eq!(out, GOOD.trim());
         let calls = scripted.calls();
         assert_eq!(calls.len(), 4, "aucune relance sur les notes");
@@ -461,9 +650,13 @@ mod tests {
         ];
         let scripted = Scripted::new(&replies);
         let mut progress = Vec::new();
-        let out = summarize_text(&text, &scripted, &CancellationToken::new(), &mut |c, t| {
-            progress.push((c, t))
-        })
+        let out = summarize_text(
+            &text,
+            date(),
+            &scripted,
+            &CancellationToken::new(),
+            &mut |c, t| progress.push((c, t)),
+        )
         .await
         .unwrap();
         assert_eq!(out, GOOD.trim());
@@ -486,9 +679,15 @@ mod tests {
     async fn empty_notes_give_incomplete_output() {
         let text = three_chunk_text();
         let scripted = Scripted::new(&["", "", ""]);
-        let err = summarize_text(&text, &scripted, &CancellationToken::new(), &mut |_, _| {})
-            .await
-            .unwrap_err();
+        let err = summarize_text(
+            &text,
+            date(),
+            &scripted,
+            &CancellationToken::new(),
+            &mut |_, _| {},
+        )
+        .await
+        .unwrap_err();
         assert_eq!(err, SummaryError::IncompleteOutput);
         assert_eq!(scripted.calls().len(), 3, "pas de compte-rendu sans notes");
     }
@@ -513,7 +712,7 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             later.cancel();
         });
-        let err = summarize_text("Texte.", &Hanging, &cancel, &mut |_, _| {})
+        let err = summarize_text("Texte.", date(), &Hanging, &cancel, &mut |_, _| {})
             .await
             .unwrap_err();
         assert_eq!(err, SummaryError::Cancelled);
@@ -524,7 +723,7 @@ mod tests {
         let scripted = Scripted::new(&[GOOD]);
         let cancel = CancellationToken::new();
         cancel.cancel();
-        let err = summarize_text("Texte.", &scripted, &cancel, &mut |_, _| {})
+        let err = summarize_text("Texte.", date(), &scripted, &cancel, &mut |_, _| {})
             .await
             .unwrap_err();
         assert_eq!(err, SummaryError::Cancelled);
@@ -534,9 +733,15 @@ mod tests {
     #[tokio::test]
     async fn empty_text_is_incomplete() {
         let scripted = Scripted::new::<&str>(&[]);
-        let err = summarize_text("   ", &scripted, &CancellationToken::new(), &mut |_, _| {})
-            .await
-            .unwrap_err();
+        let err = summarize_text(
+            "   ",
+            date(),
+            &scripted,
+            &CancellationToken::new(),
+            &mut |_, _| {},
+        )
+        .await
+        .unwrap_err();
         assert_eq!(err, SummaryError::IncompleteOutput);
     }
 
@@ -586,6 +791,7 @@ mod tests {
         let started = std::time::Instant::now();
         let result = summarize_text(
             &text,
+            date(),
             &completion,
             &CancellationToken::new(),
             &mut |c, t| eprintln!("partie {c}/{t}"),

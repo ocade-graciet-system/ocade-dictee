@@ -1956,7 +1956,14 @@ export type SummaryError =
  * Le serveur a répondu, mais le fichier n'est pas arrivé complet (statut
  * HTTP inattendu, flux coupé, taille incohérente, écriture impossible).
  */
-{ kind: "downloadFailed"; asset: SummaryAsset; host: string; detail: string } | { kind: "checksumMismatch" } | { kind: "engineStartFailed"; detail: string } | { kind: "incompleteOutput" } | { kind: "cancelled" } | 
+{ kind: "downloadFailed"; asset: SummaryAsset; host: string; detail: string } | { kind: "checksumMismatch" } | { kind: "engineStartFailed"; detail: string } | 
+/**
+ * Le moteur tournait, mais le texte envoyé et la sortie demandée
+ * dépassent son contexte (`llama-server` : HTTP 400
+ * `exceed_context_size_error`). `detail` reprend sa réponse, avec le
+ * nombre de tokens du prompt et la taille du contexte.
+ */
+{ kind: "contextExceeded"; detail: string } | { kind: "incompleteOutput" } | { kind: "cancelled" } | 
 /**
  * Un résumé est déjà en cours.
  */

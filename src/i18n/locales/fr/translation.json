@@ -631,6 +631,7 @@
           "downloadFailed": "Le fichier n'est pas arrivé complet : réponse inattendue du serveur, connexion coupée en cours de route, ou écriture impossible sur le disque. Réessayez : le téléchargement reprend où il s'est arrêté.",
           "checksumMismatch": "Le téléchargement a échoué ; réessayez.",
           "engineStartFailed": "Le moteur de résumé n'a pas pu démarrer. Réessayez ; si le problème persiste, consultez le journal (onglet Débogage).",
+          "contextExceeded": "Le texte à résumer dépasse ce que le modèle local peut lire en une seule fois : le compte-rendu n'a pas pu être rédigé. Ce n'est pas une panne du moteur, et relancer le résumé donnerait le même résultat. Transmettez le détail technique ci-dessous au support.",
           "incompleteOutput": "Le compte-rendu produit est incomplet ; réessayez.",
           "busy": "Un résumé est déjà en cours."
         }

@@ -79,6 +79,13 @@ pub enum SummaryError {
     EngineStartFailed {
         detail: String,
     },
+    /// Le moteur tournait, mais le texte envoyé et la sortie demandée
+    /// dépassent son contexte (`llama-server` : HTTP 400
+    /// `exceed_context_size_error`). `detail` reprend sa réponse, avec le
+    /// nombre de tokens du prompt et la taille du contexte.
+    ContextExceeded {
+        detail: String,
+    },
     IncompleteOutput,
     Cancelled,
     /// Un résumé est déjà en cours.
@@ -128,6 +135,9 @@ impl std::fmt::Display for SummaryError {
             ),
             SummaryError::ChecksumMismatch => write!(f, "fichier téléchargé corrompu"),
             SummaryError::EngineStartFailed { detail } => write!(f, "moteur non démarré: {detail}"),
+            SummaryError::ContextExceeded { detail } => {
+                write!(f, "texte trop long pour le contexte du modèle: {detail}")
+            }
             SummaryError::IncompleteOutput => write!(f, "compte-rendu incomplet"),
             SummaryError::Cancelled => write!(f, "annulé"),
             SummaryError::Busy => write!(f, "un résumé est déjà en cours"),
@@ -225,6 +235,17 @@ mod tests {
             serde_json::to_value(SummaryError::EngineStartFailed { detail: "x".into() }).unwrap(),
             serde_json::json!({ "kind": "engineStartFailed", "detail": "x" })
         );
+        let exceeded = SummaryError::ContextExceeded {
+            detail: "n_prompt_tokens 13104, n_ctx 12288".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(&exceeded).unwrap(),
+            serde_json::json!({
+                "kind": "contextExceeded",
+                "detail": "n_prompt_tokens 13104, n_ctx 12288",
+            })
+        );
+        assert!(exceeded.to_string().contains("contexte du modèle"));
         assert_eq!(
             serde_json::to_value(SummaryPhase::Summarizing).unwrap(),
             serde_json::json!("summarizing")

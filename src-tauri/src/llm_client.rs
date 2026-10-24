@@ -54,6 +54,56 @@ pub struct ChatCompletionOutcome {
     pub truncated: bool,
 }
 
+/// Échec d'une complétion. Le dépassement de contexte est mis à part : le
+/// serveur tournait et a lu la requête, mais le prompt et la sortie demandée
+/// ne tiennent pas dans sa fenêtre. L'appelant (résumé local) doit pouvoir le
+/// dire tel quel plutôt que de le confondre avec une panne du moteur.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChatCompletionError {
+    /// `llama-server` répond HTTP 400 avec `"type": "exceed_context_size_error"`
+    /// (et `n_prompt_tokens`, `n_ctx`) ; `detail` reprend le statut et le corps.
+    ContextExceeded {
+        detail: String,
+    },
+    Other(String),
+}
+
+impl std::fmt::Display for ChatCompletionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ChatCompletionError::ContextExceeded { detail }
+            | ChatCompletionError::Other(detail) => f.write_str(detail),
+        }
+    }
+}
+
+impl From<String> for ChatCompletionError {
+    fn from(detail: String) -> Self {
+        ChatCompletionError::Other(detail)
+    }
+}
+
+/// Type d'erreur que `llama-server` donne à une requête trop longue pour son
+/// contexte.
+const EXCEED_CONTEXT_ERROR_TYPE: &str = "exceed_context_size_error";
+
+/// Classe une réponse d'erreur HTTP : dépassement de contexte si le corps JSON
+/// porte `error.type == "exceed_context_size_error"`, autre échec sinon.
+fn classify_error_response(status: reqwest::StatusCode, body: &str) -> ChatCompletionError {
+    let detail = format!("API request failed with status {}: {}", status, body);
+    let error_type = serde_json::from_str::<Value>(body).ok().and_then(|json| {
+        json.get("error")
+            .and_then(|error| error.get("type"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    });
+    if error_type.as_deref() == Some(EXCEED_CONTEXT_ERROR_TYPE) {
+        ChatCompletionError::ContextExceeded { detail }
+    } else {
+        ChatCompletionError::Other(detail)
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct ChatCompletionRequest {
     model: String,
@@ -202,7 +252,7 @@ async fn post_chat_completion(
     provider: &PostProcessProvider,
     api_key: &str,
     request_body: &ChatCompletionRequest,
-) -> Result<ChatCompletionOutcome, String> {
+) -> Result<ChatCompletionOutcome, ChatCompletionError> {
     let base_url = provider.base_url.trim_end_matches('/');
     let url = format!("{}/chat/completions", base_url);
 
@@ -223,10 +273,7 @@ async fn post_chat_completion(
             .text()
             .await
             .unwrap_or_else(|_| "Failed to read error response".to_string());
-        return Err(format!(
-            "API request failed with status {}: {}",
-            status, error_text
-        ));
+        return Err(classify_error_response(status, &error_text));
     }
 
     let completion: ChatCompletionResponse = response
@@ -297,14 +344,15 @@ pub async fn send_chat_completion_with_schema(
         max_tokens: None,
     };
 
-    Ok(post_chat_completion(provider, &api_key, &request_body)
-        .await?
-        .content)
+    post_chat_completion(provider, &api_key, &request_body)
+        .await
+        .map(|outcome| outcome.content)
+        .map_err(|e| e.to_string())
 }
 
 /// Variante sans schéma avec paramètres d'échantillonnage explicites (plan 09).
 /// Rend aussi la troncature, que le résumé local utilise pour signaler une
-/// tranche coupée par `max_tokens`.
+/// tranche coupée par `max_tokens`, et distingue le dépassement de contexte.
 pub async fn send_chat_completion_with_options(
     provider: &PostProcessProvider,
     api_key: String,
@@ -312,7 +360,7 @@ pub async fn send_chat_completion_with_options(
     user_content: String,
     system_prompt: Option<String>,
     options: ChatSamplingOptions,
-) -> Result<ChatCompletionOutcome, String> {
+) -> Result<ChatCompletionOutcome, ChatCompletionError> {
     let request_body = ChatCompletionRequest {
         model: model.to_string(),
         messages: build_messages(user_content, system_prompt),
@@ -461,6 +509,124 @@ mod tests {
         let outcome = outcome_from_response(empty);
         assert!(outcome.content.is_none());
         assert!(!outcome.truncated);
+    }
+
+    /// Corps rendu par `llama-server` (contexte de 12 288 tokens) au banc
+    /// d'essai du 24/10/2026, pour un prompt trop long.
+    const EXCEED_CONTEXT_BODY: &str = r#"{"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error","n_prompt_tokens":13104,"n_ctx":12288}}"#;
+
+    #[test]
+    fn context_size_errors_are_told_apart() {
+        let exceeded =
+            classify_error_response(reqwest::StatusCode::BAD_REQUEST, EXCEED_CONTEXT_BODY);
+        match &exceeded {
+            ChatCompletionError::ContextExceeded { detail } => {
+                assert!(detail.contains("400"), "{detail}");
+                assert!(detail.contains("n_prompt_tokens"), "{detail}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(exceeded.to_string().contains("exceed_context_size_error"));
+
+        // Une autre erreur 400, un corps non JSON ou un 500 restent « autres ».
+        for (status, body) in [
+            (
+                reqwest::StatusCode::BAD_REQUEST,
+                r#"{"error":{"code":400,"message":"bad","type":"invalid_request_error"}}"#,
+            ),
+            (
+                reqwest::StatusCode::BAD_REQUEST,
+                "exceed_context_size_error",
+            ),
+            (reqwest::StatusCode::INTERNAL_SERVER_ERROR, "boom"),
+        ] {
+            assert!(
+                matches!(
+                    classify_error_response(status, body),
+                    ChatCompletionError::Other(_)
+                ),
+                "{status} {body}"
+            );
+        }
+    }
+
+    /// Serveur HTTP factice : lit une requête (en-têtes et corps, pour ne pas
+    /// couper la connexion sous le client), répond `status` et `body`.
+    fn fake_chat_server(status: &'static str, body: &'static str) -> u16 {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut content_length = 0usize;
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap_or(0) > 0 && line != "\r\n" {
+                if let Some((name, value)) = line.split_once(':') {
+                    if name.eq_ignore_ascii_case("content-length") {
+                        content_length = value.trim().parse().unwrap_or(0);
+                    }
+                }
+                line.clear();
+            }
+            let mut request_body = vec![0u8; content_length];
+            let _ = reader.read_exact(&mut request_body);
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        });
+        port
+    }
+
+    fn local_provider(port: u16) -> PostProcessProvider {
+        PostProcessProvider {
+            id: "llama-local".into(),
+            label: "llama.cpp local".into(),
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            allow_base_url_edit: false,
+            models_endpoint: None,
+            supports_structured_output: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_too_long_request_comes_back_as_context_exceeded() {
+        let port = fake_chat_server("400 Bad Request", EXCEED_CONTEXT_BODY);
+        let err = send_chat_completion_with_options(
+            &local_provider(port),
+            "k".into(),
+            "m",
+            "texte".into(),
+            Some("système".into()),
+            ChatSamplingOptions::default(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, ChatCompletionError::ContextExceeded { ref detail } if detail.contains("n_ctx")),
+            "{err:?}"
+        );
+
+        // Les points d'entrée à erreur texte gardent le message d'avant.
+        let port = fake_chat_server("400 Bad Request", EXCEED_CONTEXT_BODY);
+        let err = send_chat_completion(
+            &local_provider(port),
+            "k".into(),
+            "m",
+            "t".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.starts_with("API request failed with status 400 Bad Request:"),
+            "{err}"
+        );
     }
 
     #[test]
