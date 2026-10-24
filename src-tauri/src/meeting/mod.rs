@@ -1,14 +1,16 @@
 //! Enregistrement de réunion : capture du micro écrite au fil de l'eau sur le
 //! disque, sans limite de durée (une réunion de 3 h, 10 h ou 24 h ne tient
 //! jamais en mémoire), avec pause, reprise et reconnexion du micro. Les
-//! enregistrements et les éléments du futur compte rendu (charte éditoriale,
-//! charte graphique, skill) vivent dans `meetings.db` et le dossier `meetings/`
-//! des données de l'application. Aucune donnée ne quitte l'ordinateur.
+//! enregistrements, leur transcription, leur compte rendu et ce qu'il applique
+//! (charte éditoriale, charte graphique, skill) vivent dans `meetings.db` et le
+//! dossier `meetings/` des données de l'application. Aucune donnée ne quitte
+//! l'ordinateur.
 
 pub mod assets;
 pub mod commands;
 pub mod keep_awake;
 pub mod recorder;
+pub mod report;
 pub mod store;
 pub mod wav;
 
@@ -124,6 +126,19 @@ pub struct MeetingRecording {
     /// Nombre de fichiers WAV : 1, sauf au-delà de ~37 h d'audio (limite de
     /// 4 Go du format WAV), où l'enregistrement continue dans un fichier suivant.
     pub parts: i64,
+    /// Un compte rendu a déjà été rédigé.
+    pub has_report: bool,
+}
+
+/// Transcription et compte rendu d'un enregistrement.
+#[derive(Clone, Debug, Serialize, Deserialize, Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingReport {
+    pub recording_id: i64,
+    pub transcript: Option<String>,
+    /// Compte rendu Markdown, `None` tant qu'il n'a pas été rédigé.
+    pub markdown: Option<String>,
+    pub updated_at: Option<i64>,
 }
 
 /// Élément texte du compte rendu : charte éditoriale ou skill.
@@ -211,6 +226,22 @@ pub enum MeetingError {
     Storage {
         detail: String,
     },
+    /// Mode strict sans licence valide.
+    LicenceRequired,
+    /// Un compte rendu est déjà en cours de rédaction.
+    ReportBusy,
+    Cancelled,
+    /// Transcription impossible (modèle de transcription absent, audio
+    /// illisible ou sans parole).
+    Transcription {
+        detail: String,
+    },
+    /// Charte et skill trop longs pour le contexte du modèle local.
+    AssetsTooLong,
+    /// Étape de rédaction : erreur du moteur local (téléchargement, mémoire…).
+    Summary {
+        error: crate::summary::SummaryError,
+    },
 }
 
 impl std::fmt::Display for MeetingError {
@@ -233,6 +264,12 @@ impl std::fmt::Display for MeetingError {
             MeetingError::InvalidFile { detail } => write!(f, "fichier illisible: {detail}"),
             MeetingError::InvalidValue => write!(f, "valeur invalide"),
             MeetingError::Storage { detail } => write!(f, "stockage: {detail}"),
+            MeetingError::LicenceRequired => write!(f, "licence requise"),
+            MeetingError::ReportBusy => write!(f, "un compte rendu est déjà en cours"),
+            MeetingError::Cancelled => write!(f, "annulé"),
+            MeetingError::Transcription { detail } => write!(f, "transcription: {detail}"),
+            MeetingError::AssetsTooLong => write!(f, "charte et skill trop longs"),
+            MeetingError::Summary { error } => write!(f, "rédaction: {error}"),
         }
     }
 }

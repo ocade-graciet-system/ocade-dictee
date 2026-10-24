@@ -8,6 +8,7 @@ import { downloadDir } from "@tauri-apps/api/path";
 import {
   Check,
   Download,
+  FileText,
   Loader2,
   Mic,
   Pencil,
@@ -18,6 +19,7 @@ import {
 } from "lucide-react";
 import { commands, type MeetingRecording } from "@/bindings";
 import { useMeetingStore } from "@/stores/meetingStore";
+import { useMeetingReportStore } from "@/stores/meetingReportStore";
 import { AudioPlayer } from "../ui/AudioPlayer";
 import {
   exportFileName,
@@ -38,6 +40,10 @@ export const RecordingList: React.FC = () => {
   const { t, i18n } = useTranslation();
   const { recordings, status, highlightedId, rename, remove } =
     useMeetingStore();
+  const openReportId = useMeetingReportStore((s) => s.openId);
+  const reportJobId = useMeetingReportStore((s) => s.job?.recordingId ?? null);
+  const openReport = useMeetingReportStore((s) => s.open);
+  const forgetReport = useMeetingReportStore((s) => s.forget);
   const [sort, setSort] = useState<RecordingSort>("newest");
   const [query, setQuery] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -135,8 +141,17 @@ export const RecordingList: React.FC = () => {
     if (error) {
       toast.error(meetingErrorMessage(t, error));
     } else {
+      forgetReport(recording.id);
       toast.success(t("settings.meeting.list.deleted"));
     }
+  };
+
+  // Le panneau du compte rendu s'ouvre au-dessus de la liste : on y remonte.
+  const handleOpenReport = (recording: MeetingRecording) => {
+    void openReport(recording.id);
+    document
+      .querySelector(".overflow-y-auto")
+      ?.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   return (
@@ -275,6 +290,27 @@ export const RecordingList: React.FC = () => {
 
                 {!editing && (
                   <div className="flex items-center gap-0.5">
+                    {!inProgress && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenReport(recording)}
+                        title={t("settings.meeting.list.reportHint")}
+                        className={`mr-1 flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+                          openReportId === recording.id
+                            ? "bg-logo-primary/30 text-text"
+                            : "bg-logo-primary/15 text-text hover:bg-logo-primary/25"
+                        }`}
+                      >
+                        {reportJobId === recording.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : recording.hasReport ? (
+                          <Check className="h-3.5 w-3.5 text-green-500" />
+                        ) : (
+                          <FileText className="h-3.5 w-3.5" />
+                        )}
+                        <span>{t("settings.meeting.list.report")}</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => void handlePlay(recording)}
@@ -308,7 +344,8 @@ export const RecordingList: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => void handleDelete(recording)}
-                      disabled={inProgress}
+                      // Le compte rendu en cours lit ce fichier.
+                      disabled={inProgress || reportJobId === recording.id}
                       title={t("settings.meeting.list.delete")}
                       className={`${iconButton} hover:!text-red-500 hover:!bg-red-500/10`}
                     >

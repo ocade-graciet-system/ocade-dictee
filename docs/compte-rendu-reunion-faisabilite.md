@@ -6,11 +6,11 @@ Question posée : le futur bouton « Compte rendu de réunion » peut-il appliqu
 
 ## Verdict
 
-| Élément | Faisable ? | Comment |
-|---|---|---|
-| **Skill** (structure du compte rendu) | **Oui** | Le modèle suit la structure demandée dans 16 cas sur 16 : sections dans l'ordre, titres exacts, tableau `Qui \| Quoi \| Échéance` bien formé. Un contrôle tiré des titres du skill, avec une relance, couvre le cas restant (sortie coupée). |
-| **Charte graphique** | **Oui, sans le modèle** | Le modèle rend un Markdown propre : aucun bloc de code ni ligne `---` sur 24 sorties. L'application applique elle-même le logo, les couleurs, la police et le pied de page au document. |
-| **Charte éditoriale** | **En partie** | Le modèle suit les règles simples : vouvoiement, pas de « on », heures « 14 h 30 », montants « 2 400 € HT ». Il suit mal le lexique interdit (7 à 10 mots interdits par compte rendu, contre 9 sans charte), le format des dates (0 %), la longueur des phrases et le gras des noms. **Les règles mécaniques doivent être appliquées par le code** : la démonstration atteint 0 mot interdit et 100 % de dates conformes. |
+| Élément                               | Faisable ?              | Comment                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Skill** (structure du compte rendu) | **Oui**                 | Le modèle suit la structure demandée dans 16 cas sur 16 : sections dans l'ordre, titres exacts, tableau `Qui \| Quoi \| Échéance` bien formé. Un contrôle tiré des titres du skill, avec une relance, couvre le cas restant (sortie coupée).                                                                                                                                                                              |
+| **Charte graphique**                  | **Oui, sans le modèle** | Le modèle rend un Markdown propre : aucun bloc de code ni ligne `---` sur 24 sorties. L'application applique elle-même le logo, les couleurs, la police et le pied de page au document.                                                                                                                                                                                                                                   |
+| **Charte éditoriale**                 | **En partie**           | Le modèle suit les règles simples : vouvoiement, pas de « on », heures « 14 h 30 », montants « 2 400 € HT ». Il suit mal le lexique interdit (7 à 10 mots interdits par compte rendu, contre 9 sans charte), le format des dates (0 %), la longueur des phrases et le gras des noms. **Les règles mécaniques doivent être appliquées par le code** : la démonstration atteint 0 mot interdit et 100 % de dates conformes. |
 
 ## Points d'attention mesurés
 
@@ -39,6 +39,31 @@ Question posée : le futur bouton « Compte rendu de réunion » peut-il appliqu
 5. **Contrôle de structure dérivé du skill**, avec une seule relance, sur le modèle de `check_template`.
 6. **Erreur de dépassement de contexte** traduite en message clair, ou évitée grâce aux points 1 et 2.
 7. **Rendu du document** (Word ou PDF) avec la charte graphique : logo, couleurs, police, pied de page.
+
+## Mise en œuvre (bouton « Compte rendu » de l'onglet Réunion)
+
+Code : `src-tauri/src/meeting/report/`.
+
+| Recommandation             | État                                                                                                                                                                                                                                                                                |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Plafonds                | Avertissement dans l'onglet au-delà de 650 et 500 mots. Le compte rendu est refusé avant transcription si la charte et le skill ne laissent plus 2 500 tokens au contenu.                                                                                                           |
+| 2. Tranche dynamique       | Fait (`ReportContext::content_budget`). Les notes sont neutres, avec 1 800 tokens de sortie au lieu de 1 400.                                                                                                                                                                       |
+| 3. Placement               | Fait. Sans skill, un gabarit standard à exemples à trous est utilisé (`DEFAULT_SKILL`).                                                                                                                                                                                             |
+| 4. Post-traitement         | Fait : lexique lu dans les tableaux « Interdit \| À écrire » et les lignes « x → y » (élision, pluriel, mot redoublé) ; ligne « Date : » de l'en-tête ; gras des participants quand la charte le demande. **Pas encore** : jour et année des dates dans le corps, heures, montants. |
+| 5. Contrôle de structure   | Fait : titres lus dans le bloc de code du gabarit du skill, une relance. Après la relance, la sortie est gardée et présentée comme un brouillon à relire.                                                                                                                           |
+| 6. Dépassement de contexte | Évité par les points 1 et 2.                                                                                                                                                                                                                                                        |
+| 7. Rendu Word              | Fait : `.docx` écrit par l'app, ouvert par Word sans réparation.                                                                                                                                                                                                                    |
+
+Essai réel, sur ce PC, avec une réunion de 11 min (synthèse vocale de la transcription du banc), la charte et le skill du banc :
+
+- transcription par Cohere en environ 20 s (40 fois le temps réel, Vulkan) ;
+- rédaction en 2 min 35 ;
+- structure du skill respectée ;
+- 0 mot interdit restant, sur les 14 présents dans la transcription ;
+- date juste ;
+- tous les participants en gras.
+
+Restent les limites du modèle : une phrase d'exemple du skill reprise comme décision, des actions oubliées, et l'accord de l'article après remplacement (« du séance photo »).
 
 ## Défauts du compte-rendu actuel (onglet Fichier) relevés au passage
 

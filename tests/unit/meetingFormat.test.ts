@@ -111,4 +111,33 @@ describe("meetingErrorMessage", () => {
       meetingErrorMessage(t, { kind: "microphoneFailed", detail: "WASAPI" }),
     ).toBe("settings.meeting.errors.microphoneFailed");
   });
+
+  test("reprend les messages du moteur de rédaction de l'onglet Fichier", () => {
+    expect(
+      meetingErrorMessage(t, {
+        kind: "summary",
+        error: { kind: "memory", neededBytes: 4, freeBytes: 1 },
+      }),
+    ).toBe("settings.file.summary.errors.memory");
+    expect(
+      meetingErrorMessage(t, {
+        kind: "summary",
+        error: {
+          kind: "network",
+          asset: "model",
+          failure: "offline",
+          host: "huggingface.co",
+          detail: "x",
+        },
+      }),
+    ).toBe(
+      'settings.file.summary.errors.asset.model {"host":"huggingface.co"} settings.file.summary.errors.network.offline',
+    );
+    expect(
+      meetingErrorMessage(t, {
+        kind: "transcription",
+        detail: "modèle absent",
+      }),
+    ).toBe('settings.meeting.errors.transcription {"detail":"modèle absent"}');
+  });
 });

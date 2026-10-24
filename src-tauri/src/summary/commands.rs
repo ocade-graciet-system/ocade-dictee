@@ -14,7 +14,7 @@ use crate::TranscriptionCoordinator;
 
 /// Une dictée est en cours : enregistrement (`is_recording`) ou seconde
 /// moitié du pipeline, transcription et collage (`is_transcribing`).
-fn dictation_in_progress(app: &AppHandle) -> bool {
+pub(crate) fn dictation_in_progress(app: &AppHandle) -> bool {
     let recording = app
         .try_state::<Arc<AudioRecordingManager>>()
         .is_some_and(|manager| manager.is_recording());

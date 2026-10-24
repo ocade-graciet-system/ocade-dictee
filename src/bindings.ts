@@ -1259,6 +1259,48 @@ async meetingClearGraphicCharter() : Promise<Result<MeetingAssets, MeetingError>
 }
 },
 /**
+ * Rédige le compte rendu de l'enregistrement (progression : événement
+ * `meeting-report-progress`). `retranscribe` refait la transcription au lieu
+ * de réutiliser celle déjà conservée.
+ */
+async meetingGenerateReport(id: number, retranscribe: boolean) : Promise<Result<MeetingReport, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_generate_report", { id, retranscribe }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingCancelReport() : Promise<void> {
+    await TAURI_INVOKE("meeting_cancel_report");
+},
+/**
+ * Un compte rendu est en cours de rédaction.
+ */
+async meetingReportRunning() : Promise<boolean> {
+    return await TAURI_INVOKE("meeting_report_running");
+},
+async meetingGetReport(id: number) : Promise<Result<MeetingReport, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_get_report", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Enregistre le compte rendu en document Word, mis en forme avec la charte
+ * graphique (couleurs, police, pied de page, logo).
+ */
+async meetingExportReportDocx(id: number, destPath: string, logo: ReportLogo | null) : Promise<Result<null, MeetingError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_export_report_docx", { id, destPath, logo }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Stub implementation for non-macOS platforms
  * Always returns false since laptop detection is macOS-specific
  */
@@ -1280,6 +1322,7 @@ fileTranscriptionProgress: FileTranscriptionProgress,
 historyUpdatePayload: HistoryUpdatePayload,
 meetingRecorderStatus: MeetingRecorderStatus,
 meetingRecordingFinished: MeetingRecordingFinished,
+meetingReportProgress: MeetingReportProgress,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent,
 summaryProgress: SummaryProgress,
@@ -1289,6 +1332,7 @@ fileTranscriptionProgress: "file-transcription-progress",
 historyUpdatePayload: "history-update-payload",
 meetingRecorderStatus: "meeting-recorder-status",
 meetingRecordingFinished: "meeting-recording-finished",
+meetingReportProgress: "meeting-report-progress",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event",
 summaryProgress: "summary-progress",
@@ -1640,7 +1684,28 @@ export type MeetingError = { kind: "alreadyRecording" } | { kind: "notRecording"
 /**
  * Enregistrement en cours : ni suppression ni export.
  */
-{ kind: "inProgress" } | { kind: "notFound" } | { kind: "unsupportedFile" } | { kind: "fileTooLarge"; maxBytes: number } | { kind: "invalidFile"; detail: string } | { kind: "invalidValue" } | { kind: "storage"; detail: string }
+{ kind: "inProgress" } | { kind: "notFound" } | { kind: "unsupportedFile" } | { kind: "fileTooLarge"; maxBytes: number } | { kind: "invalidFile"; detail: string } | { kind: "invalidValue" } | { kind: "storage"; detail: string } | 
+/**
+ * Mode strict sans licence valide.
+ */
+{ kind: "licenceRequired" } | 
+/**
+ * Un compte rendu est déjà en cours de rédaction.
+ */
+{ kind: "reportBusy" } | { kind: "cancelled" } | 
+/**
+ * Transcription impossible (modèle de transcription absent, audio
+ * illisible ou sans parole).
+ */
+{ kind: "transcription"; detail: string } | 
+/**
+ * Charte et skill trop longs pour le contexte du modèle local.
+ */
+{ kind: "assetsTooLong" } | 
+/**
+ * Étape de rédaction : erreur du moteur local (téléchargement, mémoire…).
+ */
+{ kind: "summary"; error: SummaryError }
 /**
  * État courant de l'enregistreur, émis plusieurs fois par seconde pendant un
  * enregistrement (chronomètre, niveau du micro) et à chaque changement de
@@ -1672,12 +1737,28 @@ createdAt: number; durationMs: number; sizeBytes: number; state: RecordingState;
  * Nombre de fichiers WAV : 1, sauf au-delà de ~37 h d'audio (limite de
  * 4 Go du format WAV), où l'enregistrement continue dans un fichier suivant.
  */
-parts: number }
+parts: number; 
+/**
+ * Un compte rendu a déjà été rédigé.
+ */
+hasReport: boolean }
 /**
  * Événement `meeting-recording-finished` : l'enregistrement est terminé et
  * son fichier est complet.
  */
 export type MeetingRecordingFinished = { recording: MeetingRecording; reason: FinishReason }
+/**
+ * Transcription et compte rendu d'un enregistrement.
+ */
+export type MeetingReport = { recordingId: number; transcript: string | null; 
+/**
+ * Compte rendu Markdown, `None` tant qu'il n'a pas été rédigé.
+ */
+markdown: string | null; updatedAt: number | null }
+/**
+ * Événement `meeting-report-progress`.
+ */
+export type MeetingReportProgress = { recordingId: number; phase: ReportPhase; current: number; total: number }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
 /**
@@ -1778,6 +1859,38 @@ export type RecordingState = "inProgress" | "done" |
  * l'interruption.
  */
 "interrupted"
+/**
+ * Logo converti en PNG par l'interface (qui sait lire SVG, WebP, GIF…).
+ */
+export type ReportLogo = { pngBase64: string; width: number; height: number }
+/**
+ * Étape en cours, pour l'encart de progression de l'onglet Réunion.
+ */
+export type ReportPhase = 
+/**
+ * `current` / `total` : tronçons de 30 s transcrits.
+ */
+"transcribing" | 
+/**
+ * Téléchargement unique du moteur, en pourcentage.
+ */
+"engine" | 
+/**
+ * Téléchargement unique du modèle de rédaction, en pourcentage.
+ */
+"model" | 
+/**
+ * Chargement du modèle en mémoire.
+ */
+"starting" | 
+/**
+ * `current` / `total` : appels au modèle (notes puis synthèse).
+ */
+"writing" | 
+/**
+ * Corrections de la charte et enregistrement.
+ */
+"formatting"
 export type SecretMap = Partial<{ [key in string]: string }>
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"

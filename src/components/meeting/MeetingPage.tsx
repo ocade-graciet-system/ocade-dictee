@@ -1,19 +1,24 @@
 import React, { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useMeetingStore } from "@/stores/meetingStore";
+import { useMeetingReportStore } from "@/stores/meetingReportStore";
 import { RecorderPanel } from "./RecorderPanel";
 import { RecordingList } from "./RecordingList";
 import { ReportAssets } from "./ReportAssets";
+import { ReportPanel } from "./ReportPanel";
 
 // Onglet « Réunion » : enregistrer le micro sans limite de durée, retrouver
-// ses enregistrements, et préparer ce qu'appliquera le compte rendu.
+// ses enregistrements, en rédiger le compte rendu, et préparer ce qu'il
+// applique (charte éditoriale, charte graphique, skill).
 export const MeetingPage: React.FC = () => {
   const { t } = useTranslation();
   const initialize = useMeetingStore((s) => s.initialize);
+  const initializeReports = useMeetingReportStore((s) => s.initialize);
 
   useEffect(() => {
     void initialize();
-  }, [initialize]);
+    void initializeReports();
+  }, [initialize, initializeReports]);
 
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
@@ -30,6 +35,7 @@ export const MeetingPage: React.FC = () => {
           <RecorderPanel />
         </div>
       </div>
+      <ReportPanel />
       <RecordingList />
       <ReportAssets />
     </div>

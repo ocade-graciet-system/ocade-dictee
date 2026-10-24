@@ -9,7 +9,7 @@ use std::time::Duration;
 use tauri::AppHandle;
 
 use super::wav;
-use super::{now_unix, MeetingError, MeetingRecording, RecordingState};
+use super::{now_unix, MeetingError, MeetingRecording, MeetingReport, RecordingState};
 
 /// Longueur maximale d'un nom d'enregistrement (caractères).
 pub const MAX_NAME_CHARS: usize = 200;
@@ -82,7 +82,69 @@ impl MeetingStore {
                     updated_at INTEGER NOT NULL
                 );",
             )
-            .map_err(MeetingError::storage)
+            .map_err(MeetingError::storage)?;
+        // Migration douce : colonnes du compte rendu, ajoutées après la
+        // première version de l'onglet. « duplicate column » sur une base
+        // déjà migrée est attendu.
+        let conn = self.open()?;
+        for column in [
+            "transcript TEXT",
+            "report_markdown TEXT",
+            "report_updated_at INTEGER",
+        ] {
+            if let Err(e) = conn.execute(
+                &format!("ALTER TABLE meeting_recordings ADD COLUMN {column}"),
+                [],
+            ) {
+                if !e.to_string().contains("duplicate column") {
+                    return Err(MeetingError::storage(e));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Transcription d'un enregistrement, conservée pour rédiger à nouveau le
+    /// compte rendu sans retranscrire.
+    pub fn set_transcript(&self, id: i64, transcript: &str) -> Result<(), MeetingError> {
+        self.open()?
+            .execute(
+                "UPDATE meeting_recordings SET transcript = ?1 WHERE id = ?2",
+                rusqlite::params![transcript, id],
+            )
+            .map_err(MeetingError::storage)?;
+        Ok(())
+    }
+
+    pub fn set_report(&self, id: i64, markdown: &str) -> Result<(), MeetingError> {
+        self.open()?
+            .execute(
+                "UPDATE meeting_recordings SET report_markdown = ?1, report_updated_at = ?2
+                 WHERE id = ?3",
+                rusqlite::params![markdown, now_unix(), id],
+            )
+            .map_err(MeetingError::storage)?;
+        Ok(())
+    }
+
+    pub fn report(&self, id: i64) -> Result<MeetingReport, MeetingError> {
+        self.open()?
+            .query_row(
+                "SELECT transcript, report_markdown, report_updated_at
+                 FROM meeting_recordings WHERE id = ?1",
+                [id],
+                |row| {
+                    Ok(MeetingReport {
+                        recording_id: id,
+                        transcript: row.get(0)?,
+                        markdown: row.get(1)?,
+                        updated_at: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(MeetingError::storage)?
+            .ok_or(MeetingError::NotFound)
     }
 
     pub fn insert_recording(&self, name: &str, created_at: i64) -> Result<i64, MeetingError> {
@@ -150,6 +212,7 @@ impl MeetingStore {
             size_bytes: row.get(4)?,
             parts: row.get(5)?,
             state: RecordingState::from_db(&state),
+            has_report: row.get(7)?,
         })
     }
 
@@ -159,7 +222,8 @@ impl MeetingStore {
         let conn = self.open()?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, created_at, name, duration_ms, size_bytes, parts, state
+                "SELECT id, created_at, name, duration_ms, size_bytes, parts, state,
+                        report_markdown IS NOT NULL
                  FROM meeting_recordings ORDER BY created_at DESC, id DESC",
             )
             .map_err(MeetingError::storage)?;
@@ -174,7 +238,8 @@ impl MeetingStore {
     pub fn get(&self, id: i64) -> Result<MeetingRecording, MeetingError> {
         self.open()?
             .query_row(
-                "SELECT id, created_at, name, duration_ms, size_bytes, parts, state
+                "SELECT id, created_at, name, duration_ms, size_bytes, parts, state,
+                        report_markdown IS NOT NULL
                  FROM meeting_recordings WHERE id = ?1",
                 [id],
                 Self::row_to_recording,
@@ -434,6 +499,24 @@ mod tests {
         assert_eq!(asset.file_name, None);
         store.clear_asset("editorial").unwrap();
         assert!(store.get_asset("editorial").unwrap().is_none());
+    }
+
+    #[test]
+    fn transcript_and_report_are_kept_and_survive_reopening() {
+        let (dir, store) = store();
+        let id = store.insert_recording("R", 1).unwrap();
+        assert!(!store.get(id).unwrap().has_report);
+        assert_eq!(store.report(id).unwrap().markdown, None);
+        store.set_transcript(id, "Bonjour à tous.").unwrap();
+        store.set_report(id, "# CR").unwrap();
+        // Rouvrir la base rejoue la migration sans erreur.
+        let reopened = MeetingStore::new_at(dir.path()).unwrap();
+        let report = reopened.report(id).unwrap();
+        assert_eq!(report.transcript.as_deref(), Some("Bonjour à tous."));
+        assert_eq!(report.markdown.as_deref(), Some("# CR"));
+        assert!(report.updated_at.is_some());
+        assert!(reopened.list().unwrap()[0].has_report);
+        assert_eq!(reopened.report(999), Err(MeetingError::NotFound));
     }
 
     #[test]

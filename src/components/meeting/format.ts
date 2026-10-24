@@ -1,5 +1,10 @@
 import type { TFunction } from "i18next";
-import type { MeetingError, MeetingRecording, TextAssetKind } from "@/bindings";
+import type {
+  MeetingError,
+  MeetingRecording,
+  SummaryError,
+  TextAssetKind,
+} from "@/bindings";
 
 // Fonctions pures de l'onglet Réunion (testées dans tests/unit) : affichage
 // des durées et tailles en typographie française, tri de la liste, messages
@@ -111,8 +116,40 @@ export const meetingErrorMessage = (
       });
     case "storage":
       return t("settings.meeting.errors.storage", { detail: error.detail });
+    case "transcription":
+      return t("settings.meeting.errors.transcription", {
+        detail: error.detail,
+      });
+    case "summary":
+      return summaryErrorMessage(t, error.error);
     default:
       return t(`settings.meeting.errors.${error.kind}`);
+  }
+};
+
+/** Panne du moteur de rédaction : mêmes messages que le compte-rendu de
+ *  l'onglet Fichier (téléchargement unique, mémoire, démarrage…). */
+export const summaryErrorMessage = (
+  t: TFunction,
+  error: SummaryError,
+): string => {
+  const asset = (kind: "engine" | "model", host: string) =>
+    t(`settings.file.summary.errors.asset.${kind}`, { host });
+  switch (error.kind) {
+    case "network":
+      return `${asset(error.asset, error.host)} ${t(
+        `settings.file.summary.errors.network.${error.failure}`,
+      )}`;
+    case "downloadFailed":
+      return `${asset(error.asset, error.host)} ${t(
+        "settings.file.summary.errors.downloadFailed",
+      )}`;
+    case "diskSpace":
+      return t("settings.file.summary.errors.diskSpace", {
+        free: formatSize(error.freeBytes),
+      });
+    default:
+      return t(`settings.file.summary.errors.${error.kind}`);
   }
 };
 

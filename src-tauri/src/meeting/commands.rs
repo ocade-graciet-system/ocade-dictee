@@ -1,14 +1,19 @@
 //! Commandes Tauri de l'onglet Réunion.
 
+use serde::Deserialize;
+use specta::Type;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use super::recorder::MeetingRecorder;
+use super::report::{self, docx};
 use super::{
     assets, GraphicCharter, MeetingAssets, MeetingError, MeetingRecorderStatus, MeetingRecording,
-    RecordingState, TextAssetKind,
+    MeetingReport, RecordingState, TextAssetKind,
 };
+use crate::managers::transcription::TranscriptionManager;
+use crate::summary::engine::SummaryEngine;
 
 type Recorder<'a> = State<'a, Arc<MeetingRecorder>>;
 
@@ -201,6 +206,103 @@ pub async fn meeting_clear_graphic_charter(
 ) -> Result<MeetingAssets, MeetingError> {
     assets::clear_graphic(recorder.store())?;
     assets::load(recorder.store())
+}
+
+/// Rédige le compte rendu de l'enregistrement (progression : événement
+/// `meeting-report-progress`). `retranscribe` refait la transcription au lieu
+/// de réutiliser celle déjà conservée.
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_generate_report(
+    app: AppHandle,
+    recorder: Recorder<'_>,
+    engine: State<'_, Arc<SummaryEngine>>,
+    transcription: State<'_, Arc<TranscriptionManager>>,
+    id: i64,
+    retranscribe: bool,
+) -> Result<MeetingReport, MeetingError> {
+    report::generate(
+        &app,
+        recorder.store(),
+        &engine,
+        Arc::clone(&transcription),
+        id,
+        retranscribe,
+    )
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn meeting_cancel_report(engine: State<'_, Arc<SummaryEngine>>) {
+    report::cancel(&engine);
+}
+
+/// Un compte rendu est en cours de rédaction.
+#[tauri::command]
+#[specta::specta]
+pub fn meeting_report_running() -> bool {
+    report::is_running()
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_get_report(
+    recorder: Recorder<'_>,
+    id: i64,
+) -> Result<MeetingReport, MeetingError> {
+    recorder.store().report(id)
+}
+
+/// Logo converti en PNG par l'interface (qui sait lire SVG, WebP, GIF…).
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportLogo {
+    pub png_base64: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Enregistre le compte rendu en document Word, mis en forme avec la charte
+/// graphique (couleurs, police, pied de page, logo).
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_export_report_docx(
+    recorder: Recorder<'_>,
+    id: i64,
+    dest_path: String,
+    logo: Option<ReportLogo>,
+) -> Result<(), MeetingError> {
+    let store = recorder.store();
+    let recording = store.get(id)?;
+    let markdown = store.report(id)?.markdown.ok_or(MeetingError::NotFound)?;
+    let charter = assets::load(store)?
+        .graphic
+        .unwrap_or_else(docx::default_charter);
+    let logo = match logo {
+        Some(logo) => {
+            use base64::Engine;
+            let png = base64::engine::general_purpose::STANDARD
+                .decode(logo.png_base64.as_bytes())
+                .map_err(|e| MeetingError::InvalidFile {
+                    detail: e.to_string(),
+                })?;
+            Some(docx::DocxLogo {
+                png,
+                width: logo.width,
+                height: logo.height,
+            })
+        }
+        None => None,
+    };
+    let bytes = docx::build_docx(&docx::DocxInput {
+        markdown: &markdown,
+        title: &recording.name,
+        charter: &charter,
+        logo,
+    })
+    .map_err(MeetingError::storage)?;
+    std::fs::write(&dest_path, bytes).map_err(MeetingError::storage)
 }
 
 #[cfg(test)]

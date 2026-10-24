@@ -22,7 +22,7 @@ const LICENCE_REQUIRED: &str =
     "Une licence valide est nécessaire pour transcrire. Ouvrez l'onglet Licence.";
 
 /// Tronçon = 30 s à 16 kHz (fréquence attendue par le pipeline de transcription).
-const CHUNK_LEN_SAMPLES: usize = 30 * 16_000;
+pub(crate) const CHUNK_LEN_SAMPLES: usize = 30 * 16_000;
 /// Chevauchement entre tronçons consécutifs.
 ///
 /// Volontairement à 0 (Phase A) : avec un chevauchement > 0, la zone commune
@@ -36,10 +36,10 @@ const CHUNK_OVERLAP_SAMPLES: usize = 0;
 /// Plus court morceau encore redécoupé quand un tronçon échoue (5 s).
 const MIN_RETRY_SAMPLES: usize = 5 * 16_000;
 /// Laissé dans le document à la place d'un passage impossible à transcrire.
-const UNTRANSCRIBED_MARK: &str = "[passage non transcrit]";
+pub(crate) const UNTRANSCRIBED_MARK: &str = "[passage non transcrit]";
 /// Tronçons en échec d'affilée, dès le début, au-delà desquels l'erreur est
 /// jugée systémique (modèle absent, moteur hors service) et le fichier abandonné.
-const MAX_LEADING_FAILED_CHUNKS: usize = 3;
+pub(crate) const MAX_LEADING_FAILED_CHUNKS: usize = 3;
 
 /// Drapeau d'annulation partagé pour le pipeline de transcription de fichier.
 /// L'app ne traite qu'un fichier à la fois (pas de file d'attente), donc un
@@ -956,7 +956,7 @@ pub fn cancel_file_transcription() {
 /// retentée, jusqu'à [`MIN_RETRY_SAMPLES`] ; un morceau qui échoue encore est
 /// remplacé par [`UNTRANSCRIBED_MARK`]. Ne renvoie une erreur que si rien n'a
 /// pu être transcrit dans le tronçon.
-fn transcribe_chunk_resilient(
+pub(crate) fn transcribe_chunk_resilient(
     samples: &[f32],
     transcribe: &mut dyn FnMut(&[f32]) -> Result<String, String>,
     cancelled: &dyn Fn() -> bool,

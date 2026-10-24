@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use futures_util::future::BoxFuture;
 use tokio_util::sync::CancellationToken;
 
 use super::assets::{engine_asset, CTX_SIZE, MODEL};
@@ -15,7 +16,7 @@ use super::server::{
     build_local_client, default_gpu_layers, kill_orphan_server, LlamaServer, LlamaServerConfig,
     START_TIMEOUT,
 };
-use super::summarize::{summarize_text, LlamaCompletion};
+use super::summarize::{summarize_text, Completion, LlamaCompletion};
 use super::system::{available_memory_bytes, check_memory, physical_cores};
 use super::{SummaryError, SummaryPhase, SummaryStatus};
 use crate::llm_client::{send_chat_completion_with_options, ChatSamplingOptions};
@@ -27,6 +28,33 @@ pub const IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const WATCHDOG_PERIOD: Duration = Duration::from_secs(30);
 /// Sondage de l'état de la dictée avant de démarrer un résumé.
 pub const DICTATION_POLL: Duration = Duration::from_millis(500);
+
+/// Rédaction confiée au moteur une fois le serveur prêt : le résumé de
+/// l'onglet Fichier, ou le compte rendu de réunion. Téléchargements, démarrage,
+/// verrou « une rédaction à la fois » et annulation restent ceux du moteur.
+pub trait GenerationJob: Sync {
+    /// `on_part(partie, total)` suit les appels au modèle.
+    fn generate<'a>(
+        &'a self,
+        completion: &'a dyn Completion,
+        cancel: &'a CancellationToken,
+        on_part: &'a mut (dyn FnMut(u32, u32) + Send),
+    ) -> BoxFuture<'a, Result<String, SummaryError>>;
+}
+
+/// Résumé d'un document (onglet Fichier).
+struct DocumentJob<'t>(&'t str);
+
+impl GenerationJob for DocumentJob<'_> {
+    fn generate<'a>(
+        &'a self,
+        completion: &'a dyn Completion,
+        cancel: &'a CancellationToken,
+        on_part: &'a mut (dyn FnMut(u32, u32) + Send),
+    ) -> BoxFuture<'a, Result<String, SummaryError>> {
+        Box::pin(summarize_text(self.0, completion, cancel, on_part))
+    }
+}
 
 pub struct SummaryEngine {
     paths: SummaryPaths,
@@ -202,6 +230,18 @@ impl SummaryEngine {
         &self,
         text: &str,
         is_dictating: F,
+        on_progress: impl FnMut(SummaryPhase, u32, u32) + Send,
+    ) -> Result<String, SummaryError> {
+        self.run_job(&DocumentJob(text), is_dictating, on_progress)
+            .await
+    }
+
+    /// Comme `run`, pour une rédaction fournie par l'appelant (compte rendu
+    /// de réunion) : même verrou, mêmes téléchargements, même serveur.
+    pub async fn run_job<F: Fn() -> bool + Send>(
+        &self,
+        job: &dyn GenerationJob,
+        is_dictating: F,
         mut on_progress: impl FnMut(SummaryPhase, u32, u32) + Send,
     ) -> Result<String, SummaryError> {
         if self
@@ -218,7 +258,7 @@ impl SummaryEngine {
         *lock(&self.last_used) = Instant::now();
 
         let result = self
-            .run_inner(text, &cancel, is_dictating, &mut on_progress)
+            .run_inner(job, &cancel, is_dictating, &mut on_progress)
             .await;
 
         if matches!(result, Err(SummaryError::Cancelled)) {
@@ -430,7 +470,7 @@ impl SummaryEngine {
 
     async fn run_inner<F: Fn() -> bool + Send>(
         &self,
-        text: &str,
+        job: &dyn GenerationJob,
         cancel: &CancellationToken,
         is_dictating: F,
         on_progress: &mut (impl FnMut(SummaryPhase, u32, u32) + Send),
@@ -485,7 +525,7 @@ impl SummaryEngine {
             server: &server,
             model_name: MODEL.model_name,
         };
-        summarize_text(text, &completion, cancel, &mut |current, total| {
+        job.generate(&completion, cancel, &mut |current, total| {
             on_progress(SummaryPhase::Summarizing, current, total)
         })
         .await

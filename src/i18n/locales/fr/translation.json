@@ -9,7 +9,7 @@
     "cancel": "Annuler"
   },
   "sidebar": {
-    "general": "Général",
+    "general": "Réglages",
     "models": "Modèles",
     "advanced": "Avancé",
     "postProcessing": "Post-traitement",
@@ -206,7 +206,7 @@
       "title": "Paramètres de {{model}}"
     },
     "general": {
-      "title": "Général",
+      "title": "Réglages",
       "shortcutPreset": {
         "title": "Raccourci de dictée",
         "description": "Maintenez ce raccourci pour dicter, relâchez pour coller le texte."
@@ -687,11 +687,13 @@
         "deleted": "Enregistrement supprimé",
         "inProgress": "En cours",
         "interrupted": "Interrompu",
-        "interruptedHint": "L'application s'est arrêtée pendant cet enregistrement : l'audio est conservé jusqu'à l'interruption."
+        "interruptedHint": "L'application s'est arrêtée pendant cet enregistrement : l'audio est conservé jusqu'à l'interruption.",
+        "report": "Compte rendu",
+        "reportHint": "Rédiger ou consulter le compte rendu de cette réunion"
       },
       "assets": {
         "title": "Compte rendu de réunion",
-        "intro": "Ajoutez votre charte éditoriale, votre charte graphique et votre skill : le futur bouton « Compte rendu de réunion » s'en servira pour rédiger et mettre en forme vos comptes rendus.",
+        "intro": "Ajoutez votre charte éditoriale, votre charte graphique et votre skill : le bouton « Compte rendu » de chaque enregistrement s'en sert pour rédiger et mettre en forme vos comptes rendus.",
         "import": "Importer un fichier…",
         "paste": "Coller un texte",
         "replace": "Remplacer…",
@@ -749,7 +751,7 @@
         "notRecording": "Aucun enregistrement en cours.",
         "microphonePermission": "L'accès au micro est refusé. Autorisez OCADE Dictée dans les paramètres de confidentialité du système (Micro), puis réessayez.",
         "noMicrophone": "Aucun micro détecté. Branchez un micro puis réessayez.",
-        "microphoneFailed": "Le micro n'a pas pu être ouvert. Vérifiez qu'il est bien branché, ou choisissez-en un autre dans l'onglet Général.",
+        "microphoneFailed": "Le micro n'a pas pu être ouvert. Vérifiez qu'il est bien branché, ou choisissez-en un autre dans l'onglet Réglages.",
         "diskSpace": "Espace disque insuffisant ({{free}} libres). Libérez de la place avant d'enregistrer : une heure de réunion occupe environ 115 Mo.",
         "inProgress": "Impossible pendant l'enregistrement : terminez-le d'abord.",
         "notFound": "Enregistrement introuvable : son fichier a peut-être été supprimé.",
@@ -757,7 +759,55 @@
         "fileTooLarge": "Fichier trop volumineux (maximum {{max}}).",
         "invalidFile": "Fichier illisible : {{detail}}",
         "invalidValue": "Valeur invalide : vérifiez les couleurs (format #RRGGBB), la police et le nom.",
-        "storage": "Erreur d'enregistrement sur le disque : {{detail}}"
+        "storage": "Erreur d'enregistrement sur le disque : {{detail}}",
+        "licenceRequired": "Une licence valide est nécessaire pour rédiger un compte rendu. Ouvrez l'onglet Licence.",
+        "reportBusy": "Un compte rendu est déjà en cours de rédaction.",
+        "cancelled": "Annulé.",
+        "transcription": "La transcription a échoué : {{detail}}",
+        "assetsTooLong": "La charte éditoriale et le skill sont trop longs pour le modèle local. Raccourcissez-les (environ 650 mots pour la charte, 500 pour le skill).",
+        "summary": "La rédaction du compte rendu a échoué."
+      },
+      "report": {
+        "title": "Compte rendu",
+        "close": "Fermer",
+        "cancel": "Annuler",
+        "intro": "L'enregistrement est transcrit puis résumé par l'IA, directement sur cet ordinateur : rien n'est envoyé sur Internet. Comptez plusieurs minutes, davantage pour une longue réunion.",
+        "applied": {
+          "charter": "Charte éditoriale : {{name}}",
+          "charterPasted": "texte saisi",
+          "noCharter": "Aucune charte éditoriale (vous pouvez en ajouter une plus bas)",
+          "skill": "Skill : {{name}}",
+          "skillPasted": "texte saisi",
+          "defaultSkill": "Structure standard : ordre du jour, synthèse, décisions, plan d'actions, points en suspens",
+          "graphic": "Charte graphique appliquée au document Word",
+          "noGraphic": "Mise en forme par défaut pour le document Word"
+        },
+        "firstUse": "Premier compte rendu : téléchargement unique d'environ {{size}} (moteur et modèle de rédaction).",
+        "firstUseNoSize": "Premier compte rendu : un téléchargement unique est nécessaire.",
+        "recorderBusy": "Terminez d'abord l'enregistrement en cours.",
+        "generate": "Rédiger le compte rendu",
+        "phase": {
+          "preparing": "Préparation…",
+          "transcribing": "Transcription de l'enregistrement… {{percent}} %",
+          "engine": "Téléchargement du moteur de rédaction… {{percent}} %",
+          "model": "Téléchargement du modèle de rédaction… {{percent}} %",
+          "starting": "Chargement du modèle de rédaction…",
+          "writing": "Rédaction du compte rendu… (étape {{current}}/{{total}})",
+          "formatting": "Application de la charte…"
+        },
+        "runningHint": "Vous pouvez changer d'onglet ou fermer la fenêtre : la rédaction continue.",
+        "busyElsewhere": "Un autre compte rendu est en cours de rédaction. Patientez jusqu'à la fin.",
+        "exportWord": "Enregistrer en Word…",
+        "exported": "Document Word enregistré",
+        "logoSkipped": "Le logo n'a pas pu être ajouté au document.",
+        "copy": "Copier",
+        "copied": "Copié !",
+        "regenerate": "Rédiger à nouveau",
+        "draftNotice": "Brouillon rédigé par l'IA locale : relisez les noms, les dates et qui fait quoi avant de le diffuser.",
+        "showTranscript": "Afficher la transcription",
+        "hideTranscript": "Masquer la transcription",
+        "ready": "Compte rendu prêt",
+        "cancelled": "Compte rendu annulé"
       }
     },
     "debug": {

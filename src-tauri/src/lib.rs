@@ -808,6 +808,11 @@ pub fn run(cli_args: CliArgs) {
             meeting::commands::meeting_import_logo,
             meeting::commands::meeting_clear_logo,
             meeting::commands::meeting_clear_graphic_charter,
+            meeting::commands::meeting_generate_report,
+            meeting::commands::meeting_cancel_report,
+            meeting::commands::meeting_report_running,
+            meeting::commands::meeting_get_report,
+            meeting::commands::meeting_export_report_docx,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![
@@ -819,6 +824,7 @@ pub fn run(cli_args: CliArgs) {
             summary::SummaryProgress,
             meeting::MeetingRecorderStatus,
             meeting::MeetingRecordingFinished,
+            meeting::report::MeetingReportProgress,
         ]);
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
