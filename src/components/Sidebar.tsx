@@ -1,12 +1,13 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { FlaskConical, Info, FileAudio, KeyRound } from "lucide-react";
+import { FlaskConical, Info, FileAudio, KeyRound, Mic } from "lucide-react";
 import HandyTextLogo from "./icons/HandyTextLogo";
 import HandyHand from "./icons/HandyHand";
 import { useSettings } from "../hooks/useSettings";
 import { GeneralSettings, DebugSettings, AboutSettings } from "./settings";
 import { FileTranscription } from "./file/FileTranscription";
 import { LicenceSettings } from "./licence";
+import { MeetingPage } from "./meeting";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 
@@ -36,6 +37,14 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.file",
     icon: FileAudio,
     component: FileTranscription,
+    enabled: () => true,
+  },
+  // Enregistrement de réunion : capture longue durée du micro, puis compte
+  // rendu selon la charte de l'utilisateur.
+  meeting: {
+    labelKey: "sidebar.meeting",
+    icon: Mic,
+    component: MeetingPage,
     enabled: () => true,
   },
   // Clé de licence de cet ordinateur : décision produit explicite (saisir,

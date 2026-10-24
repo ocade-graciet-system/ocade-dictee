@@ -400,7 +400,7 @@ impl AudioRecorder {
         )
     }
 
-    fn get_preferred_config(
+    pub(crate) fn get_preferred_config(
         device: &cpal::Device,
     ) -> Result<cpal::SupportedStreamConfig, Box<dyn std::error::Error>> {
         // Use the device's native/default sample rate and let the FrameResampler

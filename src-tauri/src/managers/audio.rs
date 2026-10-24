@@ -309,6 +309,14 @@ impl AudioRecordingManager {
         *self.cached_device.lock().unwrap() = None;
     }
 
+    /// Micro choisi dans les réglages, résolu comme pour la dictée (`None` :
+    /// micro par défaut du système). L'enregistrement de réunion capte le même
+    /// micro que la dictée, avec son propre flux.
+    pub fn effective_microphone_device(&self) -> Option<cpal::Device> {
+        let settings = get_settings(&self.app_handle);
+        self.get_effective_microphone_device(&settings)
+    }
+
     fn get_effective_microphone_device(&self, settings: &AppSettings) -> Option<cpal::Device> {
         let device_name = match self.desired_device_name(settings) {
             Some(name) => name,

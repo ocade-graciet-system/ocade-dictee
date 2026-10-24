@@ -15,6 +15,7 @@
     "postProcessing": "Post-traitement",
     "history": "Historique",
     "file": "Fichier",
+    "meeting": "Réunion",
     "debug": "Débogage",
     "licence": "Licence",
     "about": "À propos"
@@ -633,6 +634,130 @@
           "incompleteOutput": "Le compte-rendu produit est incomplet ; réessayez.",
           "busy": "Un résumé est déjà en cours."
         }
+      }
+    },
+    "meeting": {
+      "title": "Enregistrement de réunion",
+      "description": "Enregistrez le son de votre micro aussi longtemps que nécessaire, puis retrouvez vos réunions ci-dessous.",
+      "recorder": {
+        "start": "Démarrer l'enregistrement",
+        "microphone": "Micro : {{name}}",
+        "defaultMicrophone": "micro par défaut de l'ordinateur",
+        "idleHint": "Aucune limite de durée. L'ordinateur ne se met pas en veille pendant l'enregistrement ; sur un portable, branchez le chargeur et laissez l'écran ouvert.",
+        "phase": {
+          "idle": "Prêt",
+          "recording": "Enregistrement en cours",
+          "paused": "En pause",
+          "reconnecting": "Micro indisponible"
+        },
+        "pause": "Pause",
+        "resume": "Reprendre",
+        "stop": "Terminer l'enregistrement",
+        "keepRecording": "Continuer l'enregistrement",
+        "stopTitle": "Terminer l'enregistrement ?",
+        "stopConfirm": "L'enregistrement sera clos et ne pourra plus être repris. Pour une simple interruption, utilisez plutôt « Pause ».",
+        "reconnecting": "Le micro ne répond plus (débranché, casque éteint ?). L'enregistrement reprendra tout seul dès qu'un micro sera de nouveau disponible.",
+        "backgroundHint": "Vous pouvez changer d'onglet ou fermer cette fenêtre : l'enregistrement continue.",
+        "finished": "Enregistrement terminé",
+        "finishedDetail": "« {{name}} » — {{duration}}",
+        "stoppedDiskFull": "Enregistrement arrêté : le disque est presque plein. L'audio enregistré jusque-là est conservé.",
+        "stoppedWriteFailed": "Enregistrement arrêté : impossible d'écrire sur le disque. L'audio enregistré jusque-là est conservé."
+      },
+      "list": {
+        "title": "Mes enregistrements",
+        "empty": "Aucun enregistrement pour l'instant. Cliquez sur le bouton rouge pour commencer.",
+        "noMatch": "Aucun enregistrement ne correspond à votre recherche.",
+        "search": "Rechercher",
+        "sortLabel": "Trier les enregistrements",
+        "sort": {
+          "newest": "Plus récents d'abord",
+          "oldest": "Plus anciens d'abord",
+          "name": "Par nom (A → Z)",
+          "longest": "Plus longs d'abord"
+        },
+        "play": "Écouter",
+        "rename": "Renommer",
+        "renameSave": "Valider le nom",
+        "renameCancel": "Annuler",
+        "export": "Enregistrer le fichier audio sous…",
+        "exported": "Fichier audio enregistré",
+        "delete": "Supprimer",
+        "deleteTitle": "Supprimer l'enregistrement",
+        "deleteConfirm": "Supprimer définitivement « {{name}} » et son fichier audio ?",
+        "deleted": "Enregistrement supprimé",
+        "inProgress": "En cours",
+        "interrupted": "Interrompu",
+        "interruptedHint": "L'application s'est arrêtée pendant cet enregistrement : l'audio est conservé jusqu'à l'interruption."
+      },
+      "assets": {
+        "title": "Compte rendu de réunion",
+        "intro": "Ajoutez votre charte éditoriale, votre charte graphique et votre skill : le futur bouton « Compte rendu de réunion » s'en servira pour rédiger et mettre en forme vos comptes rendus.",
+        "import": "Importer un fichier…",
+        "paste": "Coller un texte",
+        "replace": "Remplacer…",
+        "viewEdit": "Voir / modifier",
+        "remove": "Retirer",
+        "save": "Enregistrer",
+        "cancel": "Annuler",
+        "pastedText": "Texte saisi",
+        "summary": "{{count}} mots · ajouté le {{date}}",
+        "summary_one": "{{count}} mot · ajouté le {{date}}",
+        "summary_other": "{{count}} mots · ajouté le {{date}}",
+        "tooLong": "Texte long : au-delà d'environ {{limit}} mots, le modèle local risque d'en négliger une partie. Gardez l'essentiel.",
+        "editorial": {
+          "title": "Charte éditoriale",
+          "description": "Ton, vocabulaire et règles d'écriture à respecter dans le compte rendu.",
+          "formats": "Word (.docx), texte (.txt) ou Markdown (.md). Pour un PDF, copiez-collez son texte.",
+          "fileType": "Charte éditoriale",
+          "clearConfirm": "Retirer la charte éditoriale ?",
+          "editHint": "Collez ou modifiez le texte de votre charte éditoriale."
+        },
+        "skill": {
+          "title": "Skill",
+          "description": "Instructions de rédaction du compte rendu : structure, sections, consignes (fichier SKILL.md).",
+          "formats": "Fichier SKILL.md, archive .skill ou .zip, ou texte (.txt, .md).",
+          "fileType": "Skill",
+          "clearConfirm": "Retirer le skill ?",
+          "editHint": "Collez ou modifiez les instructions du skill."
+        },
+        "graphic": {
+          "title": "Charte graphique",
+          "description": "Logo, couleurs, police et pied de page appliqués au document du compte rendu.",
+          "addLogo": "Ajouter un logo…",
+          "replaceLogo": "Changer de logo…",
+          "removeLogo": "Retirer le logo",
+          "logoType": "Image",
+          "primary": "Couleur principale",
+          "secondary": "Couleur secondaire",
+          "font": "Police",
+          "footer": "Pied de page",
+          "footerPlaceholder": "Ex. : Société X — document confidentiel",
+          "save": "Enregistrer la charte",
+          "clear": "Retirer la charte graphique",
+          "clearConfirm": "Retirer la charte graphique et le logo ?",
+          "notSaved": "Pas encore enregistrée : les valeurs affichées sont celles par défaut.",
+          "preview": "Aperçu du document",
+          "previewLogo": "Votre logo",
+          "previewDate": "Date de la réunion",
+          "previewTitle": "Compte rendu de réunion",
+          "previewSection": "Décisions",
+          "previewBody": "Le budget de la campagne est validé ; lancement prévu le 3 novembre."
+        }
+      },
+      "errors": {
+        "alreadyRecording": "Un enregistrement est déjà en cours.",
+        "notRecording": "Aucun enregistrement en cours.",
+        "microphonePermission": "L'accès au micro est refusé. Autorisez OCADE Dictée dans les paramètres de confidentialité du système (Micro), puis réessayez.",
+        "noMicrophone": "Aucun micro détecté. Branchez un micro puis réessayez.",
+        "microphoneFailed": "Le micro n'a pas pu être ouvert. Vérifiez qu'il est bien branché, ou choisissez-en un autre dans l'onglet Général.",
+        "diskSpace": "Espace disque insuffisant ({{free}} libres). Libérez de la place avant d'enregistrer : une heure de réunion occupe environ 115 Mo.",
+        "inProgress": "Impossible pendant l'enregistrement : terminez-le d'abord.",
+        "notFound": "Enregistrement introuvable : son fichier a peut-être été supprimé.",
+        "unsupportedFile": "Ce type de fichier n'est pas pris en charge.",
+        "fileTooLarge": "Fichier trop volumineux (maximum {{max}}).",
+        "invalidFile": "Fichier illisible : {{detail}}",
+        "invalidValue": "Valeur invalide : vérifiez les couleurs (format #RRGGBB), la police et le nom.",
+        "storage": "Erreur d'enregistrement sur le disque : {{detail}}"
       }
     },
     "debug": {
